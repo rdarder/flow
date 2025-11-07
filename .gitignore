@@ -1,0 +1,6 @@
+*.pth
+.idea/
+__pycache__
+src/runs
+runs
+datasets/ChairsSDHom
