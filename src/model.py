@@ -65,7 +65,7 @@ class SinusoidalPosEmb2D(nn.Module):
 
 
 class V0MicroFlow(nn.Module):
-    def __init__(self, img_size=32, patch_size=4, embed_dim=64, n_heads=4):
+    def __init__(self, img_size=32, patch_size=4, embed_dim=16, n_heads=4):
         super().__init__()
         self.img_size = img_size
         self.patch_size = patch_size
@@ -77,55 +77,51 @@ class V0MicroFlow(nn.Module):
             # --- Block 1 (Input: 3, 32, 32) ---
             nn.Conv2d(
                 in_channels=3,
-                out_channels=4,
-                kernel_size=1,
-                stride=1
-            ),
-            nn.Conv2d(
-                in_channels=4,
-                out_channels=32,
+                out_channels=24,
                 kernel_size=3,
                 stride=1,
                 padding=1,
-                groups=4
+                groups=3
             ),
             nn.GELU(),
-            nn.LayerNorm([32, 32, 32]),
+            nn.LayerNorm([24, 32, 32]),
 
             nn.Conv2d(
-                in_channels=32,
-                out_channels=32,
+                in_channels=24,
+                out_channels=16,
                 kernel_size=1,
-                stride=1  # -> [B, 32, 32, 32]
+                stride=1
             ),
             nn.GELU(),
 
+            nn.LayerNorm([16, 32, 32]),
+
             nn.Conv2d(
-                in_channels=32,
-                out_channels=32,  # 32
-                kernel_size=3,
-                stride=2,  # -> [B, 32, 8, 8]
-                padding=1,
-                groups=32  # 32 groups
-            ),
-            nn.GELU(),
-            nn.Conv2d(
-                in_channels=32,
-                out_channels=32,  # 32
+                in_channels=16,
+                out_channels=16,
                 kernel_size=3,
                 stride=2,
                 padding=1,
-                groups=16,  # 32 groups
+                groups=16
             ),
             nn.GELU(),
-            nn.LayerNorm([32, 8, 8]),
+            nn.Conv2d(
+                in_channels=16,
+                out_channels=16,
+                kernel_size=3,
+                stride=2,
+                padding=1,
+                groups=16,
+            ),
+            nn.GELU(),
+            nn.LayerNorm([16, 8, 8]),
 
             # 4. Pointwise (Channel-mixing)
             nn.Conv2d(
-                in_channels=32,
+                in_channels=16,
                 out_channels=embed_dim,
                 kernel_size=1,
-                stride=1  # -> [B, 64, 8, 8]
+                stride=1
             ),
             nn.GELU()
         )
@@ -201,20 +197,8 @@ class V0MicroFlow(nn.Module):
             value=tokens_b
         )
 
-        # Add residual connection
-        # This 'flow_features' tensor now contains information
-        # about where each patch from A found its match in B.
-        x = tokens_a + attn_output
-
-        flow_features = self.norm1(x)
-
-        # --- Decode Flow ---
-
-        # Apply the MLP decoder to each patch's token
-        # [B, 64, 64] -> [B, 64, 2]
-        flow_pred = self.decoder_head(flow_features)
-
-        # Reshape to our grid: [B, 8, 8, 2]
+        flow_signal = self.norm1(attn_output)
+        flow_pred = self.decoder_head(flow_signal)
         flow_pred = flow_pred.reshape(
             -1, self.grid_size, self.grid_size, 2
         )
@@ -232,7 +216,7 @@ if __name__ == "__main__":
     model = V0MicroFlow(
         img_size=32,
         patch_size=4,
-        embed_dim=64,
+        embed_dim=16,
         n_heads=4
     )
 
