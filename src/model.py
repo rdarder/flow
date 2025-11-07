@@ -65,7 +65,7 @@ class SinusoidalPosEmb2D(nn.Module):
 
 
 class V0MicroFlow(nn.Module):
-    def __init__(self, img_size=32, patch_size=4, embed_dim=16, n_heads=4):
+    def __init__(self, img_size=32, patch_size=4, embed_dim=64, n_heads=4):
         super().__init__()
         self.img_size = img_size
         self.patch_size = patch_size
@@ -75,47 +75,55 @@ class V0MicroFlow(nn.Module):
         # This one Conv2D layer is our patch embedding
         self.patch_embed = nn.Sequential(
             # --- Block 1 (Input: 3, 32, 32) ---
-
-            # 1. Depthwise (Spatial)
             nn.Conv2d(
                 in_channels=3,
-                out_channels=24,
-                kernel_size=3,
-                stride=2,  # -> [B, 3, 16, 16]
-                padding=1,
-                groups=3  # KEY: Makes it depthwise
-            ),
-            nn.GELU(),
-            nn.LayerNorm([24, 16, 16]),
-
-            # 2. Pointwise (Channel-mixing)
-            nn.Conv2d(
-                in_channels=24,
-                out_channels=embed_dim // 2,
+                out_channels=4,
                 kernel_size=1,
-                stride=1  # -> [B, 32, 16, 16]
+                stride=1
+            ),
+            nn.Conv2d(
+                in_channels=4,
+                out_channels=32,
+                kernel_size=3,
+                stride=1,
+                padding=1,
+                groups=4
             ),
             nn.GELU(),
-            nn.LayerNorm([embed_dim // 2, 16, 16]),
+            nn.LayerNorm([32, 32, 32]),
 
-            # --- Block 2 (Input: 32, 16, 16) ---
-
-            # 3. Depthwise (Spatial)
             nn.Conv2d(
-                in_channels=embed_dim // 2,  # 32
-                out_channels=embed_dim // 2,  # 32
+                in_channels=32,
+                out_channels=32,
+                kernel_size=1,
+                stride=1  # -> [B, 32, 32, 32]
+            ),
+            nn.GELU(),
+
+            nn.Conv2d(
+                in_channels=32,
+                out_channels=32,  # 32
                 kernel_size=3,
                 stride=2,  # -> [B, 32, 8, 8]
                 padding=1,
-                groups=embed_dim // 2  # 32 groups
+                groups=32  # 32 groups
             ),
             nn.GELU(),
-            nn.LayerNorm([embed_dim // 2, 8, 8]),
+            nn.Conv2d(
+                in_channels=32,
+                out_channels=32,  # 32
+                kernel_size=3,
+                stride=2,
+                padding=1,
+                groups=16,  # 32 groups
+            ),
+            nn.GELU(),
+            nn.LayerNorm([32, 8, 8]),
 
             # 4. Pointwise (Channel-mixing)
             nn.Conv2d(
-                in_channels=embed_dim // 2,  # 32
-                out_channels=embed_dim,  # 64
+                in_channels=32,
+                out_channels=embed_dim,
                 kernel_size=1,
                 stride=1  # -> [B, 64, 8, 8]
             ),
@@ -144,8 +152,6 @@ class V0MicroFlow(nn.Module):
         # This is applied to each patch's token
         self.decoder_head = nn.Sequential(
             nn.Linear(embed_dim, embed_dim // 2),
-            nn.ReLU(),
-            nn.Linear(embed_dim // 2, embed_dim // 2),
             nn.ReLU(),
             nn.Linear(embed_dim // 2, 2)
         )
