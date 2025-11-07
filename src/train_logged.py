@@ -33,6 +33,71 @@ NORM_MEAN = [0.485, 0.456, 0.406]
 NORM_STD = [0.229, 0.224, 0.225]
 
 
+def log_embedder_kernels(model, writer, epoch):
+    """
+    Intelligently logs all convolution kernels from the model's
+    'patch_embed' sequential block to TensorBoard.
+
+    - Logs spatial (e.g., 3x3) kernels as an image grid.
+    - Logs pointwise (1x1) kernels as a 2D heatmap.
+    """
+
+    # We'll keep track of which conv layer we're logging
+    conv_layer_idx = 0
+
+    with torch.no_grad():
+        # Iterate over all modules in the patch_embed block
+        for module in model.patch_embed.children():
+            if isinstance(module, nn.Conv2d):
+                kernels = module.weight.detach().cpu()
+
+                # --- Case 1: Spatial Kernels (e.g., 3x3) ---
+                if module.kernel_size[0] > 1:
+                    # Normalize for visualization
+                    k_min, k_max = kernels.min(), kernels.max()
+                    kernels_norm = (kernels - k_min) / (k_max - k_min)
+
+                    # Create the grid
+                    # make_grid is smart:
+                    # (3, 1, 3, 3) -> 3 grayscale images
+                    # (32, 1, 3, 3) -> 32 grayscale images
+                    grid = torchvision.utils.make_grid(kernels_norm, nrow=8)
+
+                    writer.add_image(
+                        f'PatchEmbed/conv_{conv_layer_idx}_spatial_kernels',
+                        grid,
+                        epoch
+                    )
+
+                # --- Case 2: Pointwise Kernels (1x1) ---
+                elif module.kernel_size[0] == 1:
+                    # Squeeze the (Out, In, 1, 1) tensor to (Out, In)
+                    weights_matrix = kernels.squeeze()
+
+                    # Create a heatmap figure
+                    fig, ax = plt.subplots(figsize=(8, 8))
+                    im = ax.imshow(
+                        weights_matrix,
+                        cmap='cividis',  # Perceptually uniform
+                        aspect='auto'
+                    )
+
+                    fig.colorbar(im, ax=ax)
+                    ax.set_title(f"Conv {conv_layer_idx} Pointwise Kernels")
+                    ax.set_xlabel("Input Channels")
+                    ax.set_ylabel("Output Channels")
+
+                    # Log the figure to TensorBoard
+                    writer.add_figure(
+                        f'PatchEmbed/conv_{conv_layer_idx}_pointwise_heatmap',
+                        fig,
+                        epoch
+                    )
+                    plt.close(fig)  # IMPORTANT: Close fig to save memory
+
+                conv_layer_idx += 1
+
+
 def unnormalize_image(tensor):
     """Reverses the T.Normalize operation for a single image."""
     img = tensor.clone()  # [C, H, W]
@@ -93,11 +158,11 @@ train_dataset = SyntheticFlowDataset()
 train_loader = DataLoader(
     train_dataset,
     batch_size=BATCH_SIZE,
-    shuffle=False, # No need to shuffle, it's all random
+    shuffle=False,  # No need to shuffle, it's all random
     num_workers=4
 )
 
-test_dataset = SyntheticFlowDataset() # Use a separate instance for val
+test_dataset = SyntheticFlowDataset()  # Use a separate instance for val
 test_loader = DataLoader(
     test_dataset,
     batch_size=BATCH_SIZE,
@@ -199,33 +264,7 @@ for epoch in range(EPOCHS):
     writer.add_scalar('Loss/train_epoch', avg_train_loss, epoch)
     writer.add_scalar('Loss/validation_epoch', avg_val_loss, epoch)
 
-    # 1. Log Layer 1 Kernels (Input: 3 -> 32)
-    kernels_l1 = model.patch_embed[0].weight.detach().cpu()
-    # kernels_l1 shape is (32, 3, 3, 3)
-    # Normalize them to [0, 1]
-    k_min, k_max = kernels_l1.min(), kernels_l1.max()
-    kernels_l1_norm = (kernels_l1 - k_min) / (k_max - k_min)
-
-    # Create a grid (make_grid handles the 3-channel RGB aspect)
-    grid_l1 = torchvision.utils.make_grid(kernels_l1_norm, nrow=8)
-    writer.add_image('PatchEmbed/kernels_layer1', grid_l1, epoch)
-
-    # 2. Log Layer 2 Kernels (Input: 32 -> 64)
-    kernels_l2 = model.patch_embed[3].weight.detach().cpu()
-    # kernels_l2 shape is (64, 32, 3, 3)
-
-    # We can't visualize all 32 input channels.
-    # As a simple V0 visualization, let's just see the
-    # kernels for the *first input channel* (grayscale).
-    kernels_l2_slice = kernels_l2[:, 0:1, :, :]  # Shape: (64, 1, 3, 3)
-
-    # Normalize this slice
-    k_min, k_max = kernels_l2_slice.min(), kernels_l2_slice.max()
-    kernels_l2_norm = (kernels_l2_slice - k_min) / (k_max - k_min)
-
-    # Create a grid (make_grid will handle grayscale)
-    grid_l2 = torchvision.utils.make_grid(kernels_l2_norm, nrow=8)
-    writer.add_image('PatchEmbed/kernels_layer2_slice', grid_l2, epoch)
+    log_embedder_kernels(model, writer, epoch)
 
     # *** NEW: Log Gradients and Weights ***
     for name, param in model.named_parameters():

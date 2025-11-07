@@ -65,7 +65,7 @@ class SinusoidalPosEmb2D(nn.Module):
 
 
 class V0MicroFlow(nn.Module):
-    def __init__(self, img_size=32, patch_size=4, embed_dim=16, n_heads=2):
+    def __init__(self, img_size=32, patch_size=4, embed_dim=16, n_heads=4):
         super().__init__()
         self.img_size = img_size
         self.patch_size = patch_size
@@ -79,19 +79,19 @@ class V0MicroFlow(nn.Module):
             # 1. Depthwise (Spatial)
             nn.Conv2d(
                 in_channels=3,
-                out_channels=12,  # 3 in -> 3 out
+                out_channels=24,
                 kernel_size=3,
                 stride=2,  # -> [B, 3, 16, 16]
                 padding=1,
                 groups=3  # KEY: Makes it depthwise
             ),
             nn.GELU(),
-            nn.LayerNorm([12, 16, 16]),
+            nn.LayerNorm([24, 16, 16]),
 
             # 2. Pointwise (Channel-mixing)
             nn.Conv2d(
-                in_channels=12,
-                out_channels=embed_dim // 2,  # 32
+                in_channels=24,
+                out_channels=embed_dim // 2,
                 kernel_size=1,
                 stride=1  # -> [B, 32, 16, 16]
             ),
@@ -144,6 +144,8 @@ class V0MicroFlow(nn.Module):
         # This is applied to each patch's token
         self.decoder_head = nn.Sequential(
             nn.Linear(embed_dim, embed_dim // 2),
+            nn.ReLU(),
+            nn.Linear(embed_dim // 2, embed_dim // 2),
             nn.ReLU(),
             nn.Linear(embed_dim // 2, 2)
         )
