@@ -137,11 +137,11 @@ class SyntheticFlowDataset(Dataset):
         # --- 5. Return JAX-compatible format (Unchanged) ---
         P = (self.img_size // self.patch_size) ** 2
         return (
-            img1_final,  # (3, 32, 32)
-            img2_final,  # (3, 32, 32)
+            img1_final.permute(1, 2, 0),
+            img2_final.permute(1, 2, 0),
+
             flow_target.reshape(2, P).T  # (P, 2)
         )
-
 if __name__ == '__main__':
     """
     Test script to run the dataset directly and find errors
