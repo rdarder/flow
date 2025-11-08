@@ -2,16 +2,18 @@ import jax
 import jax.numpy as jnp
 from jax.nn import softmax
 from flax import nnx
+from flax.linen import max_pool
 
 
 class Stem(nnx.Module):
     def __init__(self, *, rngs):
-        """Initializes our V0.10 'Wide Gentle Ramp' stem."""
-        # Kaiming (LeCun) init is built-in
+        """Initializes our V0.11 'MaxPool' stem."""
         init = nnx.initializers.lecun_normal()
 
+        # --- Block 1: 32x32 -> 16x16 ---
         self.dw1 = nnx.Conv(
-            in_features=3, out_features=24, kernel_size=(3, 3), strides=(2, 2),
+            in_features=3, out_features=24, kernel_size=(3, 3),
+            strides=(1, 1),  # <-- Find features (no stride)
             feature_group_count=3, padding='SAME', use_bias=True,
             kernel_init=init, rngs=rngs
         )
@@ -19,10 +21,12 @@ class Stem(nnx.Module):
             in_features=24, out_features=32, kernel_size=(1, 1),
             use_bias=True, kernel_init=init, rngs=rngs
         )
+        # (We don't define pool1 here, we call it functionally)
 
-        # --- Block 2: (16x16 -> 8x8) in=32, mid=32, out=64 ---
+        # --- Block 2: 16x16 -> 8x8 ---
         self.dw2 = nnx.Conv(
-            in_features=32, out_features=32, kernel_size=(3, 3), strides=(2, 2),
+            in_features=32, out_features=32, kernel_size=(3, 3),
+            strides=(1, 1),  # <-- Find features (no stride)
             feature_group_count=32, padding='SAME', use_bias=True,
             kernel_init=init, rngs=rngs
         )
@@ -30,15 +34,31 @@ class Stem(nnx.Module):
             in_features=32, out_features=64, kernel_size=(1, 1),
             use_bias=True, kernel_init=init, rngs=rngs
         )
+        # (We don't define pool2 here, we call it functionally)
 
     def __call__(self, x):
         """Applies the stem logic."""
-        # x is (B, C, H, W)
+        # x is (B, H, W, C), e.g., (B, 32, 32, 3)
+
+        # --- Block 1 ---
         x = jax.nn.gelu(self.dw1(x))
         x = jax.nn.gelu(self.pw1(x))
+
+        # --- 2. THIS IS THE FIX ---
+        # Call flax.linen.max_pool *functionally*
+        # (B, 32, 32, 32) -> (B, 16, 16, 32)
+        x = max_pool(x, window_shape=(2, 2), strides=(2, 2), padding='VALID')
+
+        # --- Block 2 ---
         x = jax.nn.gelu(self.dw2(x))
         x = jax.nn.gelu(self.pw2(x))
-        # Returns (B, 64, 8, 8)
+
+        # --- 3. THIS IS THE FIX ---
+        # (B, 16, 16, 64) -> (B, 8, 8, 64)
+        x = max_pool(x, window_shape=(2, 2), strides=(2, 2), padding='VALID')
+        # --- END FIX ---
+
+        # Returns (B, 8, 8, 64)
         return x
 
 
@@ -121,8 +141,7 @@ class BarebonesFlowModel(nnx.Module):
         A = C_norm @ L_batch
         Flow_pred = A - L_batch
 
-        # Return both for our aux loss
-        return Flow_pred, F1
+        return Flow_pred
 
 
 def create_location_tensor(grid_size):

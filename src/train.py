@@ -16,23 +16,12 @@ def loss_fn(model, img1_batch, img2_batch, flow_gt_batch):
     """Calculates the total loss (L1 + variance reward)."""
 
     # 1. Get model outputs
-    flow_pred_batch, F1_batch = model(img1_batch, img2_batch)
+    flow_pred_batch = model(img1_batch, img2_batch)
 
     # 2. L1 Loss
-    l1_loss = jnp.mean(jnp.abs(flow_pred_batch - flow_gt_batch))
-
-    # 3. Variance Reward
-    feature_variance = jnp.var(F1_batch, axis=1)  # (B, C)
-    mean_feature_variance = jnp.mean(feature_variance)
-    variance_reward = -LAMBDA_VARIANCE * mean_feature_variance
-
-    # 4. Total Loss
-    total_loss = l1_loss + variance_reward
+    total_loss = jnp.mean(jnp.abs(flow_pred_batch - flow_gt_batch))
 
     metrics = {
-        'l1_loss': l1_loss,
-        'variance_reward': variance_reward,
-        'mean_feature_variance': mean_feature_variance,
         'total_loss': total_loss
     }
     return total_loss, metrics
@@ -128,7 +117,7 @@ if __name__ == "__main__":
 
         # --- Log Prediction Snapshot ---
         # We just call the model (it's vmapped in the class)
-        flow_pred_snapshot, _ = model(img1_batch, img2_batch)
+        flow_pred_snapshot = model(img1_batch, img2_batch)
 
         fig = create_flow_figure_jax(
             img1_pt.numpy(), img2_pt.numpy(),
