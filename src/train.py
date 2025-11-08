@@ -56,7 +56,6 @@ batch_apply_model = vmap(
     apply_model, in_axes=(None, 0, 0, None, None, None)
 )
 
-
 def loss_fn(params, img1_batch, img2_batch, flow_gt_batch, L, patch_size, embed_dim):
     """Calculates L1 loss for a batch."""
 
@@ -198,6 +197,7 @@ if __name__ == "__main__":
         logger.log('GradMag/W_embed', grad_mag_w, epoch)
         # logger.log('GradMag/b_embed', grad_mag_b, epoch)
         logger.log('GradMag/log_temp', grad_mag_temp, epoch)
+        logger.log('params/log_temp', params['log_temp'], epoch)
 
         # --- NEW: Generate Prediction Snapshot ---
         # (We use the *last* batch of data again)
