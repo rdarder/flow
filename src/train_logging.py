@@ -20,53 +20,61 @@ def flow_to_color(flow, max_flow=None):
     rgb[..., :3] *= v[..., np.newaxis]
     return rgb[..., :3]
 
-def create_flow_figure_jax(img1, img2, flow_gt, flow_pred, grid_size):
-    """Creates a 3-panel matplotlib figure for JAX data."""
+
+def create_flow_figure_jax(img1, img2, flow_gt, flow_pred_snapshot_tuple, grid_size):
+    """
+    Creates a 4-panel matplotlib figure for JAX data.
+    (This version correctly unpacks the (flow, features) tuple)
+    """
+
+    # --- THIS IS THE FIX ---
+    # Unpack the tuple: (Flow_pred_batch, F1_batch)
+    flow_pred_batch, f1_batch = flow_pred_snapshot_tuple
+    # --- END FIX ---
+
     # We'll just show the first item in the batch
-    # img1 is (B, C, H, W) or (B, H, W, C). We need to get it to (H, W, C)
-    
-    # Get the first sample from the batch
     img1_sample = np.array(img1[0])
     img2_sample = np.array(img2[0])
     flow_gt_sample = np.array(flow_gt[0])
-    flow_pred_sample = np.array(flow_pred[0])
-    
-    # --- 1. Handle Image ---
-    # Data is (C, H, W) from our fixed dataloader
+
+    # Use the *correct* part of the tuple
+    flow_pred_sample = np.array(flow_pred_batch[0])  # (P, 2)
+
+    # --- 1. Handle Images ---
+    # Data is (C, H, W) from our dataloader
     if img1_sample.shape[0] == 3:
-        img1_sample = img1_sample.transpose(1, 2, 0) # (H, W, C)
+        img1_plot = np.clip(img1_sample.transpose(1, 2, 0), 0, 1)  # (H, W, C)
     if img2_sample.shape[0] == 3:
-        img2_sample = img2_sample.transpose(1, 2, 0) # (H, W, C)
-    # Clip to [0, 1] (our synthetic data is just 0s and 1s)
-    img1_plot = np.clip(img1_sample, 0, 1)
-    img2_plot = np.clip(img2_sample, 0, 1)
+        img2_plot = np.clip(img2_sample.transpose(1, 2, 0), 0, 1)  # (H, W, C)
 
     # --- 2. Handle Flows ---
     # Flows are (P, 2), e.g., (64, 2). Reshape to (H, W, 2).
     flow_gt_img = flow_to_color(
         flow_gt_sample.reshape(grid_size, grid_size, 2)
     )
+    # This reshape will now work (128 elements -> (8, 8, 2))
     flow_pred_img = flow_to_color(
         flow_pred_sample.reshape(grid_size, grid_size, 2)
     )
-    
+
     # --- 3. Plot ---
-    fig, axes = plt.subplots(1, 4, figsize=(12, 4))
+    fig, axes = plt.subplots(1, 4, figsize=(16, 4))
+
     axes[0].imshow(img1_plot)
     axes[0].set_title("Image 1 (t0)")
     axes[0].axis('off')
 
     axes[1].imshow(img2_plot)
-    axes[1].set_title("Image 2 (t0)")
+    axes[1].set_title("Image 2 (t1)")
     axes[1].axis('off')
 
     axes[2].imshow(flow_gt_img)
     axes[2].set_title("Ground Truth Flow")
     axes[2].axis('off')
-    
+
     axes[3].imshow(flow_pred_img)
     axes[3].set_title("Predicted Flow")
     axes[3].axis('off')
-    
+
     fig.tight_layout()
     return fig

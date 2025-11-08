@@ -56,34 +56,68 @@ batch_apply_model = vmap(
     apply_model, in_axes=(None, 0, 0, None, None, None)
 )
 
-def loss_fn(params, img1_batch, img2_batch, flow_gt_batch, L, patch_size, embed_dim):
-    """Calculates L1 loss for a batch."""
+LAMBDA_VARIANCE = 1e-4  # A small "nudge" to encourage variance
 
-    # Use our clean, vmapped function
-    flow_pred_batch = batch_apply_model(
+
+def loss_fn(params, img1_batch, img2_batch, flow_gt_batch, L, patch_size, embed_dim):
+    """
+    Calculates the total loss (L1 + variance reward) and returns
+    auxiliary metrics for logging.
+    """
+
+    # 1. Get model outputs
+    # batch_apply_model now returns a tuple of batched tensors
+    flow_pred_batch, F1_batch = batch_apply_model(
         params, img1_batch, img2_batch, L, patch_size, embed_dim
     )
 
-    loss = jnp.mean(jnp.abs(flow_pred_batch - flow_gt_batch))
-    return loss
+    # --- 2. Calculate L1 Loss ---
+    l1_loss = jnp.mean(jnp.abs(flow_pred_batch - flow_gt_batch))
+
+    # --- 3. Calculate Variance Reward ---
+    # F1_batch is (B, P, C). We want var across P (axis 1).
+    feature_variance = jnp.var(F1_batch, axis=1)  # (B, C)
+    mean_feature_variance = jnp.mean(feature_variance)
+
+    # We reward variance by *subtracting* its negative (i.e., adding a penalty
+    # for low variance).
+    variance_reward = -LAMBDA_VARIANCE * mean_feature_variance
+
+    # --- 4. Total Loss ---
+    total_loss = l1_loss + variance_reward
+
+    # --- 5. Auxiliary data for logging ---
+    metrics = {
+        'l1_loss': l1_loss,
+        'variance_reward': variance_reward,
+        'mean_feature_variance': mean_feature_variance,
+        'total_loss': total_loss
+    }
+
+    # Return (loss, aux_data)
+    # jax.grad will *only* differentiate with respect to 'total_loss'
+    return total_loss, metrics
 
 
 @partial(jit, static_argnums=(5, 6))  # <-- RE-ENABLE @jit
 def update_step(params, img1_batch, img2_batch, flow_gt_batch, L, patch_size, embed_dim, lr):
     """Performs one update step."""
 
-    # We only need the loss and grads
-    loss, grads = jax.value_and_grad(loss_fn)(
+    # 1. Use has_aux=True
+    # This returns ((loss, metrics), grads)
+    (total_loss, metrics), grads = jax.value_and_grad(loss_fn, has_aux=True)(
         params, img1_batch, img2_batch, flow_gt_batch, L, patch_size, embed_dim
     )
 
+    # 2. Optimizer step (unchanged)
     updated_params = jax.tree_util.tree_map(
         lambda p, g: p - lr * g,
         params,
         grads
     )
 
-    return updated_params, loss
+    # 3. Return everything for logging
+    return updated_params, total_loss, metrics
 
 
 def log_kernels_to_tensorboard(params, logger, epoch):
@@ -120,7 +154,7 @@ def log_kernels_to_tensorboard(params, logger, epoch):
             print(f"Kernel Logging Warning: {e}")
 
 
-grad_snapshot_fn = jax.grad(loss_fn)
+grad_snapshot_fn = jax.grad(loss_fn, has_aux=True)
 
 # --- 5. The Main Training Loop ---
 if __name__ == "__main__":
@@ -166,7 +200,7 @@ if __name__ == "__main__":
             flow_gt_batch = jnp.array(flow_gt_pt.numpy())
 
             # --- 2. Run the JIT-compiled Update Step ---
-            params, loss = update_step(
+            params, loss, metrics = update_step(
                 params, img1_batch, img2_batch, flow_gt_batch,
                 L, p_size, e_dim, LEARNING_RATE
             )
@@ -175,16 +209,18 @@ if __name__ == "__main__":
 
             # --- 3. Log to TensorBoard ---
             if global_step % 20 == 0:
-                logger.log('Loss/train_step', loss, global_step)
+                for metric_name, metric_value in metrics.items():
+                    logger.log(f'Loss/{metric_name}', metric_value, global_step)
 
             global_step += 1
+
         # --- 4. End of Epoch Logging (NEW) ---
         avg_loss = total_epoch_loss / len(train_loader)
         logger.log('Loss/train_epoch', avg_loss, epoch)
 
         # --- Generate the Gradient Snapshot ---
         # (We use the *last* batch of data for this)
-        grads_snapshot = grad_snapshot_fn(
+        grads_snapshot, _ = grad_snapshot_fn(
             params, img1_batch, img2_batch, flow_gt_batch,
             L, p_size, e_dim
         )
@@ -220,7 +256,6 @@ if __name__ == "__main__":
               f"W_grad: {grad_mag_w:.2e} "
               # f"| b_grad: {grad_mag_b:.2e}"
               )
-
 
     logger.close()
     print("Training complete.")
