@@ -108,6 +108,7 @@ if __name__ == "__main__":
         # --- 4. End of Epoch Logging ---
         avg_loss = total_epoch_loss / len(train_loader)
         logger.log('Loss/train_epoch', avg_loss, epoch)
+        logger.log('params/zero_boost', model.log_w_zero_boost, epoch)
 
         # --- Log Gradients ---
         log_gradients(grads, logger, epoch)

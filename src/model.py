@@ -11,32 +11,32 @@ class Stem(nnx.Module):
         """Initializes our V0.12 'MaxPool + Norm' stem."""
         init = nnx.initializers.lecun_normal()
         self.dw1 = nnx.Conv(
-            in_features=3, out_features=24, kernel_size=(3, 3),
+            in_features=3, out_features=12, kernel_size=(3, 3),
             strides=(1, 1),  # Find features
             feature_group_count=3, padding='SAME', use_bias=True,
             kernel_init=init, rngs=rngs
         )
         self.pw1 = nnx.Conv(
-            in_features=24, out_features=32, kernel_size=(1, 1),
+            in_features=12, out_features=16, kernel_size=(1, 1),
             use_bias=True, kernel_init=init, rngs=rngs
         )
         self.norm1 = nnx.GroupNorm(
-            num_groups=1, num_features=32,  # num_groups=1 == LayerNorm
+            num_groups=1, num_features=16,  # num_groups=1 == LayerNorm
             use_bias=True, use_scale=True, rngs=rngs
         )
 
         self.dw2 = nnx.Conv(
-            in_features=32, out_features=32, kernel_size=(3, 3),
+            in_features=16, out_features=16, kernel_size=(3, 3),
             strides=(1, 1),  # Find features
-            feature_group_count=32, padding='SAME', use_bias=True,
+            feature_group_count=16, padding='SAME', use_bias=True,
             kernel_init=init, rngs=rngs
         )
         self.pw2 = nnx.Conv(
-            in_features=32, out_features=64, kernel_size=(1, 1),
+            in_features=16, out_features=32, kernel_size=(1, 1),
             use_bias=True, kernel_init=init, rngs=rngs
         )
         self.norm2 = nnx.GroupNorm(
-            num_groups=1, num_features=64,
+            num_groups=1, num_features=32,
             use_bias=True, use_scale=True, rngs=rngs
         )
 
@@ -68,8 +68,7 @@ class BarebonesFlowModel(nnx.Module):
 
         # --- 2. Our "Barebones" Parameters ---
         # nnx.Param makes them learnable
-        self.log_temp = nnx.Param(jnp.log(10.0))
-        self.log_w_zero_boost = nnx.Param(jnp.log(0.1))
+        self.log_w_zero_boost = nnx.Param(jnp.log(10.0))
 
         # --- 3. Fixed "Data" ---
         # nnx.Variable makes it non-learnable (like a buffer)
@@ -116,18 +115,11 @@ class BarebonesFlowModel(nnx.Module):
         F2_norm = self._safe_l2_norm(F2)
         C_raw = F1_norm @ F2_norm.transpose(0, 2, 1)  # (B, 64, 64)
 
-        # --- 3. Apply Temperature ---
-        temp = jnp.exp(self.log_temp.value)
-        C_scaled = C_raw * temp
-
-        # --- 4. Apply "Zero-Flow" Gated Boost ---
         B_gated = self._get_zero_hint_bias()  # (64, 64)
-        C_biased = C_scaled * B_gated[None, ...]  # Add batch dim
+        C_biased = C_raw * B_gated[None, ...]  # Add batch dim
 
-        # --- 5. Final Calculation ---
         C_norm = softmax(C_biased, axis=-1)
 
-        # .value gets the array
         L_batch = jnp.broadcast_to(self.L.value[None, ...], C_norm.shape[:-1] + (2,))
 
         A = C_norm @ L_batch
