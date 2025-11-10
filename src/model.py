@@ -125,8 +125,7 @@ class BarebonesFlowModel(nnx.Module):
         A = C_norm @ L_batch
         Flow_pred = A - L_batch
 
-        return Flow_pred
-
+        return Flow_pred, dict(f1=F1, f2=F2)
 
 def create_location_tensor(grid_size):
     x, y = jnp.meshgrid(jnp.arange(grid_size), jnp.arange(grid_size))
