@@ -11,32 +11,32 @@ class Stem(nnx.Module):
         """Initializes our V0.12 'MaxPool + Norm' stem."""
         init = nnx.initializers.lecun_normal()
         self.dw1 = nnx.Conv(
-            in_features=3, out_features=12, kernel_size=(3, 3),
+            in_features=3, out_features=24, kernel_size=(3, 3),
             strides=(1, 1),  # Find features
             feature_group_count=3, padding='SAME', use_bias=True,
             kernel_init=init, rngs=rngs
         )
         self.pw1 = nnx.Conv(
-            in_features=12, out_features=16, kernel_size=(1, 1),
+            in_features=24, out_features=32, kernel_size=(1, 1),
             use_bias=True, kernel_init=init, rngs=rngs
         )
         self.norm1 = nnx.GroupNorm(
-            num_groups=1, num_features=16,  # num_groups=1 == LayerNorm
+            num_groups=1, num_features=32,  # num_groups=1 == LayerNorm
             use_bias=True, use_scale=True, rngs=rngs
         )
 
         self.dw2 = nnx.Conv(
-            in_features=16, out_features=16, kernel_size=(3, 3),
+            in_features=32, out_features=32, kernel_size=(3, 3),
             strides=(1, 1),  # Find features
-            feature_group_count=16, padding='SAME', use_bias=True,
+            feature_group_count=32, padding='SAME', use_bias=True,
             kernel_init=init, rngs=rngs
         )
         self.pw2 = nnx.Conv(
-            in_features=16, out_features=32, kernel_size=(1, 1),
+            in_features=32, out_features=64, kernel_size=(1, 1),
             use_bias=True, kernel_init=init, rngs=rngs
         )
         self.norm2 = nnx.GroupNorm(
-            num_groups=1, num_features=32,
+            num_groups=1, num_features=64,
             use_bias=True, use_scale=True, rngs=rngs
         )
 
@@ -68,66 +68,104 @@ class BarebonesFlowModel(nnx.Module):
 
         # --- 2. Our "Barebones" Parameters ---
         # nnx.Param makes them learnable
-        self.log_w_zero_boost = nnx.Param(jnp.log(10.0))
+        self.log_w_zero_boost = 0.1  # nnx.Param(jnp.log(1.0))
 
         # --- 3. Fixed "Data" ---
         # nnx.Variable makes it non-learnable (like a buffer)
-        self.L = nnx.Variable(create_location_tensor(self.grid_size))
-
-    def _safe_l2_norm(self, F):
-        """(Our gradient-safe norm, now a class method)"""
-        norm_sq = jnp.sum(F ** 2, axis=-1, keepdims=True)
-        safe_norm = jnp.sqrt(norm_sq + 1e-6)
-        return F / safe_norm
+        self.location_grid = nnx.Variable(self._create_location_tensor(self.grid_size))
 
     def _get_zero_hint_bias(self):
         """(Our zero-boost logic, now a class method)"""
         # .value gets the array from the nnx.Variable/Param
-        L = self.L.value
+        L = self.location_grid.value
         L_q = L[None, :, :]
         L_k = L[:, None, :]
         dist_sq = jnp.sum((L_q - L_k) ** 2, axis=-1)
         sigma_sq = 1.0
         B_base = jnp.exp(-dist_sq / (2 * sigma_sq))
-        w = jnp.exp(self.log_w_zero_boost.value)
+        w = jnp.exp(self.log_w_zero_boost)
         return 1.0 + (w * B_base)
 
-    def _apply_patch_embed(self, img_batch):
+    def _img_to_patches(self, img):
         """(Our patch embed helper, now uses self.stem)"""
-        # img_batch is (B, C, H, W)
-        x_batched = self.stem(img_batch)  # (B, 64, 8, 8)
+        # img is (B, C, H, W)
+        stem = self.stem(img)  # (B, 64, 8, 8)
+        B, H, W, C = stem.shape
+        patches = stem.reshape(B, H * W, C)
+        return patches
 
-        B, H, W, C = x_batched.shape
-        F_batch = x_batched.reshape(B, H * W, C)
-        return F_batch
+    def _create_location_tensor(self, grid_size):
+        x, y = jnp.meshgrid(jnp.arange(grid_size), jnp.arange(grid_size))
+        L = jnp.stack([x, y], axis=-1).reshape(-1, 2)
+        return L.astype(jnp.float32)
 
-    def __call__(self, img1_batch, img2_batch):
+    def compute_decorrelation_loss(self, features):
         """
-        Applies the full model logic for a BATCH.
-        (We can build vmap right into the class!)
+        Calculates the Barlow Twins/VICReg-style loss for a
+        batch of features (B, P, C).
         """
-        # --- 1. Get Feature Vectors ---
-        F1 = self._apply_patch_embed(img1_batch)  # (B, 64, 64)
-        F2 = self._apply_patch_embed(img2_batch)  # (B, 64, 64)
+        B, P, C = features.shape
 
-        # --- 2. Calculate Raw Similarity ---
-        F1_norm = self._safe_l2_norm(F1)
-        F2_norm = self._safe_l2_norm(F2)
-        C_raw = F1_norm @ F2_norm.transpose(0, 2, 1)  # (B, 64, 64)
+        features_mean = features.mean(axis=(0, 1))  # (C,)
+        features_centered = features - features_mean
 
-        B_gated = self._get_zero_hint_bias()  # (64, 64)
-        C_biased = C_raw * B_gated[None, ...]  # Add batch dim
+        features_flat = features_centered.reshape(-1, C)  # (B*P, C)
+        num_features = features_flat.shape[0]
+        covariance_matrix = (features_flat.T @ features_flat) / (num_features - 1)  # (C, C)
+        loss_variance = jnp.mean(jax.nn.relu(1.0 - jnp.diag(covariance_matrix)))
 
-        C_norm = softmax(C_biased, axis=-1)
+        covariance_no_diag = covariance_matrix.at[jnp.diag_indices(C)].set(0)
+        loss_covariance = jnp.mean(covariance_no_diag ** 2)
 
-        L_batch = jnp.broadcast_to(self.L.value[None, ...], C_norm.shape[:-1] + (2,))
+        return loss_variance, loss_covariance
 
-        A = C_norm @ L_batch
-        Flow_pred = A - L_batch
+    def __call__(self, frame1, frame2, flow_ground_truth):
+        """
+        Runs the full forward pass and computes all losses
+        and metrics, as you requested.
+        """
 
-        return Flow_pred, dict(f1=F1, f2=F2)
+        # --- 1. Get Features ---
+        f1_patches = self._img_to_patches(frame1)
+        f2_patches = self._img_to_patches(frame2)
 
-def create_location_tensor(grid_size):
-    x, y = jnp.meshgrid(jnp.arange(grid_size), jnp.arange(grid_size))
-    L = jnp.stack([x, y], axis=-1).reshape(-1, 2)
-    return L.astype(jnp.float32)
+        # --- 2. Calculate Flow ---
+        # (This is the "no-norm" V1.0 logic)
+        patch_similarities = f1_patches @ f2_patches.transpose(0, 2, 1)
+
+        scaled_similarities = patch_similarities / (jnp.sqrt(self.embed_dim))
+
+        # zero_flow_bias = self._get_zero_hint_bias()
+        # zero_flow_biased_similarities = scaled_similarities * zero_flow_bias[None, ...]
+
+        sharpened_patch_similarities = softmax(scaled_similarities, axis=-1)
+
+        location_grid = jnp.broadcast_to(self.location_grid.value[None, ...],
+                                         sharpened_patch_similarities.shape[:-1] + (2,))
+        target_patch_location = sharpened_patch_similarities @ location_grid
+        flow_prediction = target_patch_location - location_grid
+
+        flow_loss = jnp.mean(jnp.abs(flow_prediction - flow_ground_truth))
+
+        loss_var_F1, loss_cov_F1 = self.compute_decorrelation_loss(f1_patches)
+        loss_var_F2, loss_cov_F2 = self.compute_decorrelation_loss(f2_patches)
+        total_var_loss = (loss_var_F1 + loss_var_F2) / 2.0
+        total_cov_loss = (loss_cov_F1 + loss_cov_F2) / 2.0
+
+        loss_dict = dict(
+            flow=flow_loss,
+            variance=total_var_loss,
+            covariance=total_cov_loss,
+        )
+        debug = dict(
+            f1_magnitude=jnp.mean(jnp.abs(f1_patches)),
+            c_magnitude=jnp.mean(jnp.abs(scaled_similarities)),
+            softmax_confidence=jnp.mean(jnp.max(sharpened_patch_similarities, axis=-1)),
+        )
+        return flow_prediction, dict(loss=loss_dict, debug=debug)
+
+    def _safe_l2_norm(self, features):
+        """Our gradient-safe L2 norm."""
+        norm_sq = jnp.sum(features ** 2, axis=-1, keepdims=True)
+        safe_norm = jnp.sqrt(norm_sq + 1e-6)
+        return features / safe_norm
