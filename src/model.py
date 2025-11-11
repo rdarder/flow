@@ -68,7 +68,7 @@ class BarebonesFlowModel(nnx.Module):
 
         # --- 2. Our "Barebones" Parameters ---
         # nnx.Param makes them learnable
-        self.log_w_zero_boost = 0.1  # nnx.Param(jnp.log(1.0))
+        self.zero_boost = nnx.Param(0.1)
 
         # --- 3. Fixed "Data" ---
         # nnx.Variable makes it non-learnable (like a buffer)
@@ -82,9 +82,7 @@ class BarebonesFlowModel(nnx.Module):
         L_k = L[:, None, :]
         dist_sq = jnp.sum((L_q - L_k) ** 2, axis=-1)
         sigma_sq = 1.0
-        B_base = jnp.exp(-dist_sq / (2 * sigma_sq))
-        w = jnp.exp(self.log_w_zero_boost)
-        return 1.0 + (w * B_base)
+        return jnp.exp(-dist_sq / (2 * sigma_sq))[None, ...]
 
     def _img_to_patches(self, img):
         """(Our patch embed helper, now uses self.stem)"""
@@ -135,10 +133,11 @@ class BarebonesFlowModel(nnx.Module):
 
         scaled_similarities = patch_similarities / (jnp.sqrt(self.embed_dim))
 
-        # zero_flow_bias = self._get_zero_hint_bias()
-        # zero_flow_biased_similarities = scaled_similarities * zero_flow_bias[None, ...]
+        zero_flow_bias = self._get_zero_hint_bias()
+        alpha = self.zero_boost.value
+        zero_flow_biased_similarities = alpha * zero_flow_bias + (1 - alpha) * scaled_similarities
 
-        sharpened_patch_similarities = softmax(scaled_similarities, axis=-1)
+        sharpened_patch_similarities = softmax(zero_flow_biased_similarities, axis=-1)
 
         location_grid = jnp.broadcast_to(self.location_grid.value[None, ...],
                                          sharpened_patch_similarities.shape[:-1] + (2,))

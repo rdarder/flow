@@ -67,20 +67,21 @@ if __name__ == "__main__":
     IMG_SIZE = 32
     PATCH_SIZE = 4
     EMBED_DIM = 64
-    LAMBDA_VARIANCE = 1e-4
 
     grid_size = IMG_SIZE // PATCH_SIZE
 
     # --- JAX / Model Setup ---
-    key = jax.random.PRNGKey(42)
+    key = jax.random.PRNGKey(135)
     # nnx.split is the new way to get a "param" key
     # It creates an Rngs object
     rngs = nnx.Rngs(params=key)
 
     # Model initialization is now one line
     model = BarebonesFlowModel(
-        img_size=IMG_SIZE, patch_size=PATCH_SIZE,
-        embed_dim=EMBED_DIM, rngs=rngs
+        img_size=IMG_SIZE,
+        patch_size=PATCH_SIZE,
+        embed_dim=EMBED_DIM,
+        rngs=rngs
     )
 
     # --- Optax Setup ---
@@ -123,7 +124,7 @@ if __name__ == "__main__":
         # --- 4. End of Epoch Logging ---
         avg_loss = total_epoch_loss / len(train_loader)
         logger.log('Loss/train_epoch', avg_loss, epoch)
-        logger.log('params/zero_boost', model.log_w_zero_boost, epoch)
+        logger.log('params/zero_boost', model.zero_boost, epoch)
 
         log_gradients(grads, logger, epoch)
         log_kernels_to_tensorboard(model, logger, epoch)
