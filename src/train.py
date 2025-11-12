@@ -1,29 +1,92 @@
+from functools import partial
+
 import matplotlib.pyplot as plt
 import jax
 import jax.numpy as jnp
 import optax
 from flax import nnx
 from jax import jit
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset
 
 from model import BarebonesFlowModel
 from chairs_dataset import PreprocessedChairsDataset
 from synthetic_dataset import SyntheticFlowDataset
-from train_logging import JaxLogger, create_flow_figure_jax, log_kernels_to_tensorboard, log_gradients
+from train_logging import JaxLogger, log_kernels_to_tensorboard, log_gradients
+
+
+class Training:
+    def __init__(self, epochs: int, batch_size: int, learning_rate: float, img_size: int, patch_size: int,
+                 embed_dim: int, log_every_steps: int, train_dataset: Dataset):
+        self.epochs = epochs
+        self.batch_size = batch_size
+        self.learning_rate = learning_rate
+        self.img_size = img_size
+        self.patch_size = patch_size
+        self.embed_dim = embed_dim
+        key = jax.random.PRNGKey(135)
+        self.rngs = nnx.Rngs(params=key, sample=0)
+        self.log_every_steps = log_every_steps
+        self.model = BarebonesFlowModel(
+            img_size=img_size,
+            patch_size=patch_size,
+            embed_dim=embed_dim,
+            rngs=self.rngs
+        )
+        self.optimizer = nnx.Optimizer(self.model, optax.adam(learning_rate=learning_rate), wrt=nnx.Param)
+        self.train_dataset = train_dataset
+        self.train_loader = DataLoader(self.train_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
+        self.logger = JaxLogger()
+        self.grid_size = img_size // patch_size
+
+    def log_metrics(self, step: int, metrics_bag: dict):
+        for metric_category, metrics in metrics_bag.items():
+            for metric_name, metric_value in metrics.items():
+                self.logger.log(f'{metric_category}/{metric_name}', metric_value, step)
+
+    def log_epoch_end(self, epoch: int, total_epoch_loss: float):
+        avg_loss = total_epoch_loss / len(self.train_loader)
+        self.logger.log('Loss/train_epoch', avg_loss, epoch)
+        self.logger.log('params/zero_boost', self.model.zero_boost, epoch)
+        print(f"Epoch [{epoch + 1}/{self.epochs}] | Avg Loss: {avg_loss:.6f}")
+
+    def log_gradients(self, gradients, epoch: int):
+        log_gradients(gradients, self.logger, epoch)
+
+    def log_conv_kernels(self, epoch: int):
+        log_kernels_to_tensorboard(self.model, self.logger, epoch)
+
+    def train_one_epoch(self, global_step: int, epoch: int):
+        total_epoch_loss = 0.0
+        grads = None
+        for i, (raw_frame1, raw_frame2, flow_gt_pt) in enumerate(self.train_loader):
+            frame1_batch = jnp.array(raw_frame1.numpy())
+            frame2_batch = jnp.array(raw_frame2.numpy())
+            flow_gt_batch = jnp.array(flow_gt_pt.numpy())
+
+            loss, metrics_bag, grads = update_step(self.model, self.optimizer, frame1_batch, frame2_batch,
+                                                   flow_gt_batch)
+            total_epoch_loss += loss
+            if global_step % self.log_every_steps == 0:
+                self.log_metrics(global_step, metrics_bag)
+
+            global_step += 1
+        self.log_epoch_end(epoch, total_epoch_loss)
+        self.log_gradients(grads, epoch)
+        self.log_conv_kernels(epoch)
+        return global_step
+
+    def run(self):
+        print("Starting training with Flax.nnx...")
+        global_step = 0
+        for epoch in range(self.epochs):
+            global_step = self.train_one_epoch(global_step, epoch)
+        self.logger.close()
+        print("Training complete.")
 
 
 def loss_fn(model, img1_batch, img2_batch, flow_gt_batch):
-    """
-    Calls the model to get all metrics, then
-    combines the final loss.
-    """
-
-    # 1. Get model outputs (Flow_pred, aux_dict)
-    # We don't need Flow_pred here, only the aux_dict
     _, aux = model(img1_batch, img2_batch, flow_gt_batch)
 
-    # 2. Combine the final loss (the "accounting")
-    # (We can tune these lambda weights)
     LAMBDA_VAR = 1e-3
     LAMBDA_COV = 1e-3
 
@@ -33,111 +96,32 @@ def loss_fn(model, img1_batch, img2_batch, flow_gt_batch):
             (LAMBDA_VAR * loss_components['variance']) +
             (LAMBDA_COV * loss_components['covariance'])
     )
-
-    # 3. Add total_loss to the dict for logging
     loss_components['total'] = total_loss
-
-    # Return (loss_for_grad, metrics_for_logging)
     return total_loss, aux
 
 
-# --- 2. The New "Update Step" (using nnx and optax) ---
 @jit
-def update_step(model, optimizer, img1_batch, img2_batch, flow_gt_batch):
+def update_step(model, optimizer, img1, img2, flow_gt):
     """Performs one update step using nnx and optax."""
 
-    # 1. Get grads (nnx.value_and_grad is the new tool)
-    # It knows to differentiate *only* the nnx.Param parts of 'model'
     (loss, aux), grads = nnx.value_and_grad(loss_fn, has_aux=True)(
-        model, img1_batch, img2_batch, flow_gt_batch
+        model, img1, img2, flow_gt
     )
     optimizer.update(model, grads)
-    return model, loss, aux, grads
-
-
-# --- 3. Our Refactored Logging Helpers ---
+    return loss, aux, grads
 
 
 if __name__ == "__main__":
-
-    # --- Hyperparameters ---
-    EPOCHS = 200
-    BATCH_SIZE = 64
-    LEARNING_RATE = 1e-3
-    IMG_SIZE = 32
-    PATCH_SIZE = 4
-    EMBED_DIM = 64
-
-    grid_size = IMG_SIZE // PATCH_SIZE
-
-    # --- JAX / Model Setup ---
-    key = jax.random.PRNGKey(135)
-    # nnx.split is the new way to get a "param" key
-    # It creates an Rngs object
-    rngs = nnx.Rngs(params=key)
-
-    # Model initialization is now one line
-    model = BarebonesFlowModel(
-        img_size=IMG_SIZE,
-        patch_size=PATCH_SIZE,
-        embed_dim=EMBED_DIM,
-        rngs=rngs
+    # train_dataset = PreprocessedChairsDataset('../datasets/chairs_32/')
+    train_dataset = SyntheticFlowDataset(img_size=32, patch_size=4,)
+    training = Training(
+        epochs=200,
+        batch_size=64,
+        learning_rate=1e-3,
+        img_size=32,
+        patch_size=4,
+        embed_dim=32,
+        log_every_steps=20,
+        train_dataset=train_dataset,
     )
-
-    # --- Optax Setup ---
-    optimizer = nnx.Optimizer(model,
-                              optax.adam(learning_rate=LEARNING_RATE),
-                              wrt=nnx.Param)
-
-    # --- Data Setup ---
-    train_dataset = PreprocessedChairsDataset('../datasets/chairs_32/')  # (Our V0.2 with noise)
-    train_loader = DataLoader(
-        train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=4
-    )
-
-    logger = JaxLogger()
-    print("Starting training with Flax.nnx...")
-    global_step = 0
-
-    for epoch in range(EPOCHS):
-        total_epoch_loss = 0.0
-
-        for i, (img1_pt, img2_pt, flow_gt_pt) in enumerate(train_loader):
-
-            img1_batch = jnp.array(img1_pt.numpy())
-            img2_batch = jnp.array(img2_pt.numpy())
-            flow_gt_batch = jnp.array(flow_gt_pt.numpy())
-
-            # --- 2. Run the JIT-compiled Update Step ---
-            model, loss, aux, grads = update_step(
-                model, optimizer, img1_batch, img2_batch, flow_gt_batch
-            )
-
-            total_epoch_loss += loss
-
-            if global_step % 20 == 0:
-                for metric_category, metrics in aux.items():
-                    for metric_name, metric_value in metrics.items():
-                        logger.log(f'{metric_category}/{metric_name}', metric_value, global_step)
-            global_step += 1
-
-        # --- 4. End of Epoch Logging ---
-        avg_loss = total_epoch_loss / len(train_loader)
-        logger.log('Loss/train_epoch', avg_loss, epoch)
-        logger.log('params/zero_boost', model.zero_boost, epoch)
-
-        log_gradients(grads, logger, epoch)
-        log_kernels_to_tensorboard(model, logger, epoch)
-        flow_pred_snapshot, _ = model(img1_batch, img2_batch, flow_gt_batch)
-        fig = create_flow_figure_jax(
-            img1_pt.numpy(), img2_pt.numpy(),
-            flow_gt_batch, flow_pred_snapshot,
-            grid_size
-        )
-        logger.writer.add_figure('Validation/prediction_sample', fig, global_step)
-        plt.close(fig)
-
-        print(f"Epoch [{epoch + 1}/{EPOCHS}] | Avg Loss: {avg_loss:.6f}")
-
-    logger.close()
-    print("Training complete.")
+    training.run()

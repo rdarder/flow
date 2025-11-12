@@ -21,7 +21,8 @@ class SyntheticFlowDataset(Dataset):
                  max_flow=5,
                  # --- NEW PARAMETERS ---
                  bg_noise_scale=4.0,  # Scale for the background (larger=slower noise)
-                 frame_noise_std=0.01):  # Std dev of Gaussian noise to add at the end
+                 frame_noise_std=0.01,
+                 length: int = 5000):  # Std dev of Gaussian noise to add at the end
 
         self.img_size = img_size
         self.patch_size = patch_size
@@ -31,13 +32,14 @@ class SyntheticFlowDataset(Dataset):
         self.noise_scale_range = noise_scale_range
         self.blob_threshold = blob_threshold
         self.max_flow = max_flow
+        self.length = length
 
         # --- NEW ---
         self.bg_noise_scale = bg_noise_scale
         self.frame_noise_std = frame_noise_std
 
     def __len__(self):
-        return 5000  # Virtual epoch size
+        return self.length
 
     def _generate_blob_map(self, size, scale):
         """(Unchanged) Generates a single (size, size) noise map [0, 1]."""
@@ -142,6 +144,8 @@ class SyntheticFlowDataset(Dataset):
 
             flow_target.reshape(2, P).T  # (P, 2)
         )
+
+
 if __name__ == '__main__':
     """
     Test script to run the dataset directly and find errors

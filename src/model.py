@@ -7,7 +7,7 @@ from flax.linen import max_pool
 
 # --- 1. The "GroupNorm" Stem (V0.12) ---
 class Stem(nnx.Module):
-    def __init__(self, *, rngs):
+    def __init__(self, embed_dim: int, *, rngs):
         """Initializes our V0.12 'MaxPool + Norm' stem."""
         init = nnx.initializers.lecun_normal()
         self.dw1 = nnx.Conv(
@@ -17,26 +17,26 @@ class Stem(nnx.Module):
             kernel_init=init, rngs=rngs
         )
         self.pw1 = nnx.Conv(
-            in_features=24, out_features=32, kernel_size=(1, 1),
+            in_features=24, out_features=embed_dim//2, kernel_size=(1, 1),
             use_bias=True, kernel_init=init, rngs=rngs
         )
         self.norm1 = nnx.GroupNorm(
-            num_groups=1, num_features=32,  # num_groups=1 == LayerNorm
+            num_groups=1, num_features=embed_dim//2,  # num_groups=1 == LayerNorm
             use_bias=True, use_scale=True, rngs=rngs
         )
 
         self.dw2 = nnx.Conv(
-            in_features=32, out_features=32, kernel_size=(3, 3),
+            in_features=embed_dim//2, out_features=embed_dim//2, kernel_size=(3, 3),
             strides=(1, 1),  # Find features
-            feature_group_count=32, padding='SAME', use_bias=True,
+            feature_group_count=embed_dim//2, padding='SAME', use_bias=True,
             kernel_init=init, rngs=rngs
         )
         self.pw2 = nnx.Conv(
-            in_features=32, out_features=64, kernel_size=(1, 1),
+            in_features=embed_dim//2, out_features=embed_dim, kernel_size=(1, 1),
             use_bias=True, kernel_init=init, rngs=rngs
         )
         self.norm2 = nnx.GroupNorm(
-            num_groups=1, num_features=64,
+            num_groups=1, num_features=embed_dim,
             use_bias=True, use_scale=True, rngs=rngs
         )
 
@@ -64,7 +64,7 @@ class BarebonesFlowModel(nnx.Module):
         self.grid_size = img_size // patch_size
 
         # --- 1. The Stem Module ---
-        self.stem = Stem(rngs=rngs)
+        self.stem = Stem(embed_dim=embed_dim, rngs=rngs)
 
         # --- 2. Our "Barebones" Parameters ---
         # nnx.Param makes them learnable
