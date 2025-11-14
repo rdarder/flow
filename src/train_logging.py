@@ -49,6 +49,48 @@ class JaxLogger:
     def close(self):
         self.writer.close()
 
+def create_flow_figure_jax(img1, img2, flow_gt, flow_pred):
+    """
+    Creates a 4-panel matplotlib figure for JAX data.
+    (This version handles DENSE flow directly)
+    """
+    # We'll just show the first item in the batch
+    # Data is (B, H, W, C), so grab [0]
+    img1_sample = np.array(img1[0])
+    img2_sample = np.array(img2[0])
+    flow_gt_sample = np.array(flow_gt[0])
+    flow_pred_sample = np.array(flow_pred[0])
+
+    # --- 1. Handle Images ---
+    img1_plot = np.clip(img1_sample, 0, 1)
+    img2_plot = np.clip(img2_sample, 0, 1)
+
+    # --- 2. Handle Flows ---
+    # Data is already (H, W, 2), no reshape needed.
+    flow_gt_img = flow_to_color(flow_gt_sample)
+    flow_pred_img = flow_to_color(flow_pred_sample)
+
+    # --- 3. Plot ---
+    fig, axes = plt.subplots(1, 4, figsize=(16, 4))
+
+    axes[0].imshow(img1_plot)
+    axes[0].set_title("Image 1 (t0)")
+    axes[0].axis('off')
+
+    axes[1].imshow(img2_plot)
+    axes[1].set_title("Image 2 (t1)")
+    axes[1].axis('off')
+
+    axes[2].imshow(flow_gt_img)
+    axes[2].set_title("Ground Truth Flow")
+    axes[2].axis('off')
+
+    axes[3].imshow(flow_pred_img)
+    axes[3].set_title("Predicted Flow")
+    axes[3].axis('off')
+
+    fig.tight_layout()
+    return fig
 
 VMIN, VMAX = -1.0, 1.0
 

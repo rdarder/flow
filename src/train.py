@@ -1,11 +1,12 @@
 import jax
 import jax.numpy as jnp
+import matplotlib.pyplot as plt
 import optax
 from flax import nnx
 from torch.utils.data import DataLoader, Dataset
 from model import BarebonesFlowModel
 from synthetic_dataset import SyntheticFlowDataset
-from train_logging import JaxLogger, log_kernels_to_tensorboard, log_gradients
+from train_logging import JaxLogger, log_kernels_to_tensorboard, log_gradients, create_flow_figure_jax
 
 
 class Training:
@@ -50,24 +51,55 @@ class Training:
     def log_conv_kernels(self, epoch: int):
         log_kernels_to_tensorboard(self.model, self.logger, epoch)
 
+    def log_evaluation_sample(self, epoch: int):
+        """Grabs one batch, runs inference, and logs a flow image."""
+        try:
+            # 1. Get one random batch from the *shuffled* loader
+            raw_frame1, raw_frame2, flow_gt_pt = next(iter(self.train_loader))
+
+            # 2. Convert to JAX arrays
+            img1_batch = jnp.array(raw_frame1.numpy())
+            img2_batch = jnp.array(raw_frame2.numpy())
+            flow_gt_batch = jnp.array(flow_gt_pt.numpy())
+
+            # 3. Run inference (forward pass only, no jit, no update)
+            # We must pass the GT for the model's loss_fn to work,
+            # even though we only want the prediction.
+            dense_flow_pred, _ = self.model(img1_batch, img2_batch, flow_gt_batch)
+
+            # 4. Create and log the figure
+            fig = create_flow_figure_jax(
+                img1_batch,
+                img2_batch,
+                flow_gt_batch,
+                dense_flow_pred
+            )
+            self.logger.writer.add_figure('Flow_Comparison/epoch', fig, epoch)
+
+        except Exception as e:
+            print(f"Warning: Could not log evaluation sample. Error: {e}")
+
     def train_one_epoch(self, global_step: int, epoch: int):
         total_epoch_loss = 0.0
         grads = None
+        frame1_batch, frame2_batch, flow_gt_batch, aux_bag = None, None, None, None
         for i, (raw_frame1, raw_frame2, flow_gt_pt) in enumerate(self.train_loader):
             frame1_batch = jnp.array(raw_frame1.numpy())
             frame2_batch = jnp.array(raw_frame2.numpy())
             flow_gt_batch = jnp.array(flow_gt_pt.numpy())
 
-            loss, metrics_bag, grads = update_step(self.model, self.optimizer, frame1_batch, frame2_batch,
-                                                   flow_gt_batch)
+            loss, aux_bag, grads = update_step(self.model, self.optimizer, frame1_batch, frame2_batch,
+                                               flow_gt_batch)
             total_epoch_loss += loss
             if (global_step + 1) % self.log_every_steps == 0:
-                self.log_metrics(global_step, metrics_bag)
+                self.log_metrics(global_step, aux_bag)
 
             global_step += 1
+
         self.log_epoch_end(epoch, total_epoch_loss)
         self.log_gradients(grads, epoch)
         self.log_conv_kernels(epoch)
+        self.log_evaluation_sample(epoch)
         return global_step
 
     def run(self):
@@ -89,7 +121,7 @@ class Training:
             batch_size=64,
             learning_rate=1e-3,
             img_size_hw=(18, 18),
-            embed_dim=32,
+            embed_dim=16,
             log_every_steps=50,
             train_dataset=train_dataset,
             logger=jax_logger,
@@ -100,8 +132,8 @@ class Training:
 def loss_fn(model, img1_batch, img2_batch, flow_gt_batch):
     _, aux = model(img1_batch, img2_batch, flow_gt_batch)
 
-    LAMBDA_VAR = 0. #1e-3
-    LAMBDA_COV = 0. #1e-3
+    LAMBDA_VAR = 0.  # 1e-3
+    LAMBDA_COV = 0.  # 1e-3
 
     loss_components = aux['loss']
     total_loss = (
