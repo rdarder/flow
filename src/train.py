@@ -2,7 +2,6 @@ import jax
 import jax.numpy as jnp
 import optax
 from flax import nnx
-from jax import jit
 from torch.utils.data import DataLoader, Dataset
 from model import BarebonesFlowModel
 from synthetic_dataset import SyntheticFlowDataset
@@ -101,8 +100,8 @@ class Training:
 def loss_fn(model, img1_batch, img2_batch, flow_gt_batch):
     _, aux = model(img1_batch, img2_batch, flow_gt_batch)
 
-    LAMBDA_VAR = 0.#1e-3
-    LAMBDA_COV = 0.#0.1
+    LAMBDA_VAR = 0. #1e-3
+    LAMBDA_COV = 0. #1e-3
 
     loss_components = aux['loss']
     total_loss = (
@@ -114,7 +113,7 @@ def loss_fn(model, img1_batch, img2_batch, flow_gt_batch):
     return total_loss, aux
 
 
-@jit
+@nnx.jit
 def update_step(model, optimizer, img1, img2, flow_gt):
     """Performs one update step using nnx and optax."""
 
