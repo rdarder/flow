@@ -31,8 +31,8 @@ def flow_to_color(flow, max_flow=None):
 
 
 class JaxLogger:
-    def __init__(self, log_dir='runs'):
-        run_name = f"v0_jax_barebones_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    def __init__(self, version: str, log_dir='runs'):
+        run_name = f"{version}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         log_path = os.path.join(log_dir, run_name)
         self.writer = SummaryWriter(log_path)
         print(f"Logging to {log_path}")
@@ -53,7 +53,7 @@ class JaxLogger:
 VMIN, VMAX = -1.0, 1.0
 
 
-def _log_single_kernel(logger, kernel_jax, name, epoch):
+def log_single_kernel(logger, kernel_jax, name, epoch):
     """Helper to convert, normalize, grid, and log one kernel."""
     kernels_torch = torch.from_numpy(np.array(kernel_jax))
     kernels_permuted = kernels_torch.permute(3, 2, 0, 1)
@@ -70,8 +70,7 @@ def log_kernels_to_tensorboard(model, logger, epoch):
     to TensorBoard as an image grid, using a *fixed*
     normalization range to make changes visible.
     """
-    _log_single_kernel(logger, model.stem.dw1.kernel.value, 'dw1_W (stem)', epoch)
-    _log_single_kernel(logger, model.stem.dw2.kernel.value, 'dw2_W (stem)', epoch)
+    log_single_kernel(logger, model.stem.dw1.kernel.value, 'dw1_W (stem)', epoch)
 
 
 def log_gradients(grads_tree, logger, epoch):
