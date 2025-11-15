@@ -41,8 +41,8 @@ class Training:
     def log_epoch_end(self, epoch: int, total_epoch_loss: float):
         avg_loss = total_epoch_loss / len(self.train_loader)
         self.logger.log('Loss/train_epoch', avg_loss, epoch)
-        self.logger.log('params/zero_boost_radius', self.model.zero_boost_radius, epoch)
-        self.logger.log('params/attn_temperature', self.model.attn_temperature, epoch)
+        self.logger.log('params/patch_lookup/attn_temperature', self.model.patch_lookup.attn_temperature, epoch)
+        self.logger.log('params/pos_encoding_scale', self.model.pos_encoding_scale, epoch)
         print(f"Epoch [{epoch + 1}/{self.epochs}] | Avg Loss: {avg_loss:.6f}")
 
     def log_gradients(self, gradients, epoch: int):
@@ -132,15 +132,8 @@ class Training:
 def loss_fn(model, img1_batch, img2_batch, flow_gt_batch):
     _, aux = model(img1_batch, img2_batch, flow_gt_batch)
 
-    LAMBDA_VAR = 0.  # 1e-3
-    LAMBDA_COV = 0.  # 1e-3
-
     loss_components = aux['loss']
-    total_loss = (
-            loss_components['flow'] +
-            (LAMBDA_VAR * loss_components['variance']) +
-            (LAMBDA_COV * loss_components['covariance'])
-    )
+    total_loss = loss_components['flow']
     loss_components['total'] = total_loss
     return total_loss, aux
 
