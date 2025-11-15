@@ -20,7 +20,7 @@ def flow_to_color(flow, max_flow=None):
     h = (angle + np.pi) / (2 * np.pi)
     s = np.ones_like(h)
     if max_flow is None:
-        max_mag = np.percentile(magnitude, 99)
+        max_mag = np.percentile(magnitude, 99.9)
     else:
         max_mag = max_flow
     v = np.clip(magnitude / (max_mag + 1e-6), 0, 1)
@@ -49,47 +49,84 @@ class JaxLogger:
     def close(self):
         self.writer.close()
 
-def create_flow_figure_jax(img1, img2, flow_gt, flow_pred):
+
+def create_diagnostic_figure_jax(
+        img1, img2, flow_gt,
+        f_final, f_cross, f_peer,
+        c_cross_grid, a_cross, a_peer
+):
     """
-    Creates a 4-panel matplotlib figure for JAX data.
-    (This version handles DENSE flow directly)
+    Creates the new 9-panel diagnostic figure.
+    Expects all inputs to be JAX arrays from a *single* batch item (e.g., index 0).
     """
-    # We'll just show the first item in the batch
-    # Data is (B, H, W, C), so grab [0]
-    img1_sample = np.array(img1[0])
-    img2_sample = np.array(img2[0])
-    flow_gt_sample = np.array(flow_gt[0])
-    flow_pred_sample = np.array(flow_pred[0])
 
-    # --- 1. Handle Images ---
-    img1_plot = np.clip(img1_sample, 0, 1)
-    img2_plot = np.clip(img2_sample, 0, 1)
+    # --- 1. Prepare Data (Convert JAX to NumPy for plotting) ---
+    img1_np = np.array(img1)
+    img2_np = np.array(img2)
 
-    # --- 2. Handle Flows ---
-    # Data is already (H, W, 2), no reshape needed.
-    flow_gt_img = flow_to_color(flow_gt_sample)
-    flow_pred_img = flow_to_color(flow_pred_sample)
+    # Convert flows to color images
+    gt_img = flow_to_color(np.array(flow_gt))
+    f_final_img = flow_to_color(np.array(f_final))
+    f_cross_img = flow_to_color(np.array(f_cross))
+    f_peer_img = flow_to_color(np.array(f_peer))
 
-    # --- 3. Plot ---
-    fig, axes = plt.subplots(1, 4, figsize=(16, 4))
+    # --- 2. Process Attention & Confidence Maps ---
+    # Find the most occluded patch (lowest confidence)
+    # c_cross_grid is (64, 1)
+    worst_patch_idx = jnp.argmin(c_cross_grid[:, 0])
 
-    axes[0].imshow(img1_plot)
-    axes[0].set_title("Image 1 (t0)")
-    axes[0].axis('off')
+    # Get the 1D attention vectors for that patch and reshape to 8x8
+    h, w = 8, 8  # We know this from our grid size
+    a_cross_map = np.array(a_cross[worst_patch_idx, :]).reshape(h, w)
+    a_peer_map = np.array(a_peer[worst_patch_idx, :]).reshape(h, w)
 
-    axes[1].imshow(img2_plot)
-    axes[1].set_title("Image 2 (t1)")
-    axes[1].axis('off')
+    # Reshape confidence map to 8x8 for viewing
+    c_cross_map = np.array(c_cross_grid).reshape(h, w)
 
-    axes[2].imshow(flow_gt_img)
-    axes[2].set_title("Ground Truth Flow")
-    axes[2].axis('off')
+    # --- 3. Create Plot ---
+    fig, axes = plt.subplots(3, 3, figsize=(15, 15))
+    fig.suptitle("Flow Diagnostics", fontsize=16)
 
-    axes[3].imshow(flow_pred_img)
-    axes[3].set_title("Predicted Flow")
-    axes[3].axis('off')
+    # Row 1: Inputs & Ground Truth
+    axes[0, 0].imshow(img1_np)
+    axes[0, 0].set_title("Image 1 (f0)")
+    axes[0, 0].axis('off')
 
-    fig.tight_layout()
+    axes[0, 1].imshow(img2_np)
+    axes[0, 1].set_title("Image 2 (f1)")
+    axes[0, 1].axis('off')
+
+    axes[0, 2].imshow(gt_img)
+    axes[0, 2].set_title("Ground Truth Flow")
+    axes[0, 2].axis('off')
+
+    # Row 2: Flow Components
+    axes[1, 0].imshow(f_cross_img)
+    axes[1, 0].set_title("F_cross (V1 Flow)")
+    axes[1, 0].axis('off')
+
+    axes[1, 1].imshow(f_peer_img)
+    axes[1, 1].set_title("F_peer (V2 Flow)")
+    axes[1, 1].axis('off')
+
+    axes[1, 2].imshow(f_final_img)
+    axes[1, 2].set_title("F_final (Blended)")
+    axes[1, 2].axis('off')
+
+    # Row 3: Attention & Confidence
+    im_c = axes[2, 0].imshow(c_cross_map, cmap='viridis', vmin=0.0, vmax=1.0)
+    axes[2, 0].set_title("C_cross (V1 Confidence)")
+    plt.colorbar(im_c, ax=axes[2, 0], fraction=0.046, pad=0.04)
+
+    im_a1 = axes[2, 1].imshow(a_cross_map, cmap='hot')
+    axes[2, 1].set_title(f"A_cross (for patch {worst_patch_idx})")
+    plt.colorbar(im_a1, ax=axes[2, 1], fraction=0.046, pad=0.04)
+
+    im_a2 = axes[2, 2].imshow(a_peer_map, cmap='hot')
+    axes[2, 2].set_title(f"A_peer (for patch {worst_patch_idx})")
+    plt.colorbar(im_a2, ax=axes[2, 2], fraction=0.046, pad=0.04)
+
+    plt.tight_layout(rect=[0, 0.03, 1, 0.95])
     return fig
 
 VMIN, VMAX = -1.0, 1.0
@@ -103,7 +140,6 @@ def log_single_kernel(logger, kernel_jax, name, epoch):
     kernels_norm = (kernels_clamped - VMIN) / (VMAX - VMIN + 1e-6)
     grid = torchvision.utils.make_grid(kernels_norm, nrow=8, padding=1)
     logger.writer.add_image(f'Kernels/{name}', grid, epoch)
-
 
 
 def log_kernels_to_tensorboard(model, logger, epoch):

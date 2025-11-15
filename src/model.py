@@ -99,75 +99,73 @@ class SinusoidalPosEncoding(nnx.Module):
 class PatchLookupAttention(nnx.Module):
     """
     V1 "Patch Lookup" Block.
-    Calculates flow by finding patches from F1 in F2.
-    - Q/K bias is now handled by fused positional encoding.
-    - V is the location grid L.
     """
 
     def __init__(self, *, rngs):
-        # We only need the temperature for the logits
-        self.attn_temperature = nnx.Param(2.0)
+        self.attn_temperature = nnx.Param(1.0)
+        self.pos_scale = nnx.Param(2.0)
 
-    def __call__(self, f1_fused, f2_fused, location_grid_L):
+    def __call__(self, f1_patches, f2_patches, pe, location_grid_L):
         """
         Args:
-          f1_fused: (B, 64, C) - f1_patches + PE
-          f2_fused: (B, 64, C) - f2_patches + PE
+          f1_patches: (B, 64, C) - *Raw* features
+          f2_patches: (B, 64, C) - *Raw* features
+          pe: (64, C) - *Raw* positional encoding
           location_grid_L: (B, 64, 2) - Broadcasted V matrix
-        Returns:
-          F_cross: (B, 64, 2) - The raw V1 flow
-          C_cross: (B, 64, 1) - The V1 confidence
         """
+        # 0. Fuse in positional encoding with our own scale.
+        pe_scaled = pe * self.pos_scale
+        f1_fused = f1_patches + pe_scaled
+        f2_fused = f2_patches + pe_scaled
+
         # 1. Get Attention
-        # This one op now handles content similarity AND spatial bias
         logits = (f1_fused @ f2_fused.transpose(0, 2, 1)) * self.attn_temperature
-        cross_attn = softmax(logits, axis=-1)  # (B, 64, 64)
+        A_cross = softmax(logits, axis=-1)  # (B, 64, 64)
 
         # 2. Get Flow (L_target - L_source)
         # (attn @ L) - L
-        # L is a flattened grid (B, P*P, 2) dimensions
-        F_cross = (cross_attn @ location_grid_L) - location_grid_L  # (B, 64, 2)
+        F_cross = (A_cross @ location_grid_L) - location_grid_L  # (B, 64, 2)
 
         # 3. Get Confidence (using jnp.max as discussed)
-        max_val = jnp.max(cross_attn, axis=-1, keepdims=True)
-        num_choices = cross_attn.shape[-1]
+        max_val = jnp.max(A_cross, axis=-1, keepdims=True)
+        num_choices = A_cross.shape[-1]
 
         # Rescale [1/N, 1.0] -> [0.0, 1.0]
         C_cross = (max_val - (1.0 / num_choices)) / (1.0 - (1.0 / num_choices))
         C_cross = jnp.clip(C_cross, 0.0, 1.0)  # (B, 64, 1)
 
-        return F_cross, C_cross, cross_attn
+        return F_cross, C_cross, A_cross
 
 
 class PeerPropagationAttention(nnx.Module):
     """
     V2.1 "Peer Propagation" Block.
-    Calculates flow for occluded patches based on confident peers.
-    - Q = Fused features
-    - K = Gated fused features (gated by V1 confidence)
-    - V = V1 Flow
     """
 
     def __init__(self, *, rngs):
-        self.peer_attn_temp = nnx.Param(1.0)
+        self.attn_temperature = nnx.Param(1.0)
+        self.pos_scale = nnx.Param(4.0)
         self.self_mask = nnx.Variable(jnp.eye(64) * -1e9)  # (64, 64)
 
-    def __call__(self, f1_fused, F_cross, C_cross):
+    def __call__(self, f1_patches, pe, F_cross, C_cross):
         """
         Args:
-          f1_fused: (B, 64, C) - f1_patches + PE
+          f1_patches: (B, 64, C) - *Raw* features
+          pe: (64, C) - *Raw* positional encoding
           F_cross: (B, 64, 2) - V1 flow (serves as V)
           C_cross: (B, 64, 1) - V1 confidence (serves as gate)
-        Returns:
-          F_peer: (B, 64, 2) - The propagated peer flow
         """
+        # 0. Fuse in positional encoding with our own scale.
+        pe_scaled = pe * self.pos_scale
+        f1_fused = f1_patches + pe_scaled
+
         # 1. Define Q, K, V (as per our V2.1 design)
         Q = f1_fused  # (B, 64, C)
         K = f1_fused * C_cross  # (B, 64, C) - Gated Key
         V = F_cross  # (B, 64, 2)
 
         # 2. Get Peer Attention
-        logits_peer = (Q @ K.transpose(0, 2, 1)) * self.peer_attn_temp
+        logits_peer = (Q @ K.transpose(0, 2, 1)) * self.attn_temperature
 
         # 3. Mask self-attention
         logits_peer = logits_peer + self.self_mask.value  # (B, 64, 64)
@@ -183,8 +181,6 @@ class PeerPropagationAttention(nnx.Module):
 class BarebonesFlowModel(nnx.Module):
     """
     The main "Orchestrator" model.
-    Runs the Stem, V1 (PatchLookup), and V2.1 (PeerPropagation),
-    then blends and upsamples the final flow.
     """
 
     def __init__(self, img_size_hw: tuple[int, int], embed_dim: int, *, rngs):
@@ -201,13 +197,10 @@ class BarebonesFlowModel(nnx.Module):
         self.pos_encoding = SinusoidalPosEncoding(self.grid_size_hw, embed_dim)
         # The V matrix (L) for flow calculation (unchanged)
         self.location_grid = nnx.Variable(self._create_location_tensor(self.grid_size_hw))
-        # New learnable scale for PE
-        self.pos_encoding_scale = nnx.Param(3.0)
 
         # 3. Attention Layers
         self.patch_lookup = PatchLookupAttention(rngs=rngs)
         self.peer_prop = PeerPropagationAttention(rngs=rngs)
-
 
     def _create_location_tensor(self, grid_size_hw: tuple[int, int]) -> jnp.ndarray:
         """(Unchanged) Creates the (H*W, 2) location grid L (for V matrix)."""
@@ -224,11 +217,18 @@ class BarebonesFlowModel(nnx.Module):
         return patches
 
     def _upsample_flow_to_dense(self, flow_pred_grid_units, batch_size):
-        """(Unchanged) Upsamples (B, 8, 8, 2) to (B, 18, 18, 2)."""
-        flow_pred_pixels = flow_pred_grid_units * self.stride
+        """Upsamples (B, 64, 2) flat flow grid to (B, 18, 18, 2) dense flow."""
+
+        # --- FIX ---
+        # Input `flow_pred_grid_units` is (B, 64, 2). Reshape to (B, 8, 8, 2).
+        h_grid, w_grid = self.grid_size_hw
+        flow_pred_map = flow_pred_grid_units.reshape(batch_size, h_grid, w_grid, 2)
+        # --- END FIX ---
+
+        flow_pred_pixels = flow_pred_map * self.stride # Use the reshaped map
         h_inner, w_inner = self.inner_hw
         flow_16x16 = jax.image.resize(
-            flow_pred_pixels,
+            flow_pred_pixels, # This is now (B, 8, 8, 2)
             shape=(batch_size, h_inner, w_inner, 2),
             method='bilinear'
         )
@@ -243,11 +243,8 @@ class BarebonesFlowModel(nnx.Module):
         f1_patches = self._img_to_patches(frame1)  # (B, 64, C)
         f2_patches = self._img_to_patches(frame2)  # (B, 64, C)
 
-        # --- 2. Get Fused Features ---
+        # --- 2. Get Raw PE ---
         pe = self.pos_encoding()  # (64, C)
-        pe_scaled = pe * self.pos_encoding_scale
-        f1_fused = f1_patches + pe_scaled
-        f2_fused = f2_patches + pe_scaled
 
         # --- 3. Run V1: Patch Lookup ---
         num_patches = self.grid_size_hw[0] * self.grid_size_hw[1]
@@ -255,10 +252,11 @@ class BarebonesFlowModel(nnx.Module):
             self.location_grid.value.reshape(1, num_patches, 2),
             (batch_size, num_patches, 2)
         )
-        F_cross, C_cross, A_cross = self.patch_lookup(f1_fused, f2_fused, L_broadcast)
+
+        F_cross, C_cross, A_cross = self.patch_lookup(f1_patches, f2_patches, pe, L_broadcast)
 
         # --- 4. Run V2.1: Peer Propagation ---
-        F_peer, A_peer = self.peer_prop(f1_fused, F_cross, C_cross)
+        F_peer, A_peer = self.peer_prop(f1_patches, pe, F_cross, C_cross)
 
         # --- 5. Blend Flows ---
         w1 = C_cross
@@ -277,7 +275,31 @@ class BarebonesFlowModel(nnx.Module):
             flow=flow_loss,
         )
 
+        # --- 8. Create Rich Trace for Logging ---
+        # Upsample intermediate flows for visualization
+        f_cross_dense = self._upsample_flow_to_dense(F_cross, batch_size)
+        f_peer_dense = self._upsample_flow_to_dense(F_peer, batch_size)
+
+        # Upsample confidence map for visualization
+        c_cross_map = C_cross.reshape(batch_size, h_grid, w_grid, 1)
+        c_cross_dense = jax.image.resize(
+            c_cross_map,
+            shape=(batch_size, self.inner_hw[0], self.inner_hw[1], 1),
+            method='nearest' # Use nearest to see the blocks
+        )
+        c_cross_dense = jnp.pad(c_cross_dense, ((0,0), (1,1), (1,1), (0,0)), mode='edge')
+
+
+        trace_dict = dict(
+            A_cross=A_cross,    # (B, 64, 64)
+            A_peer=A_peer,      # (B, 64, 64)
+            C_cross_grid=C_cross, # (B, 64, 1)
+            F_cross_dense=f_cross_dense, # (B, 18, 18, 2)
+            F_peer_dense=f_peer_dense,   # (B, 18, 18, 2)
+            C_cross_dense=c_cross_dense  # (B, 18, 18, 1)
+        )
+
         return dense_flow_pred, dict(
             loss=loss_dict,
-            trace=dict(A_cross=A_cross, A_peer=A_peer, C_cross=C_cross)
+            trace=trace_dict
         )

@@ -1,13 +1,11 @@
 import jax
 import jax.numpy as jnp
-import matplotlib.pyplot as plt
 import optax
 from flax import nnx
 from torch.utils.data import DataLoader, Dataset
 from model import BarebonesFlowModel
 from synthetic_dataset import SyntheticFlowDataset
-from train_logging import JaxLogger, log_kernels_to_tensorboard, log_gradients, create_flow_figure_jax
-
+from train_logging import JaxLogger, log_kernels_to_tensorboard, log_gradients, create_diagnostic_figure_jax
 
 class Training:
     def __init__(self, epochs: int, batch_size: int, learning_rate: float, img_size_hw: tuple[int, int],
@@ -42,7 +40,9 @@ class Training:
         avg_loss = total_epoch_loss / len(self.train_loader)
         self.logger.log('Loss/train_epoch', avg_loss, epoch)
         self.logger.log('params/patch_lookup/attn_temperature', self.model.patch_lookup.attn_temperature, epoch)
-        self.logger.log('params/pos_encoding_scale', self.model.pos_encoding_scale, epoch)
+        self.logger.log('params/patch_lookup/pos_scale', self.model.patch_lookup.pos_scale, epoch)
+        self.logger.log('params/peer_prop/pos_scale', self.model.peer_prop.pos_scale, epoch)
+        self.logger.log('params/peer_prop/attn_temperature', self.model.peer_prop.attn_temperature, epoch)
         print(f"Epoch [{epoch + 1}/{self.epochs}] | Avg Loss: {avg_loss:.6f}")
 
     def log_gradients(self, gradients, epoch: int):
@@ -52,7 +52,7 @@ class Training:
         log_kernels_to_tensorboard(self.model, self.logger, epoch)
 
     def log_evaluation_sample(self, epoch: int):
-        """Grabs one batch, runs inference, and logs a flow image."""
+        """Grabs one batch, runs inference, and logs the new diagnostic figure."""
         try:
             # 1. Get one random batch from the *shuffled* loader
             raw_frame1, raw_frame2, flow_gt_pt = next(iter(self.train_loader))
@@ -62,22 +62,32 @@ class Training:
             img2_batch = jnp.array(raw_frame2.numpy())
             flow_gt_batch = jnp.array(flow_gt_pt.numpy())
 
-            # 3. Run inference (forward pass only, no jit, no update)
-            # We must pass the GT for the model's loss_fn to work,
-            # even though we only want the prediction.
-            dense_flow_pred, _ = self.model(img1_batch, img2_batch, flow_gt_batch)
+            # 3. Run inference
+            # We now need the 'aux' bag to get our trace data
+            dense_flow_pred, aux = self.model(img1_batch, img2_batch, flow_gt_batch)
 
-            # 4. Create and log the figure
-            fig = create_flow_figure_jax(
-                img1_batch,
-                img2_batch,
-                flow_gt_batch,
-                dense_flow_pred
+            # 4. Get all the debug data from the trace
+            trace = aux['trace']
+
+            # 5. Create and log the new diagnostic figure
+            # We'll just log the first item in the batch (index 0)
+            fig = create_diagnostic_figure_jax(
+                img1_batch[0],
+                img2_batch[0],
+                flow_gt_batch[0],
+                dense_flow_pred[0],  # F_final (blended)
+                trace['F_cross_dense'][0],  # F_cross (V1 flow)
+                trace['F_peer_dense'][0],  # F_peer (V2 flow)
+                trace['C_cross_grid'][0],  # (64, 1) confidence
+                trace['A_cross'][0],  # (64, 64) V1 attention
+                trace['A_peer'][0]  # (64, 64) V2 attention
             )
-            self.logger.writer.add_figure('Flow_Comparison/epoch', fig, epoch)
+            self.logger.writer.add_figure('Flow_Diagnostics/epoch', fig, epoch)
 
         except Exception as e:
             print(f"Warning: Could not log evaluation sample. Error: {e}")
+            import traceback
+            traceback.print_exc()
 
     def train_one_epoch(self, global_step: int, epoch: int):
         total_epoch_loss = 0.0
