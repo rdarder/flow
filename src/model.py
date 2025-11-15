@@ -67,7 +67,7 @@ class SinusoidalPosEncoding(nnx.Module):
             raise ValueError(f"Embedding dim {embed_dim} must be divisible by 4 for 2D PE.")
 
         half_dim = embed_dim // 2
-        
+
         max_period = jnp.float32(w * 2)
         div_term = jnp.exp(jnp.arange(0, half_dim, 2) * -(jnp.log(max_period) / (half_dim // 2)))
 
@@ -261,10 +261,9 @@ class BarebonesFlowModel(nnx.Module):
         F_peer, A_peer = self.peer_prop(f1_fused, F_cross, C_cross)
 
         # --- 5. Blend Flows ---
-        # w1 = C_cross
-        # w2 = 1.0 - C_cross
-        # flow_pred_flat = (w1 * F_cross) + (w2 * F_peer)  # (B, 64, 2)
-        flow_pred_flat = F_cross
+        w1 = C_cross
+        w2 = 1.0 - C_cross
+        flow_pred_flat = (w1 * F_cross) + (w2 * F_peer)  # (B, 64, 2)
 
         # --- 6. Upsample to Dense ---
         h_grid, w_grid = self.grid_size_hw
