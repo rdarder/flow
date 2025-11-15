@@ -96,6 +96,43 @@ class SinusoidalPosEncoding(nnx.Module):
         return self.pe.value
 
 
+class DenoisingAttention(nnx.Module):
+    """
+    New Denoising Module (Experiment 3).
+    - Uses self-attention *without* PE to find "common" features.
+    - Subtracts a fraction of this "common" vector from all patches.
+    - Goal: Suppress common "noise" (background) and preserve unique "signal" (blobs).
+    """
+
+    def __init__(self, *, rngs):
+        self.attn_temperature = nnx.Param(1.0)
+        self.self_mask = nnx.Variable(jnp.eye(64) * -1e9)  # (64, 64)
+        self.denoise_factor = nnx.Param(0.5)  # The 'k' in: f' = f - (k * f_common)
+
+    def __call__(self, patches):
+        """
+        Args:
+          patches: (B, 64, C) - *Raw* features, no PE.
+        """
+        # 1. Define Q, K, V (no PE, as pos is irrelevant for denoising)
+        Q = patches
+        K = patches
+        V = patches
+
+        # 2. Get "Commonness" Attention
+        logits = (Q @ K.transpose(0, 2, 1)) * self.attn_temperature
+        logits = logits + self.self_mask.value  # Mask diagonal
+        A_common = softmax(logits, axis=-1)
+
+        # 3. Get "Common" Feature Vector
+        V_common = A_common @ V  # (B, 64, C)
+
+        # 4. Subtract common features (Your "Subtraction" method)
+        patches_denoised = patches - (self.denoise_factor * V_common)
+
+        return patches_denoised
+
+
 class PatchLookupAttention(nnx.Module):
     """
     V1 "Patch Lookup" Block.
@@ -198,7 +235,10 @@ class BarebonesFlowModel(nnx.Module):
         # The V matrix (L) for flow calculation (unchanged)
         self.location_grid = nnx.Variable(self._create_location_tensor(self.grid_size_hw))
 
-        # 3. Attention Layers
+        # 3. Denoising Layer (Our new experiment)
+        self.denoiser = DenoisingAttention(rngs=rngs)
+
+        # 4. Attention Layers
         self.patch_lookup = PatchLookupAttention(rngs=rngs)
         self.peer_prop = PeerPropagationAttention(rngs=rngs)
 
@@ -239,14 +279,19 @@ class BarebonesFlowModel(nnx.Module):
     def __call__(self, frame1, frame2, dense_flow_ground_truth):
         batch_size = frame1.shape[0]
 
-        # --- 1. Get Patch Features ---
-        f1_patches = self._img_to_patches(frame1)  # (B, 64, C)
-        f2_patches = self._img_to_patches(frame2)  # (B, 64, C)
+        # --- 1. Get Raw Patch Features ---
+        f1_patches_raw = self._img_to_patches(frame1)  # (B, 64, C)
+        f2_patches_raw = self._img_to_patches(frame2)  # (B, 64, C)
 
-        # --- 2. Get Raw PE ---
+        # --- 2. Denoise Patch Features ---
+        # We run the denoiser on both frames.
+        f1_patches = self.denoiser(f1_patches_raw)
+        f2_patches = self.denoiser(f2_patches_raw)
+
+        # --- 3. Get Raw PE (for V1/V2) ---
         pe = self.pos_encoding()  # (64, C)
 
-        # --- 3. Run V1: Patch Lookup ---
+        # --- 4. Run V1: Patch Lookup ---
         num_patches = self.grid_size_hw[0] * self.grid_size_hw[1]
         L_broadcast = jnp.broadcast_to(
             self.location_grid.value.reshape(1, num_patches, 2),
@@ -255,12 +300,13 @@ class BarebonesFlowModel(nnx.Module):
 
         F_cross, C_cross, A_cross = self.patch_lookup(f1_patches, f2_patches, pe, L_broadcast)
 
-        # --- 4. Run V2.1: Peer Propagation ---
+        # --- 5. Run V2.1: Peer Propagation ---
         F_peer, A_peer = self.peer_prop(f1_patches, pe, F_cross, C_cross)
 
-        # --- 5. Blend Flows ---
-        w1 = C_cross
-        w2 = 1.0 - C_cross
+        # --- 6. Blend Flows ---
+        # gated until we validate denoising.
+        w1 = 1.0 # C_cross
+        w2 = 0.0 # 1.0 - C_cross
         flow_pred_flat = (w1 * F_cross) + (w2 * F_peer)  # (B, 64, 2)
 
         # --- 6. Upsample to Dense ---
