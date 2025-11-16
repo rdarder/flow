@@ -13,6 +13,7 @@ from torch.utils.data import DataLoader, Dataset
 from torch.utils.tensorboard import SummaryWriter
 
 from model import BarebonesFlowModel
+from pytorch_old.datasets import ChairsV0Dataset
 from synthetic_dataset import SyntheticFlowDataset
 
 
@@ -48,12 +49,19 @@ class Training:
         key = jax.random.PRNGKey(135)
         self.rngs = nnx.Rngs(params=key, sample=0)
         self.log_every_steps = log_every_steps
-        self.model = BarebonesFlowModel(
+
+        # --- Model Setup ---
+        # 1. This is the model we will train. (Simplified)
+        self.model_trained = BarebonesFlowModel(
             img_size_hw=img_size_hw,
             embed_dim=embed_dim,
             rngs=self.rngs
         )
-        self.optimizer = nnx.Optimizer(self.model, optax.sgd(learning_rate=learning_rate), wrt=nnx.Param)
+
+        # 2. (Removed model_eval_no_denoiser)
+        # --- End Model Setup ---
+
+        self.optimizer = nnx.Optimizer(self.model_trained, optax.adamw(learning_rate=learning_rate), wrt=nnx.Param)
         self.train_dataset = train_dataset
         self.train_loader = DataLoader(self.train_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
         self.logger = logger
@@ -68,20 +76,22 @@ class Training:
     def log_epoch_end(self, epoch: int, total_epoch_loss: float):
         avg_loss = total_epoch_loss / len(self.train_loader)
         self.logger.log('Loss/train_epoch', avg_loss, epoch)
-        self.logger.log('params/patch_lookup/attn_temperature', self.model.patch_lookup.attn_temperature, epoch)
-        self.logger.log('params/patch_lookup/pos_scale', self.model.patch_lookup.pos_scale, epoch)
-        # Log new denoiser params
-        self.logger.log('params/denoiser/attn_temperature', self.model.denoiser.attn_temperature, epoch)
-        self.logger.log('params/denoiser/denoise_factor', self.model.denoiser.denoise_factor, epoch)
-        self.logger.log('params/peer_prop/pos_scale', self.model.peer_prop.pos_scale, epoch)
-        self.logger.log('params/peer_prop/attn_temperature', self.model.peer_prop.attn_temperature, epoch)
+        # Log params from the *trained* model
+        self.logger.log('params/patch_lookup/attn_temperature', self.model_trained.patch_lookup.attn_temperature, epoch)
+        self.logger.log('params/patch_lookup/pos_scale', self.model_trained.patch_lookup.pos_scale, epoch)
+        # (Removed denoiser logs)
+        self.logger.log('params/peer_prop/pos_scale', self.model_trained.peer_prop.pos_scale, epoch)
+        self.logger.log('params/peer_prop/attn_temperature', self.model_trained.peer_prop.attn_temperature, epoch)
+
+        # blending/sharpening params
+        self.logger.log('params/flow/blend_sharpness', self.model_trained.blend_sharpness, epoch)
         print(f"Epoch [{epoch + 1}/{self.epochs}] | Avg Loss: {avg_loss:.6f}")
 
     def log_gradients(self, gradients, epoch: int):
         log_gradients(gradients, self.logger, epoch)
 
     def log_conv_kernels(self, epoch: int):
-        log_kernels_to_tensorboard(self.model, self.logger, epoch)
+        log_kernels_to_tensorboard(self.model_trained, self.logger, epoch)
 
     def log_evaluation_sample(self, epoch: int):
         """Grabs one batch, runs inference, and logs the new diagnostic figure."""
@@ -94,12 +104,19 @@ class Training:
             img2_batch = jnp.array(raw_frame2.numpy())
             flow_gt_batch = jnp.array(flow_gt_pt.numpy())
 
-            # 3. Run inference
-            # We now need the 'aux' bag to get our trace data
-            dense_flow_pred, aux = self.model(img1_batch, img2_batch, flow_gt_batch)
+            # --- 3. Run Inference (Simplified) ---
+            # (Removed sync logic)
+
+            # Run on the TRAINED model
+            dense_flow_pred, aux = self.model_trained(
+                img1_batch, img2_batch, flow_gt_batch
+            )
+            # --- End Inference ---
 
             # 4. Get all the debug data from the trace
-            trace = aux['trace']
+            c_cross = aux['trace']['C_cross_dense']
+            f_cross = aux['trace']['F_cross_dense']
+            f_peer = aux['trace']['F_peer_dense']
 
             # 5. Create and log the new diagnostic figure
             # We'll just log the first item in the batch (index 0)
@@ -107,12 +124,10 @@ class Training:
                 img1_batch[0],
                 img2_batch[0],
                 flow_gt_batch[0],
-                dense_flow_pred[0],  # F_final (blended)
-                trace['F_cross_dense'][0],  # F_cross (V1 flow)
-                trace['F_peer_dense'][0],  # F_peer (V2 flow)
-                trace['C_cross_grid'][0],  # (64, 1) confidence
-                trace['A_cross'][0],  # (64, 64) V1 attention
-                trace['A_peer'][0]  # (64, 64) V2 attention
+                f_cross[0],  # Pass F_cross
+                f_peer[0],   # Pass F_peer
+                dense_flow_pred[0],  # Pass F_final
+                c_cross[0]   # Pass C_cross
             )
             self.logger.writer.add_figure('Flow_Diagnostics/epoch', fig, epoch)
 
@@ -130,7 +145,7 @@ class Training:
             frame2_batch = jnp.array(raw_frame2.numpy())
             flow_gt_batch = jnp.array(flow_gt_pt.numpy())
 
-            loss, aux_bag, grads = update_step(self.model, self.optimizer, frame1_batch, frame2_batch,
+            loss, aux_bag, grads = update_step(self.model_trained, self.optimizer, frame1_batch, frame2_batch,
                                                flow_gt_batch)
             total_epoch_loss += loss
             if (global_step + 1) % self.log_every_steps == 0:
@@ -213,12 +228,10 @@ def flow_to_color(flow, max_flow=None):
 
 def create_diagnostic_figure_jax(
         img1, img2, flow_gt,
-        f_final, f_cross, f_peer,
-        c_cross_grid, a_cross, a_peer
+        f_cross, f_peer, f_final, c_cross
 ):
     """
-    Creates the new 9-panel diagnostic figure.
-    Expects all inputs to be JAX arrays from a *single* batch item (e.g., index 0).
+    Creates a simplified 6-panel diagnostic figure.
     """
 
     # --- 1. Prepare Data (Convert JAX to NumPy for plotting) ---
@@ -227,25 +240,16 @@ def create_diagnostic_figure_jax(
 
     # Convert flows to color images
     gt_img = flow_to_color(np.array(flow_gt))
-    f_final_img = flow_to_color(np.array(f_final))
     f_cross_img = flow_to_color(np.array(f_cross))
     f_peer_img = flow_to_color(np.array(f_peer))
+    f_final_img = flow_to_color(np.array(f_final))
 
-    # --- 2. Process Attention & Confidence Maps ---
-    # Find the most occluded patch (lowest confidence)
-    # c_cross_grid is (64, 1)
-    worst_patch_idx = jnp.argmin(c_cross_grid[:, 0])
+    # Convert C_cross maps to numpy (they are [H, W, 1])
+    c_cross_np = np.array(c_cross).squeeze()
 
-    # Get the 1D attention vectors for that patch and reshape to 8x8
-    h, w = 8, 8  # We know this from our grid size
-    a_cross_map = np.array(a_cross[worst_patch_idx, :]).reshape(h, w)
-    a_peer_map = np.array(a_peer[worst_patch_idx, :]).reshape(h, w)
-
-    # Reshape confidence map to 8x8 for viewing
-    c_cross_map = np.array(c_cross_grid).reshape(h, w)
 
     # --- 3. Create Plot ---
-    fig, axes = plt.subplots(3, 3, figsize=(15, 15))
+    fig, axes = plt.subplots(2, 3, figsize=(15, 10))  # 2x3 Grid
     fig.suptitle("Flow Diagnostics", fontsize=16)
 
     # Row 1: Inputs & Ground Truth
@@ -274,18 +278,9 @@ def create_diagnostic_figure_jax(
     axes[1, 2].set_title("F_final (Blended)")
     axes[1, 2].axis('off')
 
-    # Row 3: Attention & Confidence
-    im_c = axes[2, 0].imshow(c_cross_map, cmap='viridis', vmin=0.0, vmax=1.0)
-    axes[2, 0].set_title("C_cross (V1 Confidence)")
-    plt.colorbar(im_c, ax=axes[2, 0], fraction=0.046, pad=0.04)
-
-    im_a1 = axes[2, 1].imshow(a_cross_map, cmap='hot')
-    axes[2, 1].set_title(f"A_cross (for patch {worst_patch_idx})")
-    plt.colorbar(im_a1, ax=axes[2, 1], fraction=0.046, pad=0.04)
-
-    im_a2 = axes[2, 2].imshow(a_peer_map, cmap='hot')
-    axes[2, 2].set_title(f"A_peer (for patch {worst_patch_idx})")
-    plt.colorbar(im_a2, ax=axes[2, 2], fraction=0.046, pad=0.04)
+    # (We will add C_cross back if needed, starting simple)
+    # Turn off the last plot in row 3
+    # axes[2, 2].axis('off')
 
     plt.tight_layout(rect=[0, 0.03, 1, 0.95])
     return fig

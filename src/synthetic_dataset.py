@@ -12,8 +12,8 @@ class SyntheticFlowDataset(Dataset):
 
     def __init__(self,
                  img_size=18,
-                 num_blobs_range=(1, 1),
-                 blob_size_range=(2, 6),
+                 num_blobs_range=(1, 2),
+                 blob_size_range=(3, 10),
                  noise_scale_range=(4.0, 6.0),
                  blob_threshold=0.2,
                  max_flow=8,

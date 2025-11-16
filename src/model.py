@@ -61,7 +61,6 @@ class SinusoidalPosEncoding(nnx.Module):
         h, w = grid_size_hw
         num_patches = h * w
 
-
         # Ensure embed_dim is even
         if embed_dim % 4 != 0:
             raise ValueError(f"Embedding dim {embed_dim} must be divisible by 4 for 2D PE.")
@@ -97,23 +96,13 @@ class SinusoidalPosEncoding(nnx.Module):
 
 
 class DenoisingAttention(nnx.Module):
-    """
-    New Denoising Module (Experiment 3).
-    - Uses self-attention *without* PE to find "common" features.
-    - Subtracts a fraction of this "common" vector from all patches.
-    - Goal: Suppress common "noise" (background) and preserve unique "signal" (blobs).
-    """
 
     def __init__(self, *, rngs):
-        self.attn_temperature = nnx.Param(1.0)
+        self.attn_temperature = nnx.Param(1.0)  # <-- Changed from 1.0
         self.self_mask = nnx.Variable(jnp.eye(64) * -1e9)  # (64, 64)
-        self.denoise_factor = nnx.Param(0.5)  # The 'k' in: f' = f - (k * f_common)
+        self.denoise_factor = nnx.Param(0.8)  # <-- Changed from 0.5
 
     def __call__(self, patches):
-        """
-        Args:
-          patches: (B, 64, C) - *Raw* features, no PE.
-        """
         # 1. Define Q, K, V (no PE, as pos is irrelevant for denoising)
         Q = patches
         K = patches
@@ -134,13 +123,9 @@ class DenoisingAttention(nnx.Module):
 
 
 class PatchLookupAttention(nnx.Module):
-    """
-    V1 "Patch Lookup" Block.
-    """
-
     def __init__(self, *, rngs):
-        self.attn_temperature = nnx.Param(1.0)
-        self.pos_scale = nnx.Param(2.0)
+        self.attn_temperature = nnx.Param(0.3)  # <-- Changed from 1.0
+        self.pos_scale = nnx.Param(2.0)  # <-- Changed from 2.0
 
     def __call__(self, f1_patches, f2_patches, pe, location_grid_L):
         """
@@ -180,25 +165,24 @@ class PeerPropagationAttention(nnx.Module):
     """
 
     def __init__(self, *, rngs):
-        self.attn_temperature = nnx.Param(1.0)
+        self.attn_temperature = nnx.Param(0.5)
         self.pos_scale = nnx.Param(4.0)
         self.self_mask = nnx.Variable(jnp.eye(64) * -1e9)  # (64, 64)
 
-    def __call__(self, f1_patches, pe, F_cross, C_cross):
+    def __call__(self, f1_patches, pe, F_cross, w1):
         """
         Args:
           f1_patches: (B, 64, C) - *Raw* features
           pe: (64, C) - *Raw* positional encoding
           F_cross: (B, 64, 2) - V1 flow (serves as V)
-          C_cross: (B, 64, 1) - V1 confidence (serves as gate)
         """
         # 0. Fuse in positional encoding with our own scale.
         pe_scaled = pe * self.pos_scale
         f1_fused = f1_patches + pe_scaled
 
         # 1. Define Q, K, V (as per our V2.1 design)
-        Q = f1_fused  # (B, 64, C)
-        K = f1_fused * C_cross  # (B, 64, C) - Gated Key
+        Q = f1_fused # (B, 64, C)
+        K = f1_fused * w1 # (B, 64, C) - Gated Key
         V = F_cross  # (B, 64, 2)
 
         # 2. Get Peer Attention
@@ -220,10 +204,11 @@ class BarebonesFlowModel(nnx.Module):
     The main "Orchestrator" model.
     """
 
-    def __init__(self, img_size_hw: tuple[int, int], embed_dim: int, *, rngs):
+    def __init__(self, img_size_hw: tuple[int, int], embed_dim: int, *, rngs):  # <-- Removed use_denoiser
         super().__init__()
         self.embed_dim = embed_dim
         self.img_size_hw = img_size_hw
+        # self.use_denoiser = use_denoiser (Removed)
 
         # 1. Stem
         self.stem = Stem(embed_dim=embed_dim, dw_patterns=12, rngs=rngs)
@@ -236,11 +221,14 @@ class BarebonesFlowModel(nnx.Module):
         self.location_grid = nnx.Variable(self._create_location_tensor(self.grid_size_hw))
 
         # 3. Denoising Layer (Our new experiment)
-        self.denoiser = DenoisingAttention(rngs=rngs)
+        # (Removed DenoisingAttention)
 
         # 4. Attention Layers
         self.patch_lookup = PatchLookupAttention(rngs=rngs)
         self.peer_prop = PeerPropagationAttention(rngs=rngs)
+
+        # 5. Blend Parameter (NEW: Our "Reactive Blend" sharpness)
+        self.blend_sharpness = nnx.Param(4.0)  # Start with k=4.0
 
     def _create_location_tensor(self, grid_size_hw: tuple[int, int]) -> jnp.ndarray:
         """(Unchanged) Creates the (H*W, 2) location grid L (for V matrix)."""
@@ -265,10 +253,10 @@ class BarebonesFlowModel(nnx.Module):
         flow_pred_map = flow_pred_grid_units.reshape(batch_size, h_grid, w_grid, 2)
         # --- END FIX ---
 
-        flow_pred_pixels = flow_pred_map * self.stride # Use the reshaped map
+        flow_pred_pixels = flow_pred_map * self.stride  # Use the reshaped map
         h_inner, w_inner = self.inner_hw
         flow_16x16 = jax.image.resize(
-            flow_pred_pixels, # This is now (B, 8, 8, 2)
+            flow_pred_pixels,  # This is now (B, 8, 8, 2)
             shape=(batch_size, h_inner, w_inner, 2),
             method='bilinear'
         )
@@ -284,9 +272,9 @@ class BarebonesFlowModel(nnx.Module):
         f2_patches_raw = self._img_to_patches(frame2)  # (B, 64, C)
 
         # --- 2. Denoise Patch Features ---
-        # We run the denoiser on both frames.
-        f1_patches = self.denoiser(f1_patches_raw)
-        f2_patches = self.denoiser(f2_patches_raw)
+        # (Removed Denoising logic)
+        f1_patches = f1_patches_raw
+        f2_patches = f2_patches_raw
 
         # --- 3. Get Raw PE (for V1/V2) ---
         pe = self.pos_encoding()  # (64, C)
@@ -300,13 +288,14 @@ class BarebonesFlowModel(nnx.Module):
 
         F_cross, C_cross, A_cross = self.patch_lookup(f1_patches, f2_patches, pe, L_broadcast)
 
-        # --- 5. Run V2.1: Peer Propagation ---
-        F_peer, A_peer = self.peer_prop(f1_patches, pe, F_cross, C_cross)
+        # 5-pre: calculate confidence for both peer propagation and later blending.
+        w1 = C_cross * C_cross
+        w2 = 1.0 - w1
 
-        # --- 6. Blend Flows ---
-        # gated until we validate denoising.
-        w1 = 1.0 # C_cross
-        w2 = 0.0 # 1.0 - C_cross
+        # --- 5. Run V2.1: Peer Propagation ---
+        F_peer, A_peer = self.peer_prop(f1_patches, pe, F_cross, w1)
+
+        # --- 6. Blend Flows (NEW: "Reactive Blend") ---
         flow_pred_flat = (w1 * F_cross) + (w2 * F_peer)  # (B, 64, 2)
 
         # --- 6. Upsample to Dense ---
@@ -315,7 +304,8 @@ class BarebonesFlowModel(nnx.Module):
         dense_flow_pred = self._upsample_flow_to_dense(flow_pred_map, batch_size)
 
         # --- 7. Loss (Dense vs Dense) ---
-        flow_loss = jnp.mean(jnp.abs(dense_flow_pred - dense_flow_ground_truth))
+        diff = dense_flow_pred - dense_flow_ground_truth
+        flow_loss = jnp.mean(jnp.square(diff))
 
         loss_dict = dict(
             flow=flow_loss,
@@ -331,17 +321,16 @@ class BarebonesFlowModel(nnx.Module):
         c_cross_dense = jax.image.resize(
             c_cross_map,
             shape=(batch_size, self.inner_hw[0], self.inner_hw[1], 1),
-            method='nearest' # Use nearest to see the blocks
+            method='nearest'  # Use nearest to see the blocks
         )
-        c_cross_dense = jnp.pad(c_cross_dense, ((0,0), (1,1), (1,1), (0,0)), mode='edge')
-
+        c_cross_dense = jnp.pad(c_cross_dense, ((0, 0), (1, 1), (1, 1), (0, 0)), mode='edge')
 
         trace_dict = dict(
-            A_cross=A_cross,    # (B, 64, 64)
-            A_peer=A_peer,      # (B, 64, 64)
-            C_cross_grid=C_cross, # (B, 64, 1)
-            F_cross_dense=f_cross_dense, # (B, 18, 18, 2)
-            F_peer_dense=f_peer_dense,   # (B, 18, 18, 2)
+            A_cross=A_cross,  # (B, 64, 64)
+            A_peer=A_peer,  # (B, 64, 64)
+            C_cross_grid=C_cross,  # (B, 64, 1)
+            F_cross_dense=f_cross_dense,  # (B, 18, 18, 2)
+            F_peer_dense=f_peer_dense,  # (B, 18, 18, 2)
             C_cross_dense=c_cross_dense  # (B, 18, 18, 1)
         )
 
