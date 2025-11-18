@@ -76,42 +76,103 @@ class Decoder(nnx.Module):
 
 # --- 2. JIT-compiled Helper Functions ---
 
-def _get_batch(key: jax.Array, config: Dict[str, Any], pe_generator: PositionalEncoding):
-    """ Generates a batch of (PE_input, Cartesian_GT) data. """
-    coords_gt = jax.random.uniform(
-        key,
-        shape=(config['batch_size'], 2),
+def _get_robust_batch(key: jax.Array, config: Dict[str, Any], pe_generator: PositionalEncoding):
+    """
+    Generates a batch of "pure" and "blended" data to force robust learning.
+    """
+    batch_size = config['batch_size']
+    key1, key2 = jax.random.split(key)
+
+    # --- 1. "Pure" Data (decode(encode(x)) == x) ---
+    # We use half the batch for "pure" data
+    pure_batch_size = batch_size // 2
+    coords_gt_pure = jax.random.uniform(
+        key1,
+        shape=(pure_batch_size, 2),
         minval=config['coord_min'],
         maxval=config['coord_max']
     )
-    pe_input = pe_generator(coords_gt)
-    return pe_input, coords_gt
+    pe_input_pure = pe_generator(coords_gt_pure)
+
+    # --- 2. "Blended" Data (decode(0.5*pe(x1) + 0.5*pe(x2)) == 0.5*x1 + 0.5*x2) ---
+    # We use the other half for "blended" data
+    blend_batch_size = batch_size - pure_batch_size
+    key3, key4 = jax.random.split(key2)
+    coords_gt_b1 = jax.random.uniform(
+        key3,
+        shape=(blend_batch_size, 2),
+        minval=config['coord_min'],
+        maxval=config['coord_max']
+    )
+    coords_gt_b2 = jax.random.uniform(
+        key4,
+        shape=(blend_batch_size, 2),
+        minval=config['coord_min'],
+        maxval=config['coord_max']
+    )
+
+    # Calculate the "blended" Cartesian target
+    # This is the (0.5*x1 + 0.5*x2)
+    coords_gt_blend = 0.5 * coords_gt_b1 + 0.5 * coords_gt_b2
+
+    # Calculate the "blended" PE input
+    # This is the (0.5*pe(x1) + 0.5*pe(x2))
+    pe_input_b1 = pe_generator(coords_gt_b1)
+    pe_input_b2 = pe_generator(coords_gt_b2)
+    pe_input_blend = 0.5 * pe_input_b1 + 0.5 * pe_input_b2
+
+    return pe_input_pure, coords_gt_pure, pe_input_blend, coords_gt_blend
 
 
 @nnx.jit
-def _loss_fn(model: Decoder, pe_batch: jax.Array, coords_gt_batch: jax.Array) -> jnp.ndarray:
-    """ Calculates the L2 (MSE) loss. """
-    coords_pred_batch = model(pe_batch)
-    loss = jnp.mean(jnp.square(coords_pred_batch - coords_gt_batch))
-    return loss
+def robust_loss_fn(
+        model: Decoder,
+        pe_input_pure: jax.Array,
+        coords_gt_pure: jax.Array,
+        pe_input_blend: jax.Array,
+        coords_gt_blend: jax.Array
+) -> Tuple[jnp.ndarray, Tuple[jnp.ndarray, jnp.ndarray]]:
+    """
+    Calculates the combined L2 loss for both "pure" and "blended" tasks.
+    Returns: (total_loss, (loss_pure, loss_blend))
+    """
+    # Task 1: Decode the "pure" vectors
+    coords_pred_pure = model(pe_input_pure)
+    loss_pure = jnp.mean(jnp.square(coords_pred_pure - coords_gt_pure))
+
+    # Task 2: Decode the "blended" (OOD) vectors
+    coords_pred_blend = model(pe_input_blend)
+    loss_blend = jnp.mean(jnp.square(coords_pred_blend - coords_gt_blend))
+
+    # Combine the losses
+    loss = loss_pure + loss_blend
+
+    return loss, (loss_pure, loss_blend)
 
 
 @nnx.jit
 def train_step(
         model: Decoder,
         optimizer: nnx.Optimizer,
-        pe_batch: jax.Array,
-        coords_gt_batch: jax.Array,
-) -> jnp.ndarray:
+        pe_input_pure: jax.Array,
+        coords_gt_pure: jax.Array,
+        pe_input_blend: jax.Array,
+        coords_gt_blend: jax.Array,
+) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
     """
     Performs a single training step.
     This function is JIT-compiled and updates the model state in place.
     """
-    # nnx.value_and_grad computes gradients w.r.t. the model's nnx.Param state
-    (loss, grads) = nnx.value_and_grad(_loss_fn)(model, pe_batch, coords_gt_batch)
+    # has_aux=True tells value_and_grad to expect (loss, aux_data)
+    (
+        (total_loss, (loss_pure, loss_blend)),  # value
+        grads  # grads
+    ) = nnx.value_and_grad(robust_loss_fn, has_aux=True)(
+        model, pe_input_pure, coords_gt_pure, pe_input_blend, coords_gt_blend
+    )
 
     optimizer.update(model, grads)
-    return loss
+    return total_loss, loss_pure, loss_blend
 
 
 # --- 3. Public API Functions ---
@@ -154,15 +215,21 @@ def train_and_persist_model(config: Dict[str, Any], save_dir: Path) -> None:
     start_time = time.time()
     for step in range(config['total_steps']):
         data_key, step_key = jax.random.split(data_key)
-        pe_batch, coords_gt_batch = _get_batch(step_key, config, pe_generator)
 
-        loss = train_step(
-            decoder, optimizer, pe_batch, coords_gt_batch
+        # Use the new "robust" batch generator
+        pe_pure, gt_pure, pe_blend, gt_blend = _get_robust_batch(
+            step_key, config, pe_generator
+        )
+
+        loss, l_pure, l_blend = train_step(
+            decoder, optimizer, pe_pure, gt_pure, pe_blend, gt_blend
         )
 
         if step % config['log_every'] == 0 or step == config['total_steps'] - 1:
             elapsed = time.time() - start_time
-            print(f"  Step: {step:5d} | Loss (MSE): {loss:10.8f} | Time: {elapsed:.2f}s")
+            # Updated print statement to show all losses
+            print(f"  Step: {step:5d} | Total Loss: {loss:10.8f} "
+                  f"(Pure: {l_pure:10.8f} | Blend: {l_blend:10.8f})")
 
     print("-" * 30)
     print("Training complete.")
@@ -268,24 +335,33 @@ def evaluate_model(
     num_batches = max(1, num_samples // batch_size)
 
     total_loss = 0.0
-
-    # Create a JIT-compiled version of the loss function
-    jitted_loss_fn = nnx.jit(_loss_fn)
+    total_loss_pure = 0.0
+    total_loss_blend = 0.0
 
     for i in range(num_batches):
         key, batch_key = jax.random.split(key)
-        pe_batch, coords_gt_batch = _get_batch(batch_key, config, pe_generator)
+        # Use the new "robust" batch generator for evaluation
+        pe_pure, gt_pure, pe_blend, gt_blend = _get_robust_batch(
+            batch_key, config, pe_generator
+        )
 
-        loss = jitted_loss_fn(decoder, pe_batch, coords_gt_batch)
+        loss, (l_pure, l_blend) = robust_loss_fn(
+            decoder, pe_pure, gt_pure, pe_blend, gt_blend
+        )
         total_loss += loss
+        total_loss_pure += l_pure
+        total_loss_blend += l_blend
 
     avg_loss = total_loss / num_batches
-    avg_pixel_error = jnp.sqrt(avg_loss)
+    avg_loss_pure = total_loss_pure / num_batches
+    avg_loss_blend = total_loss_blend / num_batches
+    avg_pixel_error = jnp.sqrt(avg_loss / 2.0)  # Divide by 2 since total_loss = pure + blend
 
     print(f"Evaluation complete.")
-    print(f"  Final MSE: {avg_loss:10.8f}")
+    print(f"  Avg. Total Loss: {avg_loss:10.8f}")
+    print(f"    -> Avg. Pure Loss : {avg_loss_pure:10.8f}")
+    print(f"    -> Avg. Blend Loss: {avg_loss_blend:10.8f}")
     print(f"  Avg. Pixel Error (RMSE): {avg_pixel_error:10.8f} pixels")
-    print("--- Evaluation Finished ---")
 
     return float(avg_loss)
 
@@ -307,7 +383,7 @@ if __name__ == "__main__":
         'seed': 0,
     }
 
-    DEFAULT_SAVE_DIR = Path("./pe_decoder_v1")
+    DEFAULT_SAVE_DIR = Path("./pe_decoder")
 
     # 1. Train and save the model
     train_and_persist_model(DEFAULT_CONFIG, DEFAULT_SAVE_DIR)
