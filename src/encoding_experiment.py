@@ -135,10 +135,10 @@ class ZoomNetwork(nnx.Module):
 class ModelContainer(nnx.Module):
     def __init__(self, rngs: nnx.Rngs):
         # Using SIREN as it performed best on metric correlation
-        self.encoder = LearnedPE_Siren(input_dim=2, hidden_dim=128, output_dim=16, rngs=rngs)
+        self.encoder = LearnedPE_Siren(input_dim=2, hidden_dim=64, output_dim=16, rngs=rngs)
         
         # --- SWITCHED TO SIREN DECODER ---
-        self.decoder = Decoder_Siren(input_dim=16, hidden_dim=128, output_dim=2, rngs=rngs)
+        self.decoder = Decoder(input_dim=16, hidden_dim=64, output_dim=2, rngs=rngs)
         
         self.zoom = ZoomNetwork(dim=16, rngs=rngs)
 
@@ -202,10 +202,10 @@ def train_step(
 
 def main():
     config = {
-        'batch_size': 256,
+        'batch_size': 1024,
         'min_val': -20.0, 'max_val': 20.0,
         'lr': 1e-4, # SIREN prefers lower LR
-        'steps': 20000
+        'steps': 40000
     }
     
     key = jax.random.PRNGKey(0)
