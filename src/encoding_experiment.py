@@ -77,8 +77,9 @@ class LearnedPE_Siren(nnx.Module):
         return sigma, scale, bias
 
 # --- 2. The Decoder ---
+
 class Decoder(nnx.Module):
-    # ... (Same as before) ...
+    """ Standard MLP Decoder (GELU) """
     def __init__(self, input_dim: int, hidden_dim: int, output_dim: int, *, rngs: nnx.Rngs):
         self.net = nnx.Sequential(
             nnx.Linear(input_dim, hidden_dim, rngs=rngs),
@@ -93,13 +94,26 @@ class Decoder(nnx.Module):
     def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
         return self.net(x)
 
+class Decoder_Siren(nnx.Module):
+    """
+    SIREN Decoder.
+    Symmetric with the encoder. Uses sine activations to unwrap the manifold.
+    """
+    def __init__(self, input_dim: int, hidden_dim: int, output_dim: int, *, rngs: nnx.Rngs):
+        self.net = nnx.Sequential(
+            # First layer w0=1.0 is standard for decoders unless we expect crazy high freqs input
+            SirenLayer(input_dim, hidden_dim, w0=1.0, is_first=True, rngs=rngs),
+            SirenLayer(hidden_dim, hidden_dim, w0=1.0, rngs=rngs),
+            SirenLayer(hidden_dim, hidden_dim, w0=1.0, rngs=rngs),
+            nnx.Linear(hidden_dim, output_dim, rngs=rngs)
+        )
+
+    def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
+        return self.net(x)
+
 # --- 3. NEW: The Zoom Operator ---
 class ZoomNetwork(nnx.Module):
-    """
-    A minimal model to learn the x -> 2x operation in latent space.
-    Ideally this should be just a Linear matrix if the manifold allows it,
-    but we'll start with a tiny MLP to give it some wiggle room.
-    """
+    # ... (Same as before) ...
     def __init__(self, dim: int, *, rngs: nnx.Rngs):
         # Try a single Linear layer first (Matrix Multiplication)
         # If this works, it means the "Shift" property is perfectly learned.
@@ -122,7 +136,10 @@ class ModelContainer(nnx.Module):
     def __init__(self, rngs: nnx.Rngs):
         # Using SIREN as it performed best on metric correlation
         self.encoder = LearnedPE_Siren(input_dim=2, hidden_dim=128, output_dim=16, rngs=rngs)
-        self.decoder = Decoder(input_dim=16, hidden_dim=128, output_dim=2, rngs=rngs)
+        
+        # --- SWITCHED TO SIREN DECODER ---
+        self.decoder = Decoder_Siren(input_dim=16, hidden_dim=128, output_dim=2, rngs=rngs)
+        
         self.zoom = ZoomNetwork(dim=16, rngs=rngs)
 
 # --- 5. Training Logic ---
@@ -185,17 +202,17 @@ def train_step(
 
 def main():
     config = {
-        'batch_size': 512,
+        'batch_size': 256,
         'min_val': -20.0, 'max_val': 20.0,
         'lr': 1e-4, # SIREN prefers lower LR
-        'steps': 30000
+        'steps': 20000
     }
     
     key = jax.random.PRNGKey(0)
     model = ModelContainer(nnx.Rngs(0))
     optimizer = nnx.Optimizer(model, optax.adam(config['lr']), wrt=nnx.Param)
     
-    print("Training Learned PE with Zoom Constraint...")
+    print("Training Learned PE (SIREN Encoder + SIREN Decoder)...")
     for i in range(config['steps']):
         key, k1, k2, k3, k4 = jax.random.split(key, 5)
         
@@ -203,8 +220,7 @@ def main():
         x2 = jax.random.uniform(k2, (config['batch_size'], 2), minval=config['min_val'], maxval=config['max_val'])
         alpha = jax.random.uniform(k3, (config['batch_size'], 1))
         
-        # Zoom samples: ensure 2x is within reasonable bounds for the encoder to have seen it
-        # If we train on [-20, 20], we should pick zoom_src in [-10, 10] so 2x is [-20, 20]
+        # Zoom samples
         x_zoom_src = jax.random.uniform(k4, (config['batch_size'], 2), minval=config['min_val']/2, maxval=config['max_val']/2)
         
         loss, (l_r, l_l, l_m, l_z, sig, sc, b) = train_step(model, optimizer, x1, x2, alpha, x_zoom_src)
