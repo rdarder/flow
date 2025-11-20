@@ -5,18 +5,17 @@ import optax
 import numpy as np
 from typing import Tuple
 
-# --- 1. The Learned PE Module ---
+# --- 1. Architectures ---
 
-class LearnedPE(nnx.Module):
+class LearnedPE_Fourier(nnx.Module):
+    """ The standard 'Fourier Features + ReLU MLP' architecture. """
     def __init__(self, input_dim: int, hidden_dim: int, output_dim: int, *, rngs: nnx.Rngs):
-        # 1. Fixed Fourier Basis
         scale = 1.0
         self.B = nnx.Variable(
             jax.random.normal(rngs.params(), (input_dim, hidden_dim // 2)) * scale,
             metadata={'is_state': True}
         )
         
-        # 2. Deeper, Smoother MLP
         self.net = nnx.Sequential(
             nnx.Linear(hidden_dim, hidden_dim, rngs=rngs),
             nnx.gelu,
@@ -27,9 +26,7 @@ class LearnedPE(nnx.Module):
             nnx.Linear(hidden_dim, output_dim, rngs=rngs),
         )
         
-        # --- Bounded Learnable Metric Parameters ---
-        # We store "raw" unconstrained logits
-        self.raw_sigma = nnx.Param(0.0) # Initialized to center of range
+        self.raw_sigma = nnx.Param(0.0)
         self.raw_scale = nnx.Param(0.0)
         self.raw_bias = nnx.Param(0.0)
 
@@ -37,24 +34,57 @@ class LearnedPE(nnx.Module):
         projection = x @ self.B.value
         features = jnp.concatenate([jnp.cos(projection), jnp.sin(projection)], axis=-1)
         return self.net(features)
-    
+
     def get_metric_params(self):
-        # Sigmoid squash to force params into a safe, sensible range
-        
-        # Sigma Range: [5.0, 20.0] (Target roughly 10.0)
-        # Prevents "flat" kernel (sigma -> inf) or "dirac" kernel (sigma -> 0)
         sigma = 1.0 + (5.0 * jax.nn.sigmoid(self.raw_sigma.value))
-        
-        # Scale Range: [0.5, 5.0]
-        # Prevents vanishing kernel (scale -> 0)
         scale = 0.5 + (4.5 * jax.nn.sigmoid(self.raw_scale.value))
-        
-        # Bias Range: [-1.0, 1.0]
         bias = -1.0 + (2.0 * jax.nn.sigmoid(self.raw_bias.value))
-        
         return sigma, scale, bias
 
-# --- 2. The Decoder (Matched Capacity) ---
+class SirenLayer(nnx.Module):
+    """ A single layer of a SIREN network (Linear + Sin). """
+    def __init__(self, in_features: int, out_features: int, w0: float = 1.0, is_first: bool = False, *, rngs: nnx.Rngs):
+        self.w0 = w0
+        self.linear = nnx.Linear(in_features, out_features, rngs=rngs)
+        
+        # SIREN initialization is specific
+        limit = np.sqrt(6 / in_features) / w0 if is_first else np.sqrt(6 / in_features) / 30.0
+        # We perform the init manually on the kernel
+        key = rngs.params()
+        self.linear.kernel.value = jax.random.uniform(key, (in_features, out_features), minval=-limit, maxval=limit)
+
+    def __call__(self, x):
+        return jnp.sin(self.w0 * self.linear(x))
+
+class LearnedPE_Siren(nnx.Module):
+    """
+    SIREN Architecture: The weights *learn* the frequencies.
+    No fixed Fourier basis.
+    """
+    def __init__(self, input_dim: int, hidden_dim: int, output_dim: int, *, rngs: nnx.Rngs):
+        # w0=30 is standard for SIREN to encourage high-frequency learning
+        self.net = nnx.Sequential(
+            SirenLayer(input_dim, hidden_dim, w0=30.0, is_first=True, rngs=rngs),
+            SirenLayer(hidden_dim, hidden_dim, w0=1.0, rngs=rngs),
+            SirenLayer(hidden_dim, hidden_dim, w0=1.0, rngs=rngs),
+            nnx.Linear(hidden_dim, output_dim, rngs=rngs) # Last layer is usually linear
+        )
+        
+        # Metric params (Same as Fourier model)
+        self.raw_sigma = nnx.Param(0.0)
+        self.raw_scale = nnx.Param(0.0)
+        self.raw_bias = nnx.Param(0.0)
+
+    def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
+        return self.net(x)
+
+    def get_metric_params(self):
+        sigma = 1.0 + (5.0 * jax.nn.sigmoid(self.raw_sigma.value))
+        scale = 0.5 + (4.5 * jax.nn.sigmoid(self.raw_scale.value))
+        bias = -1.0 + (2.0 * jax.nn.sigmoid(self.raw_bias.value))
+        return sigma, scale, bias
+
+# --- 2. The Decoder (Standard MLP) ---
 
 class Decoder(nnx.Module):
     def __init__(self, input_dim: int, hidden_dim: int, output_dim: int, *, rngs: nnx.Rngs):
@@ -75,11 +105,14 @@ class Decoder(nnx.Module):
 
 class ModelContainer(nnx.Module):
     def __init__(self, rngs: nnx.Rngs):
-        self.encoder = LearnedPE(input_dim=2, hidden_dim=128, output_dim=16, rngs=rngs)
-        self.decoder = Decoder(input_dim=16, hidden_dim=128, output_dim=2, rngs=rngs)
+        # SWITCH HERE: Choose Fourier or Siren
+        # self.encoder = LearnedPE_Fourier(input_dim=2, hidden_dim=128, output_dim=16, rngs=rngs)
+        self.encoder = LearnedPE_Siren(input_dim=2, hidden_dim=64, output_dim=8, rngs=rngs)
+        
+        self.decoder = Decoder(input_dim=8, hidden_dim=32, output_dim=2, rngs=rngs)
 
-# --- 4. Training Logic ---
-
+# --- 4. Training Logic (Unchanged) ---
+# ... (Same loss_fn and train_step as before) ...
 @nnx.jit
 def loss_fn(model: ModelContainer, x1, x2, alpha):
     enc = model.encoder
@@ -103,7 +136,6 @@ def loss_fn(model: ModelContainer, x1, x2, alpha):
     # --- Constraint 3: Bounded Adaptive Metric ---
     dist = jnp.linalg.norm(x1 - x2, axis=-1)
     
-    # Get the safe, bounded parameters
     sigma, scale, bias = enc.get_metric_params()
     
     target_sim = scale * jnp.exp(-(dist**2) / (2 * sigma**2)) + bias
@@ -129,20 +161,20 @@ def train_step(
     return loss, aux
 
 # --- 5. Main Execution ---
-
+# ... (Same main loop as before) ...
 def main():
     config = {
         'batch_size': 1024,
         'min_val': -20.0, 'max_val': 20.0,
-        'lr': 5e-3,
-        'steps': 20000
+        'lr': 1e-4,
+        'steps': 40000
     }
     
     key = jax.random.PRNGKey(0)
     model = ModelContainer(nnx.Rngs(0))
     optimizer = nnx.Optimizer(model, optax.adam(config['lr']), wrt=nnx.Param)
     
-    print("Training Bounded Adaptive Learned PE...")
+    print("Training Learned PE (SIREN)...")
     for i in range(config['steps']):
         key, k1, k2, k3 = jax.random.split(key, 4)
         
@@ -159,9 +191,9 @@ def main():
     print("Done.")
     
     # --- Validation ---
-    key, subkey = jax.random.split(key)
-    x1 = jax.random.uniform(subkey, (1000, 2), minval=-20, maxval=20)
-    x2 = jax.random.uniform(subkey, (1000, 2), minval=-20, maxval=20)
+    key, k1, k2 = jax.random.split(key, 3)
+    x1 = jax.random.uniform(k1, (1000, 2), minval=config['min_val'], maxval=config['max_val'])
+    x2 = jax.random.uniform(k2, (1000, 2), minval=config['min_val'], maxval=config['max_val'])
     
     enc = model.encoder
     p1 = enc(x1)
