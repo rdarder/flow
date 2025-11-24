@@ -4,6 +4,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import optax
+import torch
+import torchvision
 from flax import nnx
 import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader
@@ -198,6 +200,13 @@ class Training:
             import traceback
             traceback.print_exc()
 
+    def log_kernels(self, epoch):
+        """Logs the stem kernels to TensorBoard."""
+        try:
+            log_kernels_to_tensorboard(self.model, self.logger, epoch)
+        except Exception as e:
+            print(f"Error logging kernels: {e}")
+
     def train(self, epochs=200, log_every_steps=50):
         print(f"Starting training for {epochs} epochs...")
         global_step = 0
@@ -246,6 +255,9 @@ class Training:
                 f_final, aux = self.model(img1, img2)
                 self.log_visuals(epoch, img1, img2, flow_gt, aux, f_final)
 
+            # Log Kernels
+            self.log_kernels(epoch)
+
             print(f"Epoch {epoch}: Loss = {avg_loss:.6f}")
 
             # Log Params
@@ -258,6 +270,40 @@ class Training:
             self.logger.log("Params/Blend", model.lookup_blend.value, epoch)
 
         self.logger.close()
+
+
+VMIN = -1
+VMAX = 1
+
+
+def log_single_kernel(logger, kernel_jax, name, epoch):
+    """Helper to convert, normalize, grid, and log one kernel."""
+    # Flax Conv kernel shape: (H, W, In, Out)
+    # PyTorch make_grid expects: (B, C, H, W) -> We treat Out as Batch, In as Channel
+    kernels_torch = torch.from_numpy(np.array(kernel_jax))
+
+    # Permute to (Out, In, H, W)
+    kernels_permuted = kernels_torch.permute(3, 2, 0, 1)
+
+    # Normalize for visualization (-1 to 1 range assumption for "middle gray" zero)
+    # We clamp to ensure no outliers blow out the grid contrast
+    kernels_clamped = torch.clamp(kernels_permuted, VMIN, VMAX)
+    kernels_norm = (kernels_clamped - VMIN) / (VMAX - VMIN + 1e-6)
+
+    # Make grid
+    grid = torchvision.utils.make_grid(kernels_norm, nrow=8, padding=1)
+    logger.writer.add_image(f'Kernels/{name}', grid, epoch)
+
+
+def log_kernels_to_tensorboard(model, logger, epoch):
+    """
+    Logs the *spatial, depthwise* (dw) kernels from the 'stem'
+    to TensorBoard as an image grid, using a *fixed*
+    normalization range to make changes visible.
+    """
+    # Access the kernel value from the NNX module
+    if hasattr(model.stem, 'dw1'):
+        log_single_kernel(logger, model.stem.dw1.kernel.value, 'dw1_W (stem)', epoch)
 
 
 if __name__ == "__main__":
