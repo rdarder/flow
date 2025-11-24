@@ -1,22 +1,20 @@
 import os
 from datetime import datetime
-
 import jax
 import jax.numpy as jnp
 import numpy as np
 import optax
-import torch
-import torchvision
 from flax import nnx
-from matplotlib import pyplot as plt
-from torch.utils.data import DataLoader, Dataset
+import matplotlib.pyplot as plt
+from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
+# Import the new m2 model
 from model import BarebonesFlowModel
-from pytorch_old.datasets import ChairsV0Dataset
 from synthetic_dataset import SyntheticFlowDataset
 
 
+# --- 1. Logger Utility ---
 class JaxLogger:
     def __init__(self, version: str, log_dir='runs'):
         run_name = f"{version}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
@@ -25,8 +23,6 @@ class JaxLogger:
         print(f"Logging to {log_path}")
 
     def log(self, tag, value, step):
-        # We need to .item() to get a Python scalar
-        # or .to_py() for JAX DeviceArrays
         try:
             value = float(value)
             self.writer.add_scalar(tag, value, step)
@@ -37,178 +33,9 @@ class JaxLogger:
         self.writer.close()
 
 
-class Training:
-    def __init__(self, epochs: int, batch_size: int, learning_rate: float, img_size_hw: tuple[int, int],
-                 embed_dim: int, log_every_steps: int, logger: JaxLogger,
-                 train_dataset: Dataset):
-        self.epochs = epochs
-        self.batch_size = batch_size
-        self.learning_rate = learning_rate
-        self.img_size = img_size_hw
-        self.embed_dim = embed_dim
-        key = jax.random.PRNGKey(135)
-        self.rngs = nnx.Rngs(params=key, sample=0)
-        self.log_every_steps = log_every_steps
-
-        # --- Model Setup ---
-        # 1. This is the model we will train. (Simplified)
-        self.model_trained = BarebonesFlowModel(
-            img_size_hw=img_size_hw,
-            embed_dim=embed_dim,
-            rngs=self.rngs
-        )
-
-        # 2. (Removed model_eval_no_denoiser)
-        # --- End Model Setup ---
-
-        self.optimizer = nnx.Optimizer(self.model_trained, optax.adamw(learning_rate=learning_rate), wrt=nnx.Param)
-        self.train_dataset = train_dataset
-        self.train_loader = DataLoader(self.train_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
-        self.logger = logger
-
-    def log_metrics(self, step: int, metrics_bag: dict):
-        for metric_category, metrics in metrics_bag.items():
-            for metric_name, metric_value in metrics.items():
-                if hasattr(metric_value, 'ndim') and metric_value.ndim > 1:
-                    continue
-                self.logger.log(f'{metric_category}/{metric_name}', metric_value, step)
-
-    def log_epoch_end(self, epoch: int, total_epoch_loss: float):
-        avg_loss = total_epoch_loss / len(self.train_loader)
-        self.logger.log('Loss/train_epoch', avg_loss, epoch)
-        # Log params from the *trained* model
-        self.logger.log('params/patch_lookup/attn_temperature', self.model_trained.patch_lookup.attn_temperature, epoch)
-        self.logger.log('params/patch_lookup/pos_scale', self.model_trained.patch_lookup.pos_scale, epoch)
-        # (Removed denoiser logs)
-        self.logger.log('params/peer_prop/pos_scale', self.model_trained.peer_prop.pos_scale, epoch)
-        self.logger.log('params/peer_prop/attn_temperature', self.model_trained.peer_prop.attn_temperature, epoch)
-
-        # blending/sharpening params
-        self.logger.log('params/flow/blend_sharpness', self.model_trained.blend_sharpness, epoch)
-        print(f"Epoch [{epoch + 1}/{self.epochs}] | Avg Loss: {avg_loss:.6f}")
-
-    def log_gradients(self, gradients, epoch: int):
-        log_gradients(gradients, self.logger, epoch)
-
-    def log_conv_kernels(self, epoch: int):
-        log_kernels_to_tensorboard(self.model_trained, self.logger, epoch)
-
-    def log_evaluation_sample(self, epoch: int):
-        """Grabs one batch, runs inference, and logs the new diagnostic figure."""
-        try:
-            # 1. Get one random batch from the *shuffled* loader
-            raw_frame1, raw_frame2, flow_gt_pt = next(iter(self.train_loader))
-
-            # 2. Convert to JAX arrays
-            img1_batch = jnp.array(raw_frame1.numpy())
-            img2_batch = jnp.array(raw_frame2.numpy())
-            flow_gt_batch = jnp.array(flow_gt_pt.numpy())
-
-            # --- 3. Run Inference (Simplified) ---
-            # (Removed sync logic)
-
-            # Run on the TRAINED model
-            dense_flow_pred, aux = self.model_trained(
-                img1_batch, img2_batch, flow_gt_batch
-            )
-            # --- End Inference ---
-
-            # 4. Get all the debug data from the trace
-            c_cross = aux['trace']['C_cross_dense']
-            f_cross = aux['trace']['F_cross_dense']
-            f_peer = aux['trace']['F_peer_dense']
-
-            # 5. Create and log the new diagnostic figure
-            # We'll just log the first item in the batch (index 0)
-            fig = create_diagnostic_figure_jax(
-                img1_batch[0],
-                img2_batch[0],
-                flow_gt_batch[0],
-                f_cross[0],  # Pass F_cross
-                f_peer[0],   # Pass F_peer
-                dense_flow_pred[0],  # Pass F_final
-                c_cross[0]   # Pass C_cross
-            )
-            self.logger.writer.add_figure('Flow_Diagnostics/epoch', fig, epoch)
-
-        except Exception as e:
-            print(f"Warning: Could not log evaluation sample. Error: {e}")
-            import traceback
-            traceback.print_exc()
-
-    def train_one_epoch(self, global_step: int, epoch: int):
-        total_epoch_loss = 0.0
-        grads = None
-        frame1_batch, frame2_batch, flow_gt_batch, aux_bag = None, None, None, None
-        for i, (raw_frame1, raw_frame2, flow_gt_pt) in enumerate(self.train_loader):
-            frame1_batch = jnp.array(raw_frame1.numpy())
-            frame2_batch = jnp.array(raw_frame2.numpy())
-            flow_gt_batch = jnp.array(flow_gt_pt.numpy())
-
-            loss, aux_bag, grads = update_step(self.model_trained, self.optimizer, frame1_batch, frame2_batch,
-                                               flow_gt_batch)
-            total_epoch_loss += loss
-            if (global_step + 1) % self.log_every_steps == 0:
-                self.log_metrics(global_step, aux_bag)
-
-            global_step += 1
-
-        self.log_epoch_end(epoch, total_epoch_loss)
-        self.log_gradients(grads, epoch)
-        self.log_conv_kernels(epoch)
-        self.log_evaluation_sample(epoch)
-        return global_step
-
-    def run(self):
-        print("Starting training with Flax.nnx...")
-        global_step = 0
-        for epoch in range(self.epochs):
-            global_step = self.train_one_epoch(global_step, epoch)
-        self.logger.close()
-        print("Training complete.")
-
-    @classmethod
-    def default_build(cls):
-        # train_dataset = PreprocessedChairsDataset('../datasets/chairs_32/')
-        train_dataset = SyntheticFlowDataset(img_size=18, length=10_000)
-        version = 'v1'
-        jax_logger = JaxLogger(version)
-        training = Training(
-            epochs=200,
-            batch_size=64,
-            learning_rate=1e-3,
-            img_size_hw=(18, 18),
-            embed_dim=16,
-            log_every_steps=50,
-            train_dataset=train_dataset,
-            logger=jax_logger,
-        )
-        return training
-
-
-def loss_fn(model, img1_batch, img2_batch, flow_gt_batch):
-    _, aux = model(img1_batch, img2_batch, flow_gt_batch)
-
-    loss_components = aux['loss']
-    total_loss = loss_components['flow']
-    loss_components['total'] = total_loss
-    return total_loss, aux
-
-
-@nnx.jit
-def update_step(model, optimizer, img1, img2, flow_gt):
-    """Performs one update step using nnx and optax."""
-
-    (loss, aux), grads = nnx.value_and_grad(loss_fn, has_aux=True)(
-        model, img1, img2, flow_gt
-    )
-    optimizer.update(model, grads)
-    return loss, aux, grads
-
-
+# --- 2. Visualization Utils ---
 def flow_to_color(flow, max_flow=None):
-    """Converts a 2D optical flow field (H, W, 2) into a color-coded RGB image."""
-    # (This function is from our PyTorch script)
+    """Converts flow (H, W, 2) to RGB image."""
     H, W, C = flow.shape
     dx, dy = flow[..., 0], flow[..., 1]
     magnitude = np.sqrt(dx ** 2 + dy ** 2)
@@ -226,104 +53,225 @@ def flow_to_color(flow, max_flow=None):
     return rgb[..., :3]
 
 
-def create_diagnostic_figure_jax(
+def create_diagnostic_figure(
         img1, img2, flow_gt,
-        f_cross, f_peer, f_final, c_cross
+        f_final, f_cross, f_peer,
+        c_cross, c_peer,
+        a_cross, a_peer
 ):
     """
-    Creates a simplified 6-panel diagnostic figure.
+    Creates a rich 3x3 diagnostic grid showing inputs, outputs, and internal traces.
     """
-
-    # --- 1. Prepare Data (Convert JAX to NumPy for plotting) ---
+    # Prepare standard images
     img1_np = np.array(img1)
     img2_np = np.array(img2)
 
-    # Convert flows to color images
-    gt_img = flow_to_color(np.array(flow_gt))
-    f_cross_img = flow_to_color(np.array(f_cross))
-    f_peer_img = flow_to_color(np.array(f_peer))
-    f_final_img = flow_to_color(np.array(f_final))
+    # Prepare Flows
+    gt_color = flow_to_color(np.array(flow_gt))
+    final_color = flow_to_color(np.array(f_final))
+    cross_color = flow_to_color(np.array(f_cross))
+    peer_color = flow_to_color(np.array(f_peer))
 
-    # Convert C_cross maps to numpy (they are [H, W, 1])
-    c_cross_np = np.array(c_cross).squeeze()
+    # Prepare Confidence Maps (H, W, 1) -> (H, W)
+    c_cross_map = np.array(c_cross).squeeze()
+    c_peer_map = np.array(c_peer).squeeze()
 
+    # Prepare Attention Samples
+    # a_cross is (B, N, N). We take one sample (index 0) and reshape.
+    # We visualize the attention *from* the center pixel *to* all other pixels.
+    # N = H*W. Center index approx N/2 + W/2.
+    H, W = c_cross_map.shape
+    N = H * W
+    center_idx = N // 2 + W // 2
 
-    # --- 3. Create Plot ---
-    fig, axes = plt.subplots(2, 3, figsize=(15, 10))  # 2x3 Grid
-    fig.suptitle("Flow Diagnostics", fontsize=16)
+    # Extract row for center pixel: (1, N) -> reshape to (H, W)
+    att_cross_sample = np.array(a_cross[center_idx]).reshape(H - 2, W - 2)
+    att_peer_sample = np.array(a_peer[center_idx]).reshape(H - 2, W - 2)
 
-    # Row 1: Inputs & Ground Truth
+    # --- Plotting ---
+    fig, axes = plt.subplots(3, 3, figsize=(15, 15))
+    plt.subplots_adjust(hspace=0.3, wspace=0.1)
+
+    # Row 1: The Task & Result
     axes[0, 0].imshow(img1_np)
-    axes[0, 0].set_title("Image 1 (f0)")
-    axes[0, 0].axis('off')
-
+    axes[0, 0].set_title("Frame 1")
     axes[0, 1].imshow(img2_np)
-    axes[0, 1].set_title("Image 2 (f1)")
-    axes[0, 1].axis('off')
+    axes[0, 1].set_title("Frame 2")
+    axes[0, 2].imshow(gt_color)
+    axes[0, 2].set_title("GT Flow")
 
-    axes[0, 2].imshow(gt_img)
-    axes[0, 2].set_title("Ground Truth Flow")
-    axes[0, 2].axis('off')
+    # Row 2: V1 (Patch Lookup) Internals
+    axes[1, 0].imshow(cross_color)
+    axes[1, 0].set_title("V1 Flow (F_cross)")
+    im_c1 = axes[1, 1].imshow(c_cross_map, vmin=0, vmax=1, cmap='viridis')
+    axes[1, 1].set_title("V1 Confidence (C_cross)")
+    plt.colorbar(im_c1, ax=axes[1, 1], fraction=0.046, pad=0.04)
+    axes[1, 2].imshow(att_cross_sample, cmap='plasma')
+    axes[1, 2].set_title("V1 Attn (Center Pixel)")
 
-    # Row 2: Flow Components
-    axes[1, 0].imshow(f_cross_img)
-    axes[1, 0].set_title("F_cross (V1 Flow)")
-    axes[1, 0].axis('off')
+    # Row 3: V2 (Peer Prop) Internals + Final
+    axes[2, 0].imshow(peer_color)
+    axes[2, 0].set_title("V2 Flow (F_peer)")
+    im_c2 = axes[2, 1].imshow(c_peer_map, cmap='viridis')
+    axes[2, 1].set_title("V2 Consensus (C_peer)")
+    plt.colorbar(im_c2, ax=axes[2, 1], fraction=0.046, pad=0.04)
 
-    axes[1, 1].imshow(f_peer_img)
-    axes[1, 1].set_title("F_peer (V2 Flow)")
-    axes[1, 1].axis('off')
+    # Last spot: Final Result
+    axes[2, 2].imshow(final_color)
+    axes[2, 2].set_title("Final Pred (Blended)")
 
-    axes[1, 2].imshow(f_final_img)
-    axes[1, 2].set_title("F_final (Blended)")
-    axes[1, 2].axis('off')
+    # Clean up axes
+    for ax in axes.flat:
+        ax.axis('off')
 
-    # (We will add C_cross back if needed, starting simple)
-    # Turn off the last plot in row 3
-    # axes[2, 2].axis('off')
+    # Convert to array for TensorBoard
+    fig.canvas.draw()
+    width, height = fig.canvas.get_width_height()
+    buffer = np.frombuffer(fig.canvas.buffer_rgba(), dtype=np.uint8)
+    image_array = buffer.reshape(height, width, 4)[..., :3]
+    plt.close(fig)
 
-    plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-    return fig
-
-
-VMIN, VMAX = -1.0, 1.0
-
-
-def log_single_kernel(logger, kernel_jax, name, epoch):
-    """Helper to convert, normalize, grid, and log one kernel."""
-    kernels_torch = torch.from_numpy(np.array(kernel_jax))
-    kernels_permuted = kernels_torch.permute(3, 2, 0, 1)
-    kernels_clamped = torch.clamp(kernels_permuted, VMIN, VMAX)
-    kernels_norm = (kernels_clamped - VMIN) / (VMAX - VMIN + 1e-6)
-    grid = torchvision.utils.make_grid(kernels_norm, nrow=8, padding=1)
-    logger.writer.add_image(f'Kernels/{name}', grid, epoch)
+    return image_array
 
 
-def log_kernels_to_tensorboard(model, logger, epoch):
+# --- 3. Training Logic ---
+
+# Simple L2 Loss on Flow
+def loss_fn(model, img1, img2, flow_gt):
+    # Run model
+    # Returns: flow_pred, aux_dict
+    flow_pred, aux = model(img1, img2)
+
+    # L2 Loss
+    diff = flow_pred - flow_gt
+    loss = jnp.mean(jnp.square(diff))
+
+    return loss, aux
+
+
+@nnx.jit
+def train_step(model, optimizer, img1, img2, flow_gt):
     """
-    Logs the *spatial, depthwise* (dw) kernels from the 'stem'
-    to TensorBoard as an image grid, using a *fixed*
-    normalization range to make changes visible.
+    Performs a single update step.
+    Note: We pass 'model' for the state update, but 'model' is also inside 'optimizer'.
+    The optimizer handles the param updates in place on the model instance.
     """
-    log_single_kernel(logger, model.stem.dw1.kernel.value, 'dw1_W (stem)', epoch)
+    (loss, aux), grads = nnx.value_and_grad(loss_fn, has_aux=True)(model, img1, img2, flow_gt)
+    optimizer.update(model, grads)
+    return loss, aux
 
 
-def log_gradients(grads_tree, logger, epoch):
-    """(This function replaces our manual logging)"""
-    # Get just the learnable param gradients
-    param_grads = grads_tree.filter(nnx.Param)
-    param_grads_flat = nnx.to_flat_state(param_grads)
-    for path, grad_val in param_grads_flat:
-        # 'path' is a tuple of keys, e.g., ('stem', 'dw1_W', 'kernel')
-        # 'grad_val' is the raw jax array
+class Training:
+    def __init__(
+            self,
+            model,
+            learning_rate=1e-3,
+            log_dir='runs',
+            train_dataset=None
+    ):
+        self.model = model
+        self.optimizer = nnx.Optimizer(model, optax.adamw(learning_rate), wrt=nnx.Param)
 
-        # We join the path tuple to make a clean name
-        param_name = ".".join(path)
+        # Logging
+        self.logger = JaxLogger("m2_cartesian", log_dir)
+        self.train_dataset = train_dataset
+        self.train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True, num_workers=4, drop_last=True)
 
-        grad_mag = jnp.mean(jnp.abs(grad_val))
-        logger.log(f'GradMag/{param_name}', grad_mag, epoch)
+    def log_visuals(self, epoch, img1, img2, flow_gt, aux, f_final):
+        """Extracts traces and logs the figure."""
+        # Extract JAX arrays from the batch (take index 0)
+        # All aux outputs are (B, H, W, C) due to the model's reshaping/padding
+        try:
+            img = create_diagnostic_figure(
+                img1[0], img2[0], flow_gt[0],
+                f_final[0],
+                aux['F_cross'][0],
+                aux['F_peer'][0],
+                aux['C_cross'][0],
+                aux['C_peer'][0],
+                aux['A_cross'][0],  # (64, 64) - we handle reshaping in plotting func
+                aux['A_peer'][0]  # (64, 64)
+            )
+            self.logger.writer.add_image("Diagnostics", img, epoch, dataformats='HWC')
+        except Exception as e:
+            print(f"Error logging visuals: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def train(self, epochs=200, log_every_steps=50):
+        print(f"Starting training for {epochs} epochs...")
+        global_step = 0
+
+        for epoch in range(epochs):
+            epoch_loss = 0.0
+            batch_count = 0
+
+            # Store last batch for visualization
+            last_batch = None
+            last_aux = None
+            last_pred = None
+
+            for i, (img1_pt, img2_pt, flow_gt_pt) in enumerate(self.train_loader):
+                # Convert to JAX
+                img1 = jnp.array(img1_pt.numpy())
+                img2 = jnp.array(img2_pt.numpy())
+                flow_gt = jnp.array(flow_gt_pt.numpy())
+
+                # Step
+                loss, aux = train_step(self.model, self.optimizer, img1, img2, flow_gt)
+
+                # Track
+                epoch_loss += loss
+                batch_count += 1
+                global_step += 1
+
+                if i % log_every_steps == 0:
+                    self.logger.log("Loss/train_step", loss, global_step)
+
+                # Keep for logging
+                last_batch = (img1, img2, flow_gt)
+                last_aux = aux
+
+                # We need the prediction too, which isn't returned by train_step directly
+                # But we can infer it or re-run inference for the log sample
+
+            # End of Epoch Logging
+            avg_loss = epoch_loss / batch_count
+            self.logger.log("Loss/train_epoch", avg_loss, epoch)
+
+            # Log Visuals (Re-run inference on last batch item to be clean)
+            if last_batch is not None:
+                img1, img2, flow_gt = last_batch
+                # Run inference mode (same as train for this simple model)
+                f_final, aux = self.model(img1, img2)
+                self.log_visuals(epoch, img1, img2, flow_gt, aux, f_final)
+
+            print(f"Epoch {epoch}: Loss = {avg_loss:.6f}")
+
+            # Log Params
+            model = self.model
+            self.logger.log("Params/lookup/Visual/Scale", model.patch_lookup.visual_scale.value, epoch)
+            self.logger.log("Params/lookup/Spatial/Scale", model.patch_lookup.spatial_score.scale.value, epoch)
+            self.logger.log("Params/propagate/Visual/Scale", model.peer_prop.visual_scale.value, epoch)
+            self.logger.log("Params/propagate/Spatial/Scale", model.peer_prop.spatial_score.scale.value, epoch)
+            self.logger.log("Params/propagate/ConsensusBias", model.peer_prop.consensus_bias_scale.value, epoch)
+            self.logger.log("Params/Blend", model.lookup_blend.value, epoch)
+
+        self.logger.close()
 
 
 if __name__ == "__main__":
-    training = Training.default_build()
-    training.run()
+    # Setup
+    dataset = SyntheticFlowDataset(
+        img_size=18,
+        length=5000,
+        blob_size_range=(2, 6),
+    )  # 18x18 matches model expectation
+
+    # Initialize Model
+    key = jax.random.PRNGKey(42)
+    model = BarebonesFlowModel(img_size_hw=(18, 18), embed_dim=16, rngs=nnx.Rngs(key))
+
+    # Run
+    trainer = Training(model, train_dataset=dataset)
+    trainer.train(epochs=100)
