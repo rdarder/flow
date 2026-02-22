@@ -1,24 +1,25 @@
 import os
 from datetime import datetime
+
 import jax
 import jax.numpy as jnp
+import matplotlib.pyplot as plt
 import numpy as np
 import optax
 import torch
 import torchvision
 from flax import nnx
-import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
 # Import the new m2 model
-from model import BarebonesFlowModel
-from synthetic_dataset import SyntheticFlowDataset
+from flow.model import BarebonesFlowModel
+from flow.synthetic_dataset import SyntheticFlowDataset
 
 
 # --- 1. Logger Utility ---
 class JaxLogger:
-    def __init__(self, version: str, log_dir='runs'):
+    def __init__(self, version: str, log_dir="runs"):
         run_name = f"{version}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         log_path = os.path.join(log_dir, run_name)
         self.writer = SummaryWriter(log_path)
@@ -40,7 +41,7 @@ def flow_to_color(flow, max_flow=None):
     """Converts flow (H, W, 2) to RGB image."""
     H, W, C = flow.shape
     dx, dy = flow[..., 0], flow[..., 1]
-    magnitude = np.sqrt(dx ** 2 + dy ** 2)
+    magnitude = np.sqrt(dx**2 + dy**2)
     angle = np.arctan2(dy, dx)
     h = (angle + np.pi) / (2 * np.pi)
     s = np.ones_like(h)
@@ -56,10 +57,7 @@ def flow_to_color(flow, max_flow=None):
 
 
 def create_diagnostic_figure(
-        img1, img2, flow_gt,
-        f_final, f_cross, f_peer,
-        c_cross, c_peer,
-        a_cross, a_peer
+    img1, img2, flow_gt, f_final, f_cross, f_peer, c_cross, c_peer, a_cross, a_peer
 ):
     """
     Creates a rich 3x3 diagnostic grid showing inputs, outputs, and internal traces.
@@ -105,16 +103,16 @@ def create_diagnostic_figure(
     # Row 2: V1 (Patch Lookup) Internals
     axes[1, 0].imshow(cross_color)
     axes[1, 0].set_title("V1 Flow (F_cross)")
-    im_c1 = axes[1, 1].imshow(c_cross_map, vmin=0, vmax=1, cmap='viridis')
+    im_c1 = axes[1, 1].imshow(c_cross_map, vmin=0, vmax=1, cmap="viridis")
     axes[1, 1].set_title("V1 Confidence (C_cross)")
     plt.colorbar(im_c1, ax=axes[1, 1], fraction=0.046, pad=0.04)
-    axes[1, 2].imshow(att_cross_sample, cmap='plasma')
+    axes[1, 2].imshow(att_cross_sample, cmap="plasma")
     axes[1, 2].set_title("V1 Attn (Center Pixel)")
 
     # Row 3: V2 (Peer Prop) Internals + Final
     axes[2, 0].imshow(peer_color)
     axes[2, 0].set_title("V2 Flow (F_peer)")
-    im_c2 = axes[2, 1].imshow(c_peer_map, cmap='viridis')
+    im_c2 = axes[2, 1].imshow(c_peer_map, cmap="viridis")
     axes[2, 1].set_title("V2 Consensus (C_peer)")
     plt.colorbar(im_c2, ax=axes[2, 1], fraction=0.046, pad=0.04)
 
@@ -124,7 +122,7 @@ def create_diagnostic_figure(
 
     # Clean up axes
     for ax in axes.flat:
-        ax.axis('off')
+        ax.axis("off")
 
     # Convert to array for TensorBoard
     fig.canvas.draw()
@@ -137,6 +135,7 @@ def create_diagnostic_figure(
 
 
 # --- 3. Training Logic ---
+
 
 # Simple L2 Loss on Flow
 def loss_fn(model, img1, img2, flow_gt):
@@ -158,26 +157,24 @@ def train_step(model, optimizer, img1, img2, flow_gt):
     Note: We pass 'model' for the state update, but 'model' is also inside 'optimizer'.
     The optimizer handles the param updates in place on the model instance.
     """
-    (loss, aux), grads = nnx.value_and_grad(loss_fn, has_aux=True)(model, img1, img2, flow_gt)
+    (loss, aux), grads = nnx.value_and_grad(loss_fn, has_aux=True)(
+        model, img1, img2, flow_gt
+    )
     optimizer.update(model, grads)
     return loss, aux
 
 
 class Training:
-    def __init__(
-            self,
-            model,
-            learning_rate=1e-3,
-            log_dir='runs',
-            train_dataset=None
-    ):
+    def __init__(self, model, learning_rate=1e-3, log_dir="runs", train_dataset=None):
         self.model = model
         self.optimizer = nnx.Optimizer(model, optax.adamw(learning_rate), wrt=nnx.Param)
 
         # Logging
         self.logger = JaxLogger("m2_cartesian", log_dir)
         self.train_dataset = train_dataset
-        self.train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True, num_workers=4, drop_last=True)
+        self.train_loader = DataLoader(
+            train_dataset, batch_size=64, shuffle=True, num_workers=4, drop_last=True
+        )
 
     def log_visuals(self, epoch, img1, img2, flow_gt, aux, f_final):
         """Extracts traces and logs the figure."""
@@ -185,19 +182,22 @@ class Training:
         # All aux outputs are (B, H, W, C) due to the model's reshaping/padding
         try:
             img = create_diagnostic_figure(
-                img1[0], img2[0], flow_gt[0],
+                img1[0],
+                img2[0],
+                flow_gt[0],
                 f_final[0],
-                aux['F_cross'][0],
-                aux['F_peer'][0],
-                aux['C_cross'][0],
-                aux['C_peer'][0],
-                aux['A_cross'][0],  # (64, 64) - we handle reshaping in plotting func
-                aux['A_peer'][0]  # (64, 64)
+                aux["F_cross"][0],
+                aux["F_peer"][0],
+                aux["C_cross"][0],
+                aux["C_peer"][0],
+                aux["A_cross"][0],  # (64, 64) - we handle reshaping in plotting func
+                aux["A_peer"][0],  # (64, 64)
             )
-            self.logger.writer.add_image("Diagnostics", img, epoch, dataformats='HWC')
+            self.logger.writer.add_image("Diagnostics", img, epoch, dataformats="HWC")
         except Exception as e:
             print(f"Error logging visuals: {e}")
             import traceback
+
             traceback.print_exc()
 
     def log_kernels(self, epoch):
@@ -262,11 +262,31 @@ class Training:
 
             # Log Params
             model = self.model
-            self.logger.log("Params/lookup/Visual/Scale", model.patch_lookup.visual_scale.value, epoch)
-            self.logger.log("Params/lookup/Spatial/Scale", model.patch_lookup.spatial_score.scale.value, epoch)
-            self.logger.log("Params/propagate/Visual/Scale", model.peer_prop.visual_scale.value, epoch)
-            self.logger.log("Params/propagate/Spatial/Scale", model.peer_prop.spatial_score.scale.value, epoch)
-            self.logger.log("Params/propagate/ConsensusBias", model.peer_prop.consensus_bias_scale.value, epoch)
+            self.logger.log(
+                "Params/lookup/Visual/Scale",
+                model.patch_lookup.visual_scale.value,
+                epoch,
+            )
+            self.logger.log(
+                "Params/lookup/Spatial/Scale",
+                model.patch_lookup.spatial_score.scale.value,
+                epoch,
+            )
+            self.logger.log(
+                "Params/propagate/Visual/Scale",
+                model.peer_prop.visual_scale.value,
+                epoch,
+            )
+            self.logger.log(
+                "Params/propagate/Spatial/Scale",
+                model.peer_prop.spatial_score.scale.value,
+                epoch,
+            )
+            self.logger.log(
+                "Params/propagate/ConsensusBias",
+                model.peer_prop.consensus_bias_scale.value,
+                epoch,
+            )
             self.logger.log("Params/Blend", model.lookup_blend.value, epoch)
 
         self.logger.close()
@@ -292,7 +312,7 @@ def log_single_kernel(logger, kernel_jax, name, epoch):
 
     # Make grid
     grid = torchvision.utils.make_grid(kernels_norm, nrow=8, padding=1)
-    logger.writer.add_image(f'Kernels/{name}', grid, epoch)
+    logger.writer.add_image(f"Kernels/{name}", grid, epoch)
 
 
 def log_kernels_to_tensorboard(model, logger, epoch):
@@ -302,8 +322,8 @@ def log_kernels_to_tensorboard(model, logger, epoch):
     normalization range to make changes visible.
     """
     # Access the kernel value from the NNX module
-    if hasattr(model.stem, 'dw1'):
-        log_single_kernel(logger, model.stem.dw1.kernel.value, 'dw1_W (stem)', epoch)
+    if hasattr(model.stem, "dw1"):
+        log_single_kernel(logger, model.stem.dw1.kernel.value, "dw1_W (stem)", epoch)
 
 
 if __name__ == "__main__":

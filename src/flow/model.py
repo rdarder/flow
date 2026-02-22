@@ -17,18 +17,18 @@ class Stem(nnx.Module):
             in_features=3,
             out_features=dw_patterns * 3,
             kernel_size=(3, 3),
-            padding='VALID',  # No padding
+            padding="VALID",  # No padding
             feature_group_count=3,
             use_bias=False,
-            rngs=rngs
+            rngs=rngs,
         )
         # 2. Pointwise Conv (1x1)
         self.pw1 = nnx.Conv(
             in_features=dw_patterns * 3,
             out_features=embed_dim,
             kernel_size=(1, 1),
-            padding='VALID',  # No padding needed for 1x1
-            rngs=rngs
+            padding="VALID",  # No padding needed for 1x1
+            rngs=rngs,
         )
         self.norm1 = nnx.LayerNorm(num_features=embed_dim, use_bias=True, rngs=rngs)
 
@@ -89,11 +89,11 @@ class PatchLookup(nnx.Module):
         self.spatial_score = SpatialScore(initial_scale=10.0, rngs=rngs)
 
     def __call__(
-            self,
-            q_features: jnp.ndarray,  # (B, N, C)
-            k_features: jnp.ndarray,  # (B, N, C)
-            q_pos: jnp.ndarray,  # (B, N, 2) - Normalized [0, 1]
-            k_pos: jnp.ndarray  # (B, N, 2) - Normalized [0, 1]
+        self,
+        q_features: jnp.ndarray,  # (B, N, C)
+        k_features: jnp.ndarray,  # (B, N, C)
+        q_pos: jnp.ndarray,  # (B, N, 2) - Normalized [0, 1]
+        k_pos: jnp.ndarray,  # (B, N, 2) - Normalized [0, 1]
     ):
         B, N, C = q_features.shape
 
@@ -129,11 +129,11 @@ class PeerPropagation(nnx.Module):
         self.consensus_bias_scale = nnx.Param(5.0)
 
     def __call__(
-            self,
-            features: jnp.ndarray,  # (B, N, C)
-            pos: jnp.ndarray,  # (B, N, 2) - Normalized
-            flow_v1: jnp.ndarray,  # (B, N, 2) - Normalized Flow
-            consensus_v1: jnp.ndarray  # (B, N, 1)
+        self,
+        features: jnp.ndarray,  # (B, N, C)
+        pos: jnp.ndarray,  # (B, N, 2) - Normalized
+        flow_v1: jnp.ndarray,  # (B, N, 2) - Normalized Flow
+        consensus_v1: jnp.ndarray,  # (B, N, 1)
     ):
         B, N, C = features.shape
 
@@ -187,7 +187,7 @@ class BarebonesFlowModel(nnx.Module):
         self.norm_scale = float(max(img_size_hw))  # e.g. 18.0
 
         # Generate grid 0..15, offset to align with valid region
-        y, x = jnp.meshgrid(jnp.arange(h), jnp.arange(w), indexing='ij')
+        y, x = jnp.meshgrid(jnp.arange(h), jnp.arange(w), indexing="ij")
         y = y + 1.0
         x = x + 1.0
 
@@ -212,11 +212,7 @@ class BarebonesFlowModel(nnx.Module):
         return patches
 
     def _pad_output(self, flow_16x16, batch_size):
-        return jnp.pad(
-            flow_16x16,
-            ((0, 0), (1, 1), (1, 1), (0, 0)),
-            mode='edge'
-        )
+        return jnp.pad(flow_16x16, ((0, 0), (1, 1), (1, 1), (0, 0)), mode="edge")
 
     def __call__(self, frame1, frame2):
         batch_size = frame1.shape[0]
@@ -236,9 +232,7 @@ class BarebonesFlowModel(nnx.Module):
         )
 
         # 4. Run V2: Peer Propagation
-        F_peer, A_peer, C_peer = self.peer_prop(
-            f1_patches, q_pos, F_cross, C_cross
-        )
+        F_peer, A_peer, C_peer = self.peer_prop(f1_patches, q_pos, F_cross, C_cross)
 
         # 5. Blend Flows
         w1 = jnp.power(C_cross, self.lookup_blend.value)
@@ -268,5 +262,5 @@ class BarebonesFlowModel(nnx.Module):
             C_cross=self._pad_output(C_cross_grid, batch_size),
             C_peer=self._pad_output(C_peer_grid, batch_size),
             A_cross=A_cross,
-            A_peer=A_peer
+            A_peer=A_peer,
         )

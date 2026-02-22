@@ -4,7 +4,7 @@ import os
 
 
 class PreprocessedChairsDataset(Dataset):
-    def __init__(self, path: str, split='train'):
+    def __init__(self, path: str, split="train"):
         """
         A trivial dataset loader that loads a pre-processed
         list of tensors directly into RAM.
@@ -38,7 +38,9 @@ if __name__ == "__main__":
 
     # This assumes you've already run preprocess_chairs.py
     try:
-        train_dataset = PreprocessedChairsDataset('../datasets/chairs_32', split='train')
+        train_dataset = PreprocessedChairsDataset(
+            "../datasets/chairs_32", split="train"
+        )
 
         # Test __len__
         print(f"Total training samples: {len(train_dataset)}")

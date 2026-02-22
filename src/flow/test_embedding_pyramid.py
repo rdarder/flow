@@ -1,15 +1,10 @@
 """Tests for the embedding pyramid module."""
 
-import os
-import sys
-
 import jax
 import jax.numpy as jnp
 from flax import nnx
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
-
-from embedding_pyramid import EmbeddingPyramid, compute_pyramid_shapes
+from flow.embedding_pyramid import EmbeddingPyramid, compute_pyramid_shapes
 
 
 class TestEmbeddingPyramid:
@@ -210,23 +205,27 @@ class TestEmbeddingPyramid:
         # Verify each 2x2 region is flattened in the correct order
         # Top-left 2x2: [0, 1, 4, 5]
         expected_top_left = jnp.array([0, 1, 4, 5])
-        assert jnp.allclose(patched[0, 0, 0, :], expected_top_left), \
-            f"Top-left mismatch: got {patched[0, 0, 0, :]}, expected {expected_top_left}"
+        assert jnp.allclose(
+            patched[0, 0, 0, :], expected_top_left
+        ), f"Top-left mismatch: got {patched[0, 0, 0, :]}, expected {expected_top_left}"
 
         # Top-right 2x2: [2, 3, 6, 7]
         expected_top_right = jnp.array([2, 3, 6, 7])
-        assert jnp.allclose(patched[0, 0, 1, :], expected_top_right), \
-            f"Top-right mismatch: got {patched[0, 0, 1, :]}, expected {expected_top_right}"
+        assert jnp.allclose(
+            patched[0, 0, 1, :], expected_top_right
+        ), f"Top-right mismatch: got {patched[0, 0, 1, :]}, expected {expected_top_right}"
 
         # Bottom-left 2x2: [8, 9, 12, 13]
         expected_bottom_left = jnp.array([8, 9, 12, 13])
-        assert jnp.allclose(patched[0, 1, 0, :], expected_bottom_left), \
-            f"Bottom-left mismatch: got {patched[0, 1, 0, :]}, expected {expected_bottom_left}"
+        assert jnp.allclose(
+            patched[0, 1, 0, :], expected_bottom_left
+        ), f"Bottom-left mismatch: got {patched[0, 1, 0, :]}, expected {expected_bottom_left}"
 
         # Bottom-right 2x2: [10, 11, 14, 15]
         expected_bottom_right = jnp.array([10, 11, 14, 15])
-        assert jnp.allclose(patched[0, 1, 1, :], expected_bottom_right), \
-            f"Bottom-right mismatch: got {patched[0, 1, 1, :]}, expected {expected_bottom_right}"
+        assert jnp.allclose(
+            patched[0, 1, 1, :], expected_bottom_right
+        ), f"Bottom-right mismatch: got {patched[0, 1, 1, :]}, expected {expected_bottom_right}"
 
     def test_patchify_multi_channel(self):
         """Test _patchify_2x2 with multiple channels.
@@ -256,8 +255,9 @@ class TestEmbeddingPyramid:
         # For each position: [c0, c1, c2]
         # = [0, 100, 200, 1, 101, 201, 4, 104, 204, 5, 105, 205]
         expected = jnp.array([0, 100, 200, 1, 101, 201, 4, 104, 204, 5, 105, 205])
-        assert jnp.allclose(patched[0, 0, 0, :], expected), \
-            f"Multi-channel mismatch: got {patched[0, 0, 0, :]}, expected {expected}"
+        assert jnp.allclose(
+            patched[0, 0, 0, :], expected
+        ), f"Multi-channel mismatch: got {patched[0, 0, 0, :]}, expected {expected}"
 
 
 if __name__ == "__main__":
