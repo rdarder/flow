@@ -24,10 +24,16 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
 ]
+dependencies = [
+    "jax",
+    "flax",
+    "platformdirs>=3.0",
+]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0",
+    "isort",
     "black",
     "flake8",
     "mypy",

@@ -1,6 +1,23 @@
-import jax
+"""Flow package initialization with JAX configuration."""
 
-jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")
+import os
+from pathlib import Path
+
+import jax
+from platformdirs import user_cache_dir
+
+# Determine cache directory
+# Priority: FLOW_CACHE_DIR env var > user-specific cache directory
+if os.environ.get("FLOW_CACHE_DIR"):
+    CACHE_DIR = Path(os.environ["FLOW_CACHE_DIR"])
+else:
+    CACHE_DIR = Path(user_cache_dir("flow"))
+
+# Ensure cache directory exists
+CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+# Configure JAX persistent compilation cache
+jax.config.update("jax_compilation_cache_dir", str(CACHE_DIR / "jax"))
 jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
 jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
 jax.config.update(
