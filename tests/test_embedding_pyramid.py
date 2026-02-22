@@ -184,6 +184,81 @@ class TestEmbeddingPyramid:
         embeddings = run_pyramid(x)
         assert len(embeddings) == 2
 
+    def test_patchify_2x2_correctness(self):
+        """Test that _patchify_2x2 correctly groups spatial regions.
+
+        Create a known pattern and verify the 2x2 patches are flattened correctly.
+        """
+        key = jax.random.PRNGKey(42)
+        rngs = nnx.Rngs(key)
+
+        pyramid = EmbeddingPyramid(num_levels=1, embed_dim=16, in_channels=1, rngs=rngs)
+
+        # Create a 4x4 single-channel image with sequential values:
+        # [[ 0  1  2  3]
+        #  [ 4  5  6  7]
+        #  [ 8  9 10 11]
+        #  [12 13 14 15]]
+        x = jnp.arange(16).reshape(1, 4, 4, 1).astype(jnp.float32)
+
+        # Apply patchify
+        patched = pyramid._patchify_2x2(x)
+
+        # Should produce a 2x2 grid with 4 channels each
+        assert patched.shape == (1, 2, 2, 4)
+
+        # Verify each 2x2 region is flattened in the correct order
+        # Top-left 2x2: [0, 1, 4, 5]
+        expected_top_left = jnp.array([0, 1, 4, 5])
+        assert jnp.allclose(patched[0, 0, 0, :], expected_top_left), \
+            f"Top-left mismatch: got {patched[0, 0, 0, :]}, expected {expected_top_left}"
+
+        # Top-right 2x2: [2, 3, 6, 7]
+        expected_top_right = jnp.array([2, 3, 6, 7])
+        assert jnp.allclose(patched[0, 0, 1, :], expected_top_right), \
+            f"Top-right mismatch: got {patched[0, 0, 1, :]}, expected {expected_top_right}"
+
+        # Bottom-left 2x2: [8, 9, 12, 13]
+        expected_bottom_left = jnp.array([8, 9, 12, 13])
+        assert jnp.allclose(patched[0, 1, 0, :], expected_bottom_left), \
+            f"Bottom-left mismatch: got {patched[0, 1, 0, :]}, expected {expected_bottom_left}"
+
+        # Bottom-right 2x2: [10, 11, 14, 15]
+        expected_bottom_right = jnp.array([10, 11, 14, 15])
+        assert jnp.allclose(patched[0, 1, 1, :], expected_bottom_right), \
+            f"Bottom-right mismatch: got {patched[0, 1, 1, :]}, expected {expected_bottom_right}"
+
+    def test_patchify_multi_channel(self):
+        """Test _patchify_2x2 with multiple channels.
+
+        Verify that channels are grouped correctly in the flattened output.
+        """
+        key = jax.random.PRNGKey(42)
+        rngs = nnx.Rngs(key)
+
+        pyramid = EmbeddingPyramid(num_levels=1, embed_dim=16, in_channels=3, rngs=rngs)
+
+        # Create a 4x4 RGB image where each channel has different values
+        # Channel 0: values 0-15, Channel 1: values 100-115, Channel 2: values 200-215
+        c0 = jnp.arange(16).reshape(4, 4)
+        c1 = jnp.arange(100, 116).reshape(4, 4)
+        c2 = jnp.arange(200, 216).reshape(4, 4)
+        x = jnp.stack([c0, c1, c2], axis=-1).reshape(1, 4, 4, 3).astype(jnp.float32)
+
+        # Apply patchify
+        patched = pyramid._patchify_2x2(x)
+
+        # Should produce a 2x2 grid with 12 channels (4*3)
+        assert patched.shape == (1, 2, 2, 12)
+
+        # The order is: all channels for each spatial position, then next position
+        # Top-left 2x2 positions: (0,0), (0,1), (1,0), (1,1)
+        # For each position: [c0, c1, c2]
+        # = [0, 100, 200, 1, 101, 201, 4, 104, 204, 5, 105, 205]
+        expected = jnp.array([0, 100, 200, 1, 101, 201, 4, 104, 204, 5, 105, 205])
+        assert jnp.allclose(patched[0, 0, 0, :], expected), \
+            f"Multi-channel mismatch: got {patched[0, 0, 0, :]}, expected {expected}"
+
 
 if __name__ == "__main__":
     test = TestEmbeddingPyramid()
@@ -217,5 +292,11 @@ if __name__ == "__main__":
 
     test.test_jit_compilation()
     print("✓ test_jit_compilation passed")
+
+    test.test_patchify_2x2_correctness()
+    print("✓ test_patchify_2x2_correctness passed")
+
+    test.test_patchify_multi_channel()
+    print("✓ test_patchify_multi_channel passed")
 
     print("\n=== All embedding pyramid tests passed! ===")
