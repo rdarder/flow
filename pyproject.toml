@@ -28,6 +28,7 @@ dependencies = [
     "jax",
     "flax",
     "platformdirs>=3.0",
+    "tyro>=1.0.0",
 ]
 
 [project.optional-dependencies]
