@@ -152,16 +152,17 @@ class LoggingSettings:
 @dataclass
 class Settings:
     """Complete experiment configuration container.
-    
+
     Passed as single parameter to training functions.
     Uses tyro for CLI parsing with nested dataclass support.
-    
+
     Attributes:
         model: ModelSettings instance
-        dataset: DatasetSettings instance  
+        dataset: DatasetSettings instance
         training: TrainingSettings instance
         logging: LoggingSettings instance
     """
+
     model: ModelSettings
     dataset: DatasetSettings
     training: TrainingSettings
@@ -169,12 +170,12 @@ class Settings:
 
     def validate(self) -> Tuple[bool, str]:
         """Validate cross-compatibility between model and dataset.
-        
+
         Returns:
             (is_valid, message): Boolean validity and descriptive message
         """
         return validate_resolution(self.dataset.img_size, self.model.num_levels)
-    
+
     def get_required_image_size(self) -> int:
         """Get minimum required image size for current model configuration."""
         return compute_valid_resolution(self.model.num_levels)

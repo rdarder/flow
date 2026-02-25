@@ -15,7 +15,7 @@ from flow.settings import (
 
 class TestCrossValidation:
     """Tests for model-dataset cross-compatibility using window_grid utilities."""
-    
+
     def test_valid_configuration_passes(self):
         """Standard 2-level model with 64x64 images should validate."""
         settings = Settings(
@@ -27,7 +27,7 @@ class TestCrossValidation:
         is_valid, msg = settings.validate()
         assert is_valid is True
         assert "64x64" in msg
-    
+
     def test_invalid_size_fails(self):
         """Incompatible image size should fail validation."""
         settings = Settings(
@@ -39,7 +39,7 @@ class TestCrossValidation:
         is_valid, msg = settings.validate()
         assert is_valid is False
         assert "too small" in msg.lower()
-    
+
     def test_get_required_size_uses_window_grid(self):
         """Should return correct minimum size from window_grid.compute_valid_resolution."""
         settings = Settings(
