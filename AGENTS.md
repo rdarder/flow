@@ -1,6 +1,6 @@
 # Flow Training Pipeline - Development Log
 
-## Current Status: Phase 1 Complete ✓
+## Current Status: Phase 2 Complete ✓
 
 ### ✅ Phase 1: Settings Infrastructure + Train.py Integration
 
@@ -34,20 +34,53 @@ python -m flow.train --smoke-test
 - ✓ Visualization figures render correctly
 - ✓ Loss decreases (5.65 → 5.64 in smoke test)
 
-### Next: Phase 2 - Checkpointing
+### ✅ Phase 2: Checkpointing (Refactored)
 
-**Plan:**
-1. Add Orbax checkpointing to save/restore model state
-2. Add resume-from-checkpoint logic
-3. Test checkpoint save/load cycle
-4. Smoke test with checkpointing enabled
+**Completed:**
+- Added Orbax checkpoint dependency
+- Implemented **Null Object Pattern** for checkpointing:
+  - `AbstractCheckpointManager`: Unified interface
+  - `NullCheckpointManager`: No-op implementation when checkpointing disabled
+  - `OrbaxCheckpointManager`: Full Orbax integration with `should_save()` API
+  - Factory function `create_checkpoint_manager()` for clean instantiation
+- Integrated proper Orbax CheckpointManager API:
+  - Uses `CheckpointManagerOptions(save_interval_steps, max_to_keep)`
+  - Leverages `should_save(step)` method for save decisions
+  - Automatic cleanup via Orbax (not manual)
+  - No conditionals in training loop - just call methods
+- Handles integer key conversion (Orbax/MsgPack limitation)
+- Clean API: checkpointing decisions are internal to the manager
 
-**Key features:**
-- Save checkpoints every N steps (configurable)
-- Resume training from checkpoint
-- Keep N most recent checkpoints (cleanup)
+**CLI Usage:**
+```bash
+# Train with checkpointing (default: every 1000 steps)
+python -m flow.train
 
-### Phase 3 - Visualization Enhancement
+# Train with custom checkpoint frequency
+python -m flow.train --training.checkpoint-freq 500
+
+# Disable checkpointing
+python -m flow.train --training.checkpoint-freq 0
+
+# Resume from specific checkpoint
+python -m flow.train --training.resume-from-checkpoint checkpoints/1000
+
+# Auto-resume from latest checkpoint (automatic)
+python -m flow.train  # Will find and resume from latest checkpoint if available
+
+# Smoke test with checkpointing
+python -m flow.train --smoke-test
+```
+
+**Implementation Details:**
+- Training loop now simply calls `checkpoint_manager.should_save(step)` and `checkpoint_manager.save()`
+- No `if checkpoint_manager is not None` checks in the training loop
+- Null object pattern handles disabled checkpointing transparently
+- All checkpointing logic centralized in `checkpoint_manager.py`
+- ✓ Integer dict keys properly converted (0, 1 instead of '0', '1')
+- ✓ Loss continues from where it left off after resume
+
+### Next: Phase 3 - Visualization Enhancement
 
 **Plan:**
 - Multi-view hierarchical visualization
@@ -85,6 +118,9 @@ python -m flow.train --smoke-test
 - `steps_per_epoch`: Steps per epoch, -1 for full (default: -1)
 - `log_every_steps`: Logging frequency (default: 50)
 - `checkpoint_freq`: Checkpoint interval, 0 to disable (default: 1000)
+- `checkpoint_dir`: Directory to save checkpoints (default: "checkpoints")
+- `keep_last_n_checkpoints`: Number of recent checkpoints to keep (default: 3, 0 to keep all)
+- `resume_from_checkpoint`: Path to checkpoint to resume from (default: "")
 - `grad_clip_norm`: Gradient clipping, 0 to disable (default: 0.0)
 - `seed`: Random seed (default: 42)
 

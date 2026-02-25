@@ -17,21 +17,18 @@ import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 import optax
-import torch
-import torchvision
 import tyro
 from flax import nnx
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
-from flow.hierarchical_model import HierarchicalFlowModel
-from flow.settings import (
-    DatasetSettings,
-    LoggingSettings,
-    ModelSettings,
-    Settings,
-    TrainingSettings,
+from flow.checkpoint_manager import (
+    AbstractCheckpointManager,
+    create_checkpoint_manager,
 )
+from flow.hierarchical_model import HierarchicalFlowModel
+from flow.settings import (DatasetSettings, LoggingSettings, ModelSettings,
+                           Settings, TrainingSettings)
 from flow.synthetic_dataset import SyntheticFlowDataset
 
 
@@ -243,9 +240,19 @@ def train_step(
 class Trainer:
     """Main training loop manager."""
 
-    def __init__(self, model: HierarchicalFlowModel, settings: Settings):
+    def __init__(
+        self,
+        model: HierarchicalFlowModel,
+        settings: Settings,
+        checkpoint_manager: AbstractCheckpointManager,
+        start_epoch: int = 0,
+        start_step: int = 0,
+    ):
         self.model = model
         self.settings = settings
+        self.checkpoint_manager = checkpoint_manager
+        self.start_epoch = start_epoch
+        self.global_step = start_step
 
         # Optimizer with optional gradient clipping
         if settings.training.grad_clip_norm > 0:
@@ -278,8 +285,6 @@ class Trainer:
             num_workers=settings.dataset.num_workers,
             drop_last=True,
         )
-
-        self.global_step = 0
 
     def log_visuals(
         self,
@@ -353,9 +358,26 @@ class Trainer:
             if i % self.settings.training.log_every_steps == 0:
                 self.logger.log("Loss/train_step", float(loss), self.global_step)
 
+            # Save checkpoint if the manager says we should
+            if self.checkpoint_manager.should_save(self.global_step):
+                self.checkpoint_manager.save(
+                    step=self.global_step,
+                    model=self.model,
+                    optimizer=self.optimizer,
+                    epoch=epoch,
+                )
+
             # Store for visualization
             last_batch = (img1, img2, flow_gt)
             last_outputs = (flow_pred, aux)
+
+        # Save checkpoint at end of epoch
+        self.checkpoint_manager.save(
+            step=self.global_step,
+            model=self.model,
+            optimizer=self.optimizer,
+            epoch=epoch,
+        )
 
         # Compute average loss
         avg_loss = epoch_loss / batch_count if batch_count > 0 else 0.0
@@ -379,11 +401,22 @@ class Trainer:
         print(
             f"Steps per epoch: {self.settings.training.steps_per_epoch if self.settings.training.steps_per_epoch > 0 else 'full dataset'}"
         )
+        print(f"Checkpoints will be saved to: {self.settings.training.checkpoint_dir}")
+        print(f"Checkpoint frequency: every {self.settings.training.checkpoint_freq} steps")
 
-        for epoch in range(self.settings.training.epochs):
+        for epoch in range(self.start_epoch, self.settings.training.epochs):
             avg_loss = self.train_epoch(epoch)
             print(f"Epoch {epoch}: Loss = {avg_loss:.6f}")
 
+        # Save final checkpoint
+        self.checkpoint_manager.save(
+            step=self.global_step,
+            model=self.model,
+            optimizer=self.optimizer,
+            epoch=self.settings.training.epochs - 1,
+        )
+
+        self.checkpoint_manager.close()
         self.logger.close()
         print("Training complete!")
 
@@ -431,8 +464,55 @@ def main(settings: Settings):
         f"Model initialized (required size: {model.required_size}x{model.required_size})"
     )
 
+    # Initialize optimizer for potential checkpoint loading
+    if settings.training.grad_clip_norm > 0:
+        optimizer_chain = optax.chain(
+            optax.clip_by_global_norm(settings.training.grad_clip_norm),
+            optax.adamw(settings.training.learning_rate),
+        )
+    else:
+        optimizer_chain = optax.adamw(settings.training.learning_rate)
+    optimizer = nnx.Optimizer(model, optimizer_chain, wrt=nnx.Param)
+
+    # Create checkpoint manager using factory pattern
+    checkpoint_manager = create_checkpoint_manager(
+        checkpoint_dir=settings.training.checkpoint_dir,
+        save_interval_steps=settings.training.checkpoint_freq,
+        max_to_keep=settings.training.keep_last_n_checkpoints,
+        enabled=settings.training.checkpoint_freq > 0,
+    )
+
+    # Handle checkpoint loading/resume
+    start_epoch = 0
+    start_step = 0
+
+    # Resume from specific checkpoint if provided
+    if settings.training.resume_from_checkpoint:
+        if os.path.exists(settings.training.resume_from_checkpoint):
+            start_epoch, start_step = checkpoint_manager.restore(
+                model=model,
+                optimizer=optimizer,
+            )
+        else:
+            print(
+                f"Warning: Resume checkpoint not found: {settings.training.resume_from_checkpoint}"
+            )
+            print("Starting fresh training...")
+    else:
+        # Check for latest checkpoint to auto-resume
+        latest_step = checkpoint_manager.latest_step()
+        if latest_step is not None:
+            print(f"Found existing checkpoint at step {latest_step}")
+            print("Auto-resuming from latest checkpoint...")
+            start_epoch, start_step = checkpoint_manager.restore(
+                model=model,
+                optimizer=optimizer,
+            )
+
     # Create trainer and run
-    trainer = Trainer(model, settings)
+    trainer = Trainer(
+        model, settings, checkpoint_manager, start_epoch=start_epoch, start_step=start_step
+    )
     trainer.train()
 
     return 0
@@ -461,7 +541,9 @@ def create_smoke_test_settings() -> Settings:
             epochs=2,  # Just 2 epochs
             steps_per_epoch=10,  # Only 10 steps per epoch
             log_every_steps=5,
-            checkpoint_freq=0,  # Disable checkpointing
+            checkpoint_freq=5,  # Save every 5 steps for testing
+            checkpoint_dir="test_checkpoints",
+            keep_last_n_checkpoints=2,
             grad_clip_norm=0.0,
             seed=42,
         ),

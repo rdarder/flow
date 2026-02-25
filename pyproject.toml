@@ -29,6 +29,7 @@ dependencies = [
     "flax",
     "platformdirs>=3.0",
     "tyro>=1.0.0",
+    "orbax-checkpoint>=0.5.0",
 ]
 
 [project.optional-dependencies]

@@ -84,8 +84,11 @@ class TrainingSettings:
         steps_per_epoch: Steps to run per epoch (-1 for full dataset)
         log_every_steps: Log metrics every N steps
         checkpoint_freq: Save checkpoint every N steps (0 to disable)
+        checkpoint_dir: Directory to save checkpoints
+        keep_last_n_checkpoints: Number of recent checkpoints to keep (0 to keep all)
         grad_clip_norm: Gradient clipping norm (0 to disable)
         seed: Random seed for reproducibility
+        resume_from_checkpoint: Path to checkpoint to resume from (empty for fresh start)
     """
 
     learning_rate: float = 1e-4
@@ -93,8 +96,11 @@ class TrainingSettings:
     steps_per_epoch: int = -1
     log_every_steps: int = 50
     checkpoint_freq: int = 1000
+    checkpoint_dir: str = "checkpoints"
+    keep_last_n_checkpoints: int = 3
     grad_clip_norm: float = 0.0
     seed: int = 42
+    resume_from_checkpoint: str = ""
 
     def __post_init__(self):
         if self.learning_rate <= 0:
@@ -108,6 +114,10 @@ class TrainingSettings:
         if self.checkpoint_freq < 0:
             raise ValueError(
                 f"checkpoint_freq must be >= 0, got {self.checkpoint_freq}"
+            )
+        if self.keep_last_n_checkpoints < 0:
+            raise ValueError(
+                f"keep_last_n_checkpoints must be >= 0, got {self.keep_last_n_checkpoints}"
             )
         if self.grad_clip_norm < 0:
             raise ValueError(f"grad_clip_norm must be >= 0, got {self.grad_clip_norm}")
