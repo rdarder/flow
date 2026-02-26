@@ -113,6 +113,43 @@ def _figure_to_array(fig: matplotlib.figure.Figure) -> np.ndarray:
     return image_array
 
 
+def _upsample_flow(flow: np.ndarray, target_h: int, target_w: int, original_resolution: int) -> np.ndarray:
+    """Upsample flow field to target resolution and convert to pixel-equivalent.
+
+    Pyramid level flows are in normalized coordinates (0-1 range relative to finest level).
+    This function upsamples them to target resolution and converts to pixel-equivalent
+    values by multiplying by original image resolution.
+    
+    Args:
+        flow: Flow field (H, W, 2) in normalized coordinates
+        target_h: Target height (resolution to visualize at)
+        target_w: Target width
+        original_resolution: Original image resolution (for pixel-equivalent conversion)
+        
+    Returns:
+        Upsampled flow in pixel-equivalent coordinates (target_h, target_w, 2)
+    """
+    import jax.numpy as jnp
+    from jax.image import resize
+    
+    src_h, src_w = flow.shape[:2]
+    
+    # Upsample using bilinear interpolation (normalized coords stay the same during upsampling)
+    flow_upsampled = np.array(
+        resize(
+            jnp.array(flow),
+            (target_h, target_w, flow.shape[-1]),
+            method="bilinear",
+        )
+    )
+    
+    # Convert to pixel-equivalent by scaling by original image resolution
+    # (all flows represent movement in the original image space)
+    flow_pixel_equivalent = flow_upsampled * np.array([original_resolution, original_resolution])
+    
+    return flow_pixel_equivalent
+
+
 # =============================================================================
 # Visualization Figure Functions
 # =============================================================================
@@ -124,7 +161,7 @@ def create_overview_figure(
     flow_gt: np.ndarray,
     flow_pred: np.ndarray,
     level_flows: Optional[Dict[str, np.ndarray]] = None,
-    max_flow: Optional[float] = None,
+    flow_max_percent: float = 0.1,
 ) -> np.ndarray:
     """Create overview figure showing inputs, GT, predictions, and pyramid levels.
 
@@ -139,18 +176,27 @@ def create_overview_figure(
         flow_gt: Ground truth flow (H, W, 2)
         flow_pred: Predicted flow (H, W, 2)
         level_flows: Dictionary of level_name -> flow for pyramid levels
-        max_flow: Maximum flow magnitude for color coding. If None, uses FLOW_MAX_MAGNITUDE.
+        flow_max_percent: Percentage of original image resolution for max flow color scale
 
     Returns:
         RGB image array for TensorBoard
     """
+    # Target resolution: use flow_pred (finest level) as reference
+    target_h, target_w = flow_pred.shape[:2]
+    
+    # Original image resolution: finest pyramid level is half the original
+    # (e.g., 64x64 image -> 32x32 flow, so original = 2 * target)
+    original_resolution = 2 * max(target_h, target_w)
+    
+    # Calculate max_flow as percentage of original image resolution
+    max_flow = flow_max_percent * original_resolution
+    
     # Handle shape mismatch between GT and prediction
     if flow_pred.shape[:2] != flow_gt.shape[:2]:
         # Downsample GT to match prediction
-        from jax.image import resize
         import jax.numpy as jnp
+        from jax.image import resize
 
-        target_h, target_w = flow_pred.shape[:2]
         scale_h = target_h / flow_gt.shape[0]
         scale_w = target_w / flow_gt.shape[1]
 
@@ -193,11 +239,11 @@ def create_overview_figure(
     axes[0, 1].set_title("Frame 2", fontsize=12, fontweight="bold")
 
     axes[0, 2].imshow(flow_to_color(flow_gt, max_flow=max_flow))
-    axes[0, 2].set_title("Ground Truth Flow", fontsize=12, fontweight="bold")
+    axes[0, 2].set_title(f"Ground Truth Flow (max={max_flow:.1f}px)", fontsize=12, fontweight="bold")
 
     # Row 2: Predictions
     axes[1, 0].imshow(flow_to_color(flow_pred, max_flow=max_flow))
-    axes[1, 0].set_title("Predicted Flow", fontsize=12, fontweight="bold")
+    axes[1, 0].set_title(f"Predicted Flow (max={max_flow:.1f}px)", fontsize=12, fontweight="bold")
 
     # Error magnitude
     error = np.sqrt(np.sum((flow_pred - flow_gt) ** 2, axis=-1))
@@ -225,8 +271,20 @@ def create_overview_figure(
             row = 2 + i // 3
             col = i % 3
             if row < n_rows and col < n_cols:
-                axes[row, col].imshow(flow_to_color(level_flow, max_flow=max_flow))
-                axes[row, col].set_title(f"Pyramid {level_name}", fontsize=10)
+                # Convert to pixel-equivalent using original image resolution
+                # (all levels represent movement in the original image space)
+                src_h, src_w = level_flow.shape[:2]
+                if (src_h, src_w) != (target_h, target_w):
+                    # Upsample and convert to pixel-equivalent
+                    level_flow_vis = _upsample_flow(level_flow, target_h, target_w, original_resolution)
+                    upsample_info = f"({src_h}→{target_h})"
+                else:
+                    # Already at target res, just convert to pixel-equivalent
+                    level_flow_vis = level_flow * np.array([original_resolution, original_resolution])
+                    upsample_info = f"({target_h})"
+                
+                axes[row, col].imshow(flow_to_color(level_flow_vis, max_flow=max_flow))
+                axes[row, col].set_title(f"{level_name} Flow {upsample_info}", fontsize=10)
 
     # Clean up axes
     for ax in axes.flat:
@@ -424,8 +482,8 @@ def create_blending_figure(
         # Ensure shapes match
         if flow_final.shape[:2] != flow_gt.shape[:2]:
             # Downsample GT
-            from jax.image import resize
             import jax.numpy as jnp
+            from jax.image import resize
 
             target_h, target_w = flow_final.shape[:2]
             scale_h = target_h / flow_gt.shape[0]
@@ -581,8 +639,8 @@ def create_confidence_analysis_figure(
 
     # Handle shape mismatch
     if flow_pred.shape[:2] != flow_gt.shape[:2]:
-        from jax.image import resize
         import jax.numpy as jnp
+        from jax.image import resize
 
         target_h, target_w = flow_pred.shape[:2]
         scale_h = target_h / flow_gt.shape[0]

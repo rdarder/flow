@@ -171,6 +171,24 @@ class LoggingSettings:
 
 
 @dataclass
+class VisualizationSettings:
+    """Visualization color and display settings.
+
+    Attributes:
+        flow_max_percent: Percentage of image resolution to use as max flow
+                          magnitude for color scaling (0.1 = 10% of image size)
+    """
+
+    flow_max_percent: float = 0.1
+
+    def __post_init__(self):
+        if self.flow_max_percent <= 0 or self.flow_max_percent > 1.0:
+            raise ValueError(
+                f"flow_max_percent must be in (0, 1.0], got {self.flow_max_percent}"
+            )
+
+
+@dataclass
 class Settings:
     """Complete experiment configuration container.
 
@@ -182,12 +200,14 @@ class Settings:
         dataset: DatasetSettings instance
         training: TrainingSettings instance
         logging: LoggingSettings instance
+        visualization: VisualizationSettings instance
     """
 
     model: ModelSettings
     dataset: DatasetSettings
     training: TrainingSettings
     logging: LoggingSettings
+    visualization: VisualizationSettings
 
     def validate(self) -> Tuple[bool, str]:
         """Validate cross-compatibility between model and dataset.

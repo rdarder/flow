@@ -34,6 +34,7 @@ from flow.settings import (
     ModelSettings,
     Settings,
     TrainingSettings,
+    VisualizationSettings,
 )
 from flow.synthetic_dataset import SyntheticFlowDataset
 from flow.visualization import (
@@ -206,7 +207,8 @@ class Trainer:
                     level_flows[f"Level {i}"] = np.array(flow[0])
 
             fig_overview = create_overview_figure(
-                img1_np, img2_np, flow_gt_np, flow_pred_np, level_flows
+                img1_np, img2_np, flow_gt_np, flow_pred_np, level_flows,
+                flow_max_percent=self.settings.visualization.flow_max_percent
             )
             self.logger.log_figure("Visualization/Overview", fig_overview, epoch)
 
@@ -519,6 +521,9 @@ def create_smoke_test_settings() -> Settings:
             run_name_prefix="smoke_test",
             num_visualization_samples=2,
             log_views=("overview",),
+        ),
+        visualization=VisualizationSettings(
+            flow_max_percent=0.1,
         ),
     )
 
