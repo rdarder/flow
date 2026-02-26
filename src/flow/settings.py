@@ -5,7 +5,7 @@ Uses window_grid utilities for image size validation against pyramid levels.
 """
 
 from dataclasses import dataclass
-from typing import Tuple
+from typing import Optional, Tuple
 
 from flow.window_grid import compute_valid_resolution, validate_resolution
 
@@ -50,14 +50,16 @@ class DatasetSettings:
         batch_size: Training batch size
         num_workers: Number of data loading workers
         blob_size_range: Min/max size of synthetic blobs
+        num_blobs_range: Min/max number of blobs (auto-scaled if None)
     """
 
     img_size: int = 64
     length: int = 5000
     max_flow: int = 5
-    batch_size: int = 4
+    batch_size: int = 32
     num_workers: int = 4
     blob_size_range: Tuple[int, int] = (2, 6)
+    num_blobs_range: Optional[Tuple[int, int]] = None
 
     def __post_init__(self):
         if self.img_size < 8:
@@ -72,6 +74,15 @@ class DatasetSettings:
             raise ValueError(
                 f"blob_size_range min must be <= max, got {self.blob_size_range}"
             )
+
+        # Auto-calculate num_blobs_range based on image size if not provided
+        # Base is 1-2 blobs for 32x32, scale proportionally with area
+        if self.num_blobs_range is None:
+            base_blobs = 2  # Base for 32x32
+            scale_factor = (self.img_size / 32) ** 2  # Scale with area
+            min_blobs = max(1, int(base_blobs * scale_factor * 0.5))
+            max_blobs = max(min_blobs + 1, int(base_blobs * scale_factor))
+            self.num_blobs_range = (min_blobs, max_blobs)
 
 
 @dataclass
@@ -88,7 +99,7 @@ class TrainingSettings:
         keep_last_n_checkpoints: Number of recent checkpoints to keep (0 to keep all)
         grad_clip_norm: Gradient clipping norm (0 to disable)
         seed: Random seed for reproducibility
-        resume_from_checkpoint: Path to checkpoint to resume from (empty for fresh start)
+        resume: Whether to resume from latest checkpoint in checkpoint_dir
     """
 
     learning_rate: float = 1e-4
@@ -100,7 +111,7 @@ class TrainingSettings:
     keep_last_n_checkpoints: int = 3
     grad_clip_norm: float = 0.0
     seed: int = 42
-    resume_from_checkpoint: str = ""
+    resume: bool = False
 
     def __post_init__(self):
         if self.learning_rate <= 0:

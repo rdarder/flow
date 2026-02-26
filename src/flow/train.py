@@ -8,179 +8,44 @@ Example usage:
 """
 
 import os
-from datetime import datetime
 from typing import Any, Dict, Optional
 
 import jax
 import jax.numpy as jnp
-import matplotlib
-import matplotlib.pyplot as plt
 import numpy as np
 import optax
 import tyro
 from flax import nnx
 from torch.utils.data import DataLoader
-from torch.utils.tensorboard import SummaryWriter
 
 from flow.checkpoint_manager import (
     AbstractCheckpointManager,
     create_checkpoint_manager,
 )
 from flow.hierarchical_model import HierarchicalFlowModel
-from flow.settings import (DatasetSettings, LoggingSettings, ModelSettings,
-                           Settings, TrainingSettings)
+from flow.logging_utils import (
+    JaxLogger,
+    log_gradient_histograms,
+    log_parameter_histograms,
+)
+from flow.settings import (
+    DatasetSettings,
+    LoggingSettings,
+    ModelSettings,
+    Settings,
+    TrainingSettings,
+)
 from flow.synthetic_dataset import SyntheticFlowDataset
+from flow.visualization import (
+    create_blending_figure,
+    create_components_figure,
+    create_confidence_analysis_figure,
+    create_overview_figure,
+    create_pyramid_detail_figure,
+)
 
 
-# --- 1. Logger Utility ---
-class JaxLogger:
-    """TensorBoard logger for training metrics and visualizations."""
-
-    def __init__(self, log_dir: str = "runs", run_name_prefix: str = "flow"):
-        run_name = f"{run_name_prefix}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        log_path = os.path.join(log_dir, run_name)
-        self.writer = SummaryWriter(log_path)
-        print(f"Logging to {log_path}")
-
-    def log(self, tag: str, value: float, step: int):
-        """Log a scalar value."""
-        try:
-            value = float(value)
-            self.writer.add_scalar(tag, value, step)
-        except Exception as e:
-            print(f"Logger Warning: {e}")
-
-    def log_image(
-        self, tag: str, image: np.ndarray, step: int, dataformats: str = "HWC"
-    ):
-        """Log an image."""
-        try:
-            self.writer.add_image(tag, image, step, dataformats=dataformats)
-        except Exception as e:
-            print(f"Logger Warning (image): {e}")
-
-    def close(self):
-        """Close the logger."""
-        self.writer.close()
-
-
-# --- 2. Visualization Utils ---
-def flow_to_color(flow: np.ndarray, max_flow: Optional[float] = None) -> np.ndarray:
-    """Converts flow (H, W, 2) to RGB image."""
-    H, W, C = flow.shape
-    dx, dy = flow[..., 0], flow[..., 1]
-    magnitude = np.sqrt(dx**2 + dy**2)
-    angle = np.arctan2(dy, dx)
-    h = (angle + np.pi) / (2 * np.pi)
-    s = np.ones_like(h)
-    if max_flow is None:
-        max_mag = np.percentile(magnitude, 99.9)
-    else:
-        max_mag = max_flow
-    v = np.clip(magnitude / (max_mag + 1e-6), 0, 1)
-    hsv = np.stack([h, s, v], axis=-1)
-    cmap = matplotlib.colormaps.get_cmap("hsv")
-    rgb = cmap(hsv[..., 0])
-    rgb[..., :3] *= v[..., np.newaxis]
-    return rgb[..., :3]
-
-
-def create_flow_comparison_figure(
-    img1: np.ndarray,
-    img2: np.ndarray,
-    flow_gt: np.ndarray,
-    flow_pred: np.ndarray,
-    level_flows: Optional[Dict[str, np.ndarray]] = None,
-) -> np.ndarray:
-    """
-    Creates a diagnostic figure showing inputs, ground truth, and predicted flow.
-
-    For hierarchical model, optionally shows flow at each pyramid level.
-    Handles shape mismatch by downsampling ground truth if needed.
-    """
-    # Handle shape mismatch - downsample ground truth if needed
-    if flow_pred.shape[:2] != flow_gt.shape[:2]:
-        from jax.image import resize
-
-        target_h, target_w = flow_pred.shape[:2]
-        scale_h = target_h / flow_gt.shape[0]
-        scale_w = target_w / flow_gt.shape[1]
-        # Scale flow values
-        flow_gt_scaled = flow_gt * np.array([scale_w, scale_h])
-        # Downsample
-        flow_gt = np.array(
-            resize(
-                jnp.array(flow_gt_scaled),
-                (target_h, target_w, flow_gt.shape[-1]),
-                method="bilinear",
-            )
-        )
-
-    # Determine grid size
-    num_levels = len(level_flows) if level_flows else 0
-    n_rows = max(2, 2 + (num_levels + 1) // 2)  # At least 2 rows
-    n_cols = 3
-
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(15, 5 * n_rows))
-    # Ensure axes is always 2D
-    if n_rows == 1:
-        axes = axes.reshape(1, -1)
-    elif not isinstance(axes, np.ndarray):
-        axes = np.array(axes).reshape(n_rows, n_cols)
-    plt.subplots_adjust(hspace=0.3, wspace=0.1)
-
-    # Row 1: Inputs and GT
-    axes[0, 0].imshow(img1)
-    axes[0, 0].set_title("Frame 1")
-    axes[0, 1].imshow(img2)
-    axes[0, 1].set_title("Frame 2")
-    axes[0, 2].imshow(flow_to_color(flow_gt))
-    axes[0, 2].set_title("GT Flow")
-
-    # Row 2: Predictions
-    axes[1, 0].imshow(flow_to_color(flow_pred))
-    axes[1, 0].set_title("Predicted Flow")
-
-    # Error magnitude
-    error = np.sqrt(np.sum((flow_pred - flow_gt) ** 2, axis=-1))
-    im_err = axes[1, 1].imshow(error, cmap="hot")
-    axes[1, 1].set_title("Flow Error")
-    plt.colorbar(im_err, ax=axes[1, 1], fraction=0.046, pad=0.04)
-
-    # Error histogram
-    axes[1, 2].hist(error.flatten(), bins=50, color="blue", alpha=0.7)
-    axes[1, 2].set_title(f"Error Distribution (mean={np.mean(error):.2f})")
-    axes[1, 2].set_xlabel("Error magnitude")
-    axes[1, 2].set_ylabel("Count")
-
-    # Additional rows: Pyramid levels
-    if level_flows:
-        level_items = list(level_flows.items())
-        for i, (level_name, level_flow) in enumerate(level_items):
-            row = 2 + i // 3
-            col = i % 3
-            if row < n_rows and col < n_cols:
-                axes[row, col].imshow(flow_to_color(level_flow))
-                axes[row, col].set_title(f"Level: {level_name}")
-
-    # Clean up axes
-    for ax in axes.flat:
-        ax.axis("off")
-
-    # Convert to array for TensorBoard
-    fig.canvas.draw()
-    width, height = fig.canvas.get_width_height()
-    # Get ARGB buffer from Agg backend
-    buf = fig.canvas.tostring_argb()
-    buffer = np.frombuffer(buf, dtype=np.uint8)
-    # ARGB to RGB - skip alpha channel (first byte)
-    image_array = buffer.reshape(height, width, 4)[:, :, 1:]
-    plt.close(fig)
-
-    return image_array
-
-
-# --- 3. Loss Functions ---
+# --- 1. Loss Functions ---
 def endpoint_error_loss(flow_pred: jnp.ndarray, flow_gt: jnp.ndarray) -> jnp.ndarray:
     """Endpoint error (EPE) loss - standard for optical flow.
 
@@ -219,24 +84,47 @@ def loss_fn(
     return loss, (flow_pred, aux)
 
 
-# --- 4. Training Step ---
+# --- 2. Training Steps ---
 @nnx.jit
-def train_step(
+def train_step_fast(
     model: HierarchicalFlowModel,
     optimizer: nnx.Optimizer,
     img1: jnp.ndarray,
     img2: jnp.ndarray,
     flow_gt: jnp.ndarray,
 ):
-    """Performs a single training step."""
+    """Fast training step - JIT optimizes away unused aux values.
+
+    This wrapper function doesn't return the aux dict, so JIT can optimize
+    away its computation during training for better performance.
+    """
+    (loss, (flow_pred, _)), grads = nnx.value_and_grad(loss_fn, has_aux=True)(
+        model, img1, img2, flow_gt
+    )
+    optimizer.update(model, grads)
+    return loss, flow_pred, grads
+
+
+@nnx.jit
+def train_step_with_aux(
+    model: HierarchicalFlowModel,
+    optimizer: nnx.Optimizer,
+    img1: jnp.ndarray,
+    img2: jnp.ndarray,
+    flow_gt: jnp.ndarray,
+):
+    """Training step that returns full aux for visualization.
+
+    Used once per epoch for logging detailed diagnostics.
+    """
     (loss, (flow_pred, aux)), grads = nnx.value_and_grad(loss_fn, has_aux=True)(
         model, img1, img2, flow_gt
     )
     optimizer.update(model, grads)
-    return loss, flow_pred, aux
+    return loss, flow_pred, grads, aux
 
 
-# --- 5. Training Class ---
+# --- 3. Training Class ---
 class Trainer:
     """Main training loop manager."""
 
@@ -277,6 +165,7 @@ class Trainer:
             length=settings.dataset.length,
             max_flow=settings.dataset.max_flow,
             blob_size_range=settings.dataset.blob_size_range,
+            num_blobs_range=settings.dataset.num_blobs_range,
         )
         self.train_loader = DataLoader(
             self.train_dataset,
@@ -286,37 +175,117 @@ class Trainer:
             drop_last=True,
         )
 
-    def log_visuals(
-        self,
-        epoch: int,
-        img1: jnp.ndarray,
-        img2: jnp.ndarray,
-        flow_gt: jnp.ndarray,
-        flow_pred: jnp.ndarray,
-        aux: Dict[str, Any],
+    def log_all_visualizations(
+        self, epoch: int, img1: jnp.ndarray, img2: jnp.ndarray, flow_gt: jnp.ndarray
     ):
-        """Log visualization figures."""
+        """Log all visualization figures once per epoch with full intermediates.
+
+        This method calls the model with return_intermediates=True to get
+        detailed diagnostic information for all visualization views.
+
+        Args:
+            epoch: Current epoch number
+            img1: First frame batch (B, H, W, C)
+            img2: Second frame batch (B, H, W, C)
+            flow_gt: Ground truth flow batch (B, H, W, 2)
+        """
         try:
-            # Extract first sample from batch
+            # Get full aux with intermediates (not jitted, called once per epoch)
+            flow_pred, aux = self.model(img1, img2, return_intermediates=True)
+
+            # Convert to numpy for visualization
             img1_np = np.array(img1[0])
             img2_np = np.array(img2[0])
             flow_gt_np = np.array(flow_gt[0])
             flow_pred_np = np.array(flow_pred[0])
 
-            # Get pyramid level flows if available
+            # 1. Overview figure
             level_flows = {}
-            if "pyramid_flows" in aux:
-                for level_name, level_flow in aux["pyramid_flows"].items():
-                    level_flows[level_name] = np.array(level_flow[0])
+            if "level_flows" in aux:
+                for i, flow in enumerate(aux["level_flows"]):
+                    level_flows[f"Level {i}"] = np.array(flow[0])
 
-            # Create and log figure
-            fig = create_flow_comparison_figure(
+            fig_overview = create_overview_figure(
                 img1_np, img2_np, flow_gt_np, flow_pred_np, level_flows
             )
-            self.logger.log_image("Flow/Comparison", fig, epoch, dataformats="HWC")
+            self.logger.log_figure("Visualization/Overview", fig_overview, epoch)
+
+            # 2. Pyramid detail (if intermediates available)
+            if "level_flows" in aux and "level_confidences" in aux:
+                level_flows_dict = {
+                    f"L{i}": np.array(f[0]) for i, f in enumerate(aux["level_flows"])
+                }
+                level_conf_dict = {
+                    f"L{i}": np.array(c[0])
+                    for i, c in enumerate(aux["level_confidences"])
+                }
+                fig_pyramid = create_pyramid_detail_figure(
+                    level_flows_dict, level_conf_dict
+                )
+                self.logger.log_figure("Visualization/Pyramid", fig_pyramid, epoch)
+
+            # 3. Blending analysis (if blend aux available)
+            # The blend data is in level_aux[1] (second level) since blending happens
+            # from coarse (level 0) into fine (level 1)
+            if "level_aux" in aux and len(aux.get("level_flows", [])) >= 2:
+                level_aux_list = aux["level_aux"]
+                # Find a level that has blend data (usually level 1 for 2-level pyramid)
+                blend_data = None
+                blend_level_idx = None
+                for idx, level_aux in enumerate(level_aux_list):
+                    if "blend" in level_aux:
+                        blend_data = level_aux["blend"]
+                        blend_level_idx = idx
+                        break
+
+                if blend_data is not None:
+                    # For 2-level: coarse_idx = 0, fine_idx = 1
+                    coarse_idx = blend_level_idx - 1 if blend_level_idx > 0 else 0
+                    fine_idx = blend_level_idx
+
+                    fig_blending = create_blending_figure(
+                        flow_fine=np.array(aux["level_flows"][fine_idx][0]),
+                        conf_fine=np.array(aux["level_confidences"][fine_idx][0]),
+                        flow_coarse_upsampled=np.array(
+                            blend_data["flow_coarse_upsampled"][0]
+                        ),
+                        conf_coarse_upsampled=np.array(
+                            blend_data["conf_coarse_upsampled"][0]
+                        ),
+                        weight_fine=np.array(blend_data["weight_fine"][0]),
+                        weight_coarse=np.array(blend_data["weight_coarse"][0]),
+                        flow_final=flow_pred_np,
+                        flow_gt=flow_gt_np,
+                    )
+                    self.logger.log_figure(
+                        "Visualization/Blending", fig_blending, epoch
+                    )
+
+            # 4. Components figure (if window_flow aux available)
+            if "level_aux" in aux:
+                # Extract from first level's window_flow aux
+                level0_aux = aux["level_aux"][0]
+                if "flow_lookup" in level0_aux:
+                    fig_components = create_components_figure(
+                        flow_lookup=np.array(level0_aux["flow_lookup"][0]),
+                        flow_peer=np.array(level0_aux["flow_peer"][0]),
+                        conf_lookup=np.array(level0_aux["conf_lookup"][0]),
+                        conf_peer=np.array(level0_aux["conf_peer"][0]),
+                        flow_blended=np.array(aux["level_flows"][0][0]),
+                        conf_blended=np.array(aux["level_confidences"][0][0]),
+                    )
+                    self.logger.log_figure(
+                        "Visualization/Components", fig_components, epoch
+                    )
+
+            # 5. Confidence analysis
+            fig_confidence = create_confidence_analysis_figure(
+                flow_pred_np, flow_gt_np, np.array(aux["confidence"][0])
+            )
+            self.logger.log_figure("Visualization/Confidence", fig_confidence, epoch)
 
         except Exception as e:
-            print(f"Error logging visuals: {e}")
+            print(f"Error logging visualizations: {e}")
             import traceback
 
             traceback.print_exc()
@@ -326,9 +295,9 @@ class Trainer:
         epoch_loss = 0.0
         batch_count = 0
 
-        # Store last batch for visualization
+        # Store last batch and gradients for visualization
         last_batch = None
-        last_outputs = None
+        last_grads = None
 
         # Determine number of steps
         max_steps = self.settings.training.steps_per_epoch
@@ -344,8 +313,8 @@ class Trainer:
             img2 = jnp.array(img2_pt.numpy())
             flow_gt = jnp.array(flow_gt_pt.numpy())
 
-            # Training step
-            loss, flow_pred, aux = train_step(
+            # Training step (fast path - JIT optimizes away aux)
+            loss, flow_pred, grads = train_step_fast(
                 self.model, self.optimizer, img1, img2, flow_gt
             )
 
@@ -356,10 +325,12 @@ class Trainer:
 
             # Log step-level metrics
             if i % self.settings.training.log_every_steps == 0:
-                self.logger.log("Loss/train_step", float(loss), self.global_step)
+                self.logger.log_scalar("Loss/train_step", float(loss), self.global_step)
 
-            # Save checkpoint if the manager says we should
-            if self.checkpoint_manager.should_save(self.global_step):
+            # Save checkpoint if the manager says we should (and step > 0)
+            if self.global_step > 0 and self.checkpoint_manager.should_save(
+                self.global_step
+            ):
                 self.checkpoint_manager.save(
                     step=self.global_step,
                     model=self.model,
@@ -367,28 +338,26 @@ class Trainer:
                     epoch=epoch,
                 )
 
-            # Store for visualization
+            # Store for visualization and histograms
             last_batch = (img1, img2, flow_gt)
-            last_outputs = (flow_pred, aux)
-
-        # Save checkpoint at end of epoch
-        self.checkpoint_manager.save(
-            step=self.global_step,
-            model=self.model,
-            optimizer=self.optimizer,
-            epoch=epoch,
-        )
+            last_grads = grads
 
         # Compute average loss
         avg_loss = epoch_loss / batch_count if batch_count > 0 else 0.0
 
-        # Log epoch-level metrics and visuals
-        self.logger.log("Loss/train_epoch", avg_loss, epoch)
+        # Log epoch-level metrics and diagnostics
+        self.logger.log_scalar("Loss/train_epoch", avg_loss, epoch)
 
-        if last_batch is not None and last_outputs is not None:
+        if last_batch is not None:
             img1, img2, flow_gt = last_batch
-            flow_pred, aux = last_outputs
-            self.log_visuals(epoch, img1, img2, flow_gt, flow_pred, aux)
+
+            # Log gradient and parameter histograms
+            if last_grads is not None:
+                log_gradient_histograms(self.logger, self.model, self.global_step)
+                log_parameter_histograms(self.logger, self.model, self.global_step)
+
+            # Log all visualization figures (calls model with intermediates)
+            self.log_all_visualizations(epoch, img1, img2, flow_gt)
 
         return avg_loss
 
@@ -402,19 +371,22 @@ class Trainer:
             f"Steps per epoch: {self.settings.training.steps_per_epoch if self.settings.training.steps_per_epoch > 0 else 'full dataset'}"
         )
         print(f"Checkpoints will be saved to: {self.settings.training.checkpoint_dir}")
-        print(f"Checkpoint frequency: every {self.settings.training.checkpoint_freq} steps")
+        print(
+            f"Checkpoint frequency: every {self.settings.training.checkpoint_freq} steps"
+        )
 
         for epoch in range(self.start_epoch, self.settings.training.epochs):
             avg_loss = self.train_epoch(epoch)
             print(f"Epoch {epoch}: Loss = {avg_loss:.6f}")
 
-        # Save final checkpoint
-        self.checkpoint_manager.save(
-            step=self.global_step,
-            model=self.model,
-            optimizer=self.optimizer,
-            epoch=self.settings.training.epochs - 1,
-        )
+        # Save final checkpoint (only if we haven't saved at this step already)
+        if self.checkpoint_manager.should_save(self.global_step):
+            self.checkpoint_manager.save(
+                step=self.global_step,
+                model=self.model,
+                optimizer=self.optimizer,
+                epoch=self.settings.training.epochs - 1,
+            )
 
         self.checkpoint_manager.close()
         self.logger.close()
@@ -486,32 +458,26 @@ def main(settings: Settings):
     start_epoch = 0
     start_step = 0
 
-    # Resume from specific checkpoint if provided
-    if settings.training.resume_from_checkpoint:
-        if os.path.exists(settings.training.resume_from_checkpoint):
+    if settings.training.resume:
+        # Resume from latest checkpoint in checkpoint_dir
+        latest_step = checkpoint_manager.latest_step()
+        if latest_step is not None:
+            print(f"Resuming from checkpoint at step {latest_step}")
             start_epoch, start_step = checkpoint_manager.restore(
                 model=model,
                 optimizer=optimizer,
             )
         else:
-            print(
-                f"Warning: Resume checkpoint not found: {settings.training.resume_from_checkpoint}"
-            )
+            print("Warning: No checkpoint found to resume from")
             print("Starting fresh training...")
-    else:
-        # Check for latest checkpoint to auto-resume
-        latest_step = checkpoint_manager.latest_step()
-        if latest_step is not None:
-            print(f"Found existing checkpoint at step {latest_step}")
-            print("Auto-resuming from latest checkpoint...")
-            start_epoch, start_step = checkpoint_manager.restore(
-                model=model,
-                optimizer=optimizer,
-            )
 
     # Create trainer and run
     trainer = Trainer(
-        model, settings, checkpoint_manager, start_epoch=start_epoch, start_step=start_step
+        model,
+        settings,
+        checkpoint_manager,
+        start_epoch=start_epoch,
+        start_step=start_step,
     )
     trainer.train()
 
@@ -546,6 +512,7 @@ def create_smoke_test_settings() -> Settings:
             keep_last_n_checkpoints=2,
             grad_clip_norm=0.0,
             seed=42,
+            resume=False,
         ),
         logging=LoggingSettings(
             log_dir="runs",

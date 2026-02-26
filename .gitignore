@@ -3,6 +3,7 @@
 __pycache__
 src/runs
 runs
+checkpoints/
 datasets/ChairsSDHom
 datasets/chairs_32
 .ipynb_checkpoints

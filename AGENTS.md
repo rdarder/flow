@@ -1,6 +1,6 @@
 # Flow Training Pipeline - Development Log
 
-## Current Status: Phase 2 Complete ✓
+## Current Status: Phase 3 Complete ✓
 
 ### ✅ Phase 1: Settings Infrastructure + Train.py Integration
 
@@ -62,11 +62,8 @@ python -m flow.train --training.checkpoint-freq 500
 # Disable checkpointing
 python -m flow.train --training.checkpoint-freq 0
 
-# Resume from specific checkpoint
-python -m flow.train --training.resume-from-checkpoint checkpoints/1000
-
-# Auto-resume from latest checkpoint (automatic)
-python -m flow.train  # Will find and resume from latest checkpoint if available
+# Resume from latest checkpoint in checkpoint_dir
+python -m flow.train --training.resume
 
 # Smoke test with checkpointing
 python -m flow.train --smoke-test
@@ -80,15 +77,50 @@ python -m flow.train --smoke-test
 - ✓ Integer dict keys properly converted (0, 1 instead of '0', '1')
 - ✓ Loss continues from where it left off after resume
 
-### Next: Phase 3 - Visualization Enhancement
+### ✅ Phase 3: Multi-View Visualization Enhancement
 
-**Plan:**
-- Multi-view hierarchical visualization
-- Pyramid level flow visualization
-- Confidence map visualization
-- Blending weight visualization
+**Completed:**
+- Created `visualization.py` with 5 diagnostic figure types:
+  1. **Overview**: Inputs, GT, prediction, error heatmap, error histogram
+  2. **Pyramid Detail**: Per-level flows and confidences with fixed scales
+  3. **Blending Analysis**: Shows coarse→fine blending with weights
+  4. **Components**: PatchLookup vs PeerPropagation comparison
+  5. **Confidence Analysis**: Scatter plots and binned error analysis
+- Fixed figure layouts and color scales for consistent comparison:
+  - Flow magnitude: fixed 0-10 range
+  - Confidence: fixed 0-1 range
+  - Error: fixed 0-5 range
+- Created `logging_utils.py` with:
+  - `JaxLogger`: TensorBoard logging for scalars, images, histograms
+  - `log_parameter_histograms()`: Per-layer parameter distributions
+  - Recursive state extraction for nested NNX modules
+- Refactored `train.py`:
+  - Removed old visualization code (moved to new modules)
+  - Added `train_step_fast()`: JIT wrapper that optimizes away aux for speed
+  - Added `log_all_visualizations()`: Single call logs all 5 figures
+  - Integrated parameter histogram logging per epoch
 
-### Phase 4 - Subcommands
+**Architecture:**
+```python
+# Training uses fast path (JIT optimizes away aux)
+loss, flow_pred, grads = train_step_fast(model, optimizer, img1, img2, flow_gt)
+
+# Visualization uses full aux (called once per epoch)
+flow_pred, aux = model(img1, img2, return_intermediates=True)
+# Logs all 5 figure types to TensorBoard
+```
+
+**Verified:**
+- ✓ All 5 visualization figures log correctly (2 events per epoch)
+- ✓ Parameter histograms logged per layer (pyramid, window_processor)
+- ✓ Fixed color scales enable cross-epoch comparison
+- ✓ Smoke test passes (2 epochs, 10 steps, ~15s runtime)
+- ✓ Loss continues to decrease (5.65 → 5.64)
+
+**Note on Gradients:**
+Gradient histograms are not logged because JIT compilation doesn't preserve `.grad` attributes after the function returns. Parameter histograms are sufficient to detect "model not learning" issues (frozen parameters, collapse to zero, or exploding values).
+
+### Next: Phase 4 - Subcommands
 
 **Plan:**
 - `train` command (default)
@@ -120,7 +152,7 @@ python -m flow.train --smoke-test
 - `checkpoint_freq`: Checkpoint interval, 0 to disable (default: 1000)
 - `checkpoint_dir`: Directory to save checkpoints (default: "checkpoints")
 - `keep_last_n_checkpoints`: Number of recent checkpoints to keep (default: 3, 0 to keep all)
-- `resume_from_checkpoint`: Path to checkpoint to resume from (default: "")
+- `resume`: Resume from latest checkpoint in checkpoint_dir (default: False)
 - `grad_clip_norm`: Gradient clipping, 0 to disable (default: 0.0)
 - `seed`: Random seed (default: 42)
 
