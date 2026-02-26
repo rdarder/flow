@@ -400,8 +400,10 @@ def create_blending_figure(
     weight_fine: np.ndarray,
     weight_coarse: np.ndarray,
     flow_final: np.ndarray,
+    original_resolution: int,
+    level_name: str = "Level",
+    flow_max_percent: float = 0.1,
     flow_gt: Optional[np.ndarray] = None,
-    max_flow: Optional[float] = None,
 ) -> np.ndarray:
     """Create blending analysis figure.
 
@@ -410,15 +412,17 @@ def create_blending_figure(
     Row 2: Coarse Upsampled Conf | Fine Conf | Blended Result | Error (if GT)
 
     Args:
-        flow_fine: Fine level flow (H, W, 2)
+        flow_fine: Fine level flow (H, W, 2) in normalized coordinates
         conf_fine: Fine level confidence (H, W, 1)
-        flow_coarse_upsampled: Upsampled coarse flow (H, W, 2)
+        flow_coarse_upsampled: Upsampled coarse flow (H, W, 2) in normalized coordinates
         conf_coarse_upsampled: Upsampled coarse confidence (H, W, 1)
         weight_fine: Blending weight for fine (H, W, 1)
         weight_coarse: Blending weight for coarse (H, W, 1)
-        flow_final: Final blended flow (H, W, 2)
+        flow_final: Final blended flow (H, W, 2) in normalized coordinates
+        original_resolution: Original image resolution (for pixel-equivalent conversion)
+        level_name: Name of the fine pyramid level (e.g., "Level 1")
+        flow_max_percent: Percentage of original resolution for max flow color scale
         flow_gt: Optional ground truth for error visualization
-        max_flow: Maximum flow magnitude for color coding. If None, uses FLOW_MAX_MAGNITUDE.
 
     Returns:
         RGB image array for TensorBoard
@@ -440,14 +444,26 @@ def create_blending_figure(
     weight_coarse = squeeze_batch(weight_coarse)
     flow_final = squeeze_batch(flow_final)
 
+    # Convert flows to pixel-equivalent coordinates
+    # All flows represent movement in the original image space
+    resolution_scale = np.array([original_resolution, original_resolution])
+    flow_fine_px = flow_fine * resolution_scale
+    flow_coarse_px = flow_coarse_upsampled * resolution_scale
+    flow_final_px = flow_final * resolution_scale
+
+    # Calculate max_flow as percentage of original image resolution
+    max_flow = flow_max_percent * original_resolution
+
     fig, axes = plt.subplots(2, 4, figsize=BLENDING_SIZE, dpi=FIGURE_DPI)
-    plt.subplots_adjust(hspace=0.3, wspace=0.2)
+    fig.suptitle(f"{level_name} Blending (max={max_flow:.1f}px)", 
+                 fontsize=14, fontweight='bold', y=0.98)
+    plt.subplots_adjust(hspace=0.35, wspace=0.2, top=0.93)
 
     # Row 1
-    axes[0, 0].imshow(flow_to_color(flow_coarse_upsampled, max_flow=max_flow))
+    axes[0, 0].imshow(flow_to_color(flow_coarse_px, max_flow=max_flow))
     axes[0, 0].set_title("Coarse Flow (upsampled)", fontsize=11, fontweight="bold")
 
-    axes[0, 1].imshow(flow_to_color(flow_fine, max_flow=max_flow))
+    axes[0, 1].imshow(flow_to_color(flow_fine_px, max_flow=max_flow))
     axes[0, 1].set_title("Fine Flow", fontsize=11, fontweight="bold")
 
     im_wf = axes[0, 2].imshow(weight_fine, cmap="RdYlGn", vmin=0, vmax=1)
@@ -474,7 +490,7 @@ def create_blending_figure(
     axes[1, 1].set_title("Fine Confidence", fontsize=11, fontweight="bold")
     plt.colorbar(im_cf, ax=axes[1, 1], fraction=0.046, pad=0.04)
 
-    axes[1, 2].imshow(flow_to_color(flow_final, max_flow=max_flow))
+    axes[1, 2].imshow(flow_to_color(flow_final_px, max_flow=max_flow))
     axes[1, 2].set_title("Blended Result", fontsize=11, fontweight="bold")
 
     # Error column

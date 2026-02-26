@@ -256,7 +256,10 @@ class Trainer:
                         ),
                         weight_fine=np.array(blend_data["weight_fine"][0]),
                         weight_coarse=np.array(blend_data["weight_coarse"][0]),
-                        flow_final=flow_pred_np,
+                        flow_final=np.array(aux["level_flows"][fine_idx][0]),
+                        original_resolution=self.settings.dataset.img_size,
+                        level_name=f"Level {fine_idx}",
+                        flow_max_percent=self.settings.visualization.flow_max_percent,
                         flow_gt=flow_gt_np,
                     )
                     self.logger.log_figure(
