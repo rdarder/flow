@@ -524,7 +524,9 @@ def create_components_figure(
     conf_peer: np.ndarray,
     flow_blended: np.ndarray,
     conf_blended: np.ndarray,
-    max_flow: Optional[float] = None,
+    original_resolution: int,
+    level_name: str = "Level",
+    flow_max_percent: float = 0.1,
 ) -> np.ndarray:
     """Create component comparison figure (PatchLookup vs PeerPropagation).
 
@@ -533,13 +535,15 @@ def create_components_figure(
     Row 2: PatchLookup Conf | PeerPropagation Conf | Blended Conf
 
     Args:
-        flow_lookup: Flow from PatchLookup (H, W, 2)
-        flow_peer: Flow from PeerPropagation (H, W, 2)
+        flow_lookup: Flow from PatchLookup (H, W, 2) in normalized coordinates
+        flow_peer: Flow from PeerPropagation (H, W, 2) in normalized coordinates
         conf_lookup: Confidence from PatchLookup (H, W, 1)
         conf_peer: Confidence from PeerPropagation (H, W, 1)
-        flow_blended: Final blended flow (H, W, 2)
+        flow_blended: Final blended flow (H, W, 2) in normalized coordinates
         conf_blended: Final blended confidence (H, W, 1)
-        max_flow: Maximum flow magnitude for color coding. If None, uses FLOW_MAX_MAGNITUDE.
+        original_resolution: Original image resolution (for pixel-equivalent conversion)
+        level_name: Name of the pyramid level (e.g., "Level 0", "Level 1")
+        flow_max_percent: Percentage of original resolution for max flow color scale
 
     Returns:
         RGB image array for TensorBoard
@@ -560,21 +564,33 @@ def create_components_figure(
     flow_blended = squeeze_batch(flow_blended)
     conf_blended = squeeze_batch(conf_blended)
 
+    # Convert flows to pixel-equivalent coordinates
+    # All flows represent movement in the original image space
+    resolution_scale = np.array([original_resolution, original_resolution])
+    flow_lookup_px = flow_lookup * resolution_scale
+    flow_peer_px = flow_peer * resolution_scale
+    flow_blended_px = flow_blended * resolution_scale
+
+    # Calculate max_flow as percentage of original image resolution
+    max_flow = flow_max_percent * original_resolution
+
     fig, axes = plt.subplots(2, 3, figsize=COMPONENTS_SIZE, dpi=FIGURE_DPI)
-    plt.subplots_adjust(hspace=0.3, wspace=0.2)
+    fig.suptitle(f"{level_name} Components (max={max_flow:.1f}px)", 
+                 fontsize=14, fontweight='bold', y=0.98)
+    plt.subplots_adjust(hspace=0.35, wspace=0.2, top=0.93)
 
     # Row 1: Flows
-    axes[0, 0].imshow(flow_to_color(flow_lookup, max_flow=max_flow))
+    axes[0, 0].imshow(flow_to_color(flow_lookup_px, max_flow=max_flow))
     axes[0, 0].set_title(
         "PatchLookup Flow\n(Cross-Attention)", fontsize=11, fontweight="bold"
     )
 
-    axes[0, 1].imshow(flow_to_color(flow_peer, max_flow=max_flow))
+    axes[0, 1].imshow(flow_to_color(flow_peer_px, max_flow=max_flow))
     axes[0, 1].set_title(
         "PeerPropagation Flow\n(Self-Attention)", fontsize=11, fontweight="bold"
     )
 
-    axes[0, 2].imshow(flow_to_color(flow_blended, max_flow=max_flow))
+    axes[0, 2].imshow(flow_to_color(flow_blended_px, max_flow=max_flow))
     axes[0, 2].set_title(
         "Blended Flow\n(Confidence-Weighted)", fontsize=11, fontweight="bold"
     )

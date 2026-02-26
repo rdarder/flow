@@ -9,3 +9,4 @@ datasets/chairs_32
 .ipynb_checkpoints
 src/flow.egg-info/
 tmp/
+test_checkpoints/

@@ -265,7 +265,7 @@ class Trainer:
 
             # 4. Components figure (if window_flow aux available)
             if "level_aux" in aux:
-                # Extract from first level's window_flow aux
+                # Extract from first level's window_flow aux (Level 0)
                 level0_aux = aux["level_aux"][0]
                 if "flow_lookup" in level0_aux:
                     fig_components = create_components_figure(
@@ -275,6 +275,9 @@ class Trainer:
                         conf_peer=np.array(level0_aux["conf_peer"][0]),
                         flow_blended=np.array(aux["level_flows"][0][0]),
                         conf_blended=np.array(aux["level_confidences"][0][0]),
+                        original_resolution=self.settings.dataset.img_size,
+                        level_name="Level 0",
+                        flow_max_percent=self.settings.visualization.flow_max_percent,
                     )
                     self.logger.log_figure(
                         "Visualization/Components", fig_components, epoch
