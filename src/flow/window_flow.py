@@ -10,6 +10,7 @@ import jax.numpy as jnp
 from flax import nnx
 
 from flow.token_attention import TokenCrossAttention, TokenSelfAttention
+from flow.flow_blend import PriorBlender
 from flow.window_grid import WindowGrid
 
 
@@ -43,6 +44,9 @@ class WindowFlowProcessor(nnx.Module):
         # Attention modules
         self.token_cross_attn = TokenCrossAttention(embed_dim=embed_dim, rngs=rngs)
         self.token_self_attn = TokenSelfAttention(embed_dim=embed_dim, rngs=rngs)
+
+        # Blending module for combining lookup results with prior flow
+        self.prior_blender = PriorBlender()
 
     def _create_coordinate_grid(self, h: int, w: int) -> jnp.ndarray:
         """Create normalized coordinate grid [0, 1] for a window.
@@ -183,16 +187,9 @@ class WindowFlowProcessor(nnx.Module):
 
         # Blend lookup result with prior flow (allows outside-window flow to enter)
         # High prior confidence -> more weight on prior flow outside window
-        weight_lookup = conf_lookup
-        weight_prior = prior_conf_patches
-        weight_sum = weight_lookup + weight_prior + 1e-6
-
-        flow_mixed = (
-            weight_lookup * flow_lookup + weight_prior * prior_flow_patches
-        ) / weight_sum
-        # Combined confidence is the average of both sources' confidence
-        # (consensus between what we found and what we expected)
-        conf_mixed = (conf_lookup + prior_conf_patches) / 2
+        flow_mixed, conf_mixed = self.prior_blender(
+            flow_lookup, conf_lookup, prior_flow_patches, prior_conf_patches
+        )
 
         # Run TokenSelfAttention (self-attention within frame 1) with blended flow
         flow_peer, attn_weights_peer, conf_peer = self.token_self_attn(

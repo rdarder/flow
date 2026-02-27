@@ -30,6 +30,7 @@ class TestWindowFlowProcessor:
         assert processor.window_grid is not None
         assert processor.token_cross_attn is not None
         assert processor.token_self_attn is not None
+        assert processor.prior_blender is not None
 
     def test_coordinate_grid_creation(self):
         """Test coordinate grid generation."""
