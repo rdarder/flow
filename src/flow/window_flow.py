@@ -181,30 +181,30 @@ class WindowFlowProcessor(nnx.Module):
             patches1, patches2, q_pos, k_pos, prior_flow_patches, prior_conf_patches
         )
 
-        # Run PeerPropagation (self-attention within frame 1)
-        flow_peer, attn_weights_peer, conf_peer = self.peer_prop(
-            patches1, q_pos, flow_lookup, conf_lookup
-        )
-
-        # Simple blending (can be made learnable later)
-        # For now, use confidence-weighted average
+        # Blend lookup result with prior flow (allows outside-window flow to enter)
+        # High prior confidence -> more weight on prior flow outside window
         weight_lookup = conf_lookup
-        weight_peer = conf_peer
-        weight_sum = weight_lookup + weight_peer + 1e-6  # Avoid division by zero
+        weight_prior = prior_conf_patches
+        weight_sum = weight_lookup + weight_prior + 1e-6
 
-        flow_blended = (
-            weight_lookup * flow_lookup + weight_peer * flow_peer
+        flow_mixed = (
+            weight_lookup * flow_lookup + weight_prior * prior_flow_patches
         ) / weight_sum
-        conf_blended = (
-            weight_lookup * conf_lookup + weight_peer * conf_peer
-        ) / weight_sum
+        # Combined confidence is the average of both sources' confidence
+        # (consensus between what we found and what we expected)
+        conf_mixed = (conf_lookup + prior_conf_patches) / 2
+
+        # Run PeerPropagation (self-attention within frame 1) with blended flow
+        flow_peer, attn_weights_peer, conf_peer = self.peer_prop(
+            patches1, q_pos, flow_mixed, conf_mixed
+        )
 
         # Convert back to grid format: (B*num_windows, W*W, 2) -> (B*num_windows, W, W, 2)
         flow_grid_batched = self._patches_to_grid(
-            flow_blended, self.window_size, self.window_size
+            flow_peer, self.window_size, self.window_size
         )
         conf_grid_batched = self._patches_to_grid(
-            conf_blended, self.window_size, self.window_size
+            conf_peer, self.window_size, self.window_size
         )
 
         # Reshape back to window format: (B*num_windows, W, W, C) -> (B, num_windows, W, W, C)
@@ -231,6 +231,13 @@ class WindowFlowProcessor(nnx.Module):
                 grid_h=num_h,
                 grid_w=num_w,
             ),
+            "flow_mixed": self.window_grid.stitch(
+                self._patches_to_grid(
+                    flow_mixed, self.window_size, self.window_size
+                ).reshape(B, num_windows, self.window_size, self.window_size, 2),
+                grid_h=num_h,
+                grid_w=num_w,
+            ),
             "flow_peer": self.window_grid.stitch(
                 self._patches_to_grid(
                     flow_peer, self.window_size, self.window_size
@@ -241,6 +248,13 @@ class WindowFlowProcessor(nnx.Module):
             "conf_lookup": self.window_grid.stitch(
                 self._patches_to_grid(
                     conf_lookup, self.window_size, self.window_size
+                ).reshape(B, num_windows, self.window_size, self.window_size, 1),
+                grid_h=num_h,
+                grid_w=num_w,
+            ),
+            "conf_mixed": self.window_grid.stitch(
+                self._patches_to_grid(
+                    conf_mixed, self.window_size, self.window_size
                 ).reshape(B, num_windows, self.window_size, self.window_size, 1),
                 grid_h=num_h,
                 grid_w=num_w,

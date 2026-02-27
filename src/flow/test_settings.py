@@ -9,6 +9,7 @@ from flow.settings import (
     DatasetSettings,
     TrainingSettings,
     LoggingSettings,
+    VisualizationSettings,
     Settings,
 )
 
@@ -23,6 +24,7 @@ class TestCrossValidation:
             dataset=DatasetSettings(img_size=64),
             training=TrainingSettings(),
             logging=LoggingSettings(),
+            visualization=VisualizationSettings(),
         )
         is_valid, msg = settings.validate()
         assert is_valid is True
@@ -35,6 +37,7 @@ class TestCrossValidation:
             dataset=DatasetSettings(img_size=64),  # too small
             training=TrainingSettings(),
             logging=LoggingSettings(),
+            visualization=VisualizationSettings(),
         )
         is_valid, msg = settings.validate()
         assert is_valid is False
@@ -47,6 +50,7 @@ class TestCrossValidation:
             dataset=DatasetSettings(),
             training=TrainingSettings(),
             logging=LoggingSettings(),
+            visualization=VisualizationSettings(),
         )
         # 2 levels with WINDOW_SIZE=16: 16 * 2^2 = 64
         assert settings.get_required_image_size() == 64

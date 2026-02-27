@@ -4,15 +4,16 @@ Integrates embedding pyramid and window processing with prior-guided attention.
 Coarse flow estimates guide spatial search at finer levels.
 """
 
-from typing import Tuple, Dict, Any, Optional
+from typing import Any, Dict, Optional, Tuple
+
 import jax
 import jax.numpy as jnp
 from flax import nnx
 
 from flow.embedding_pyramid import EmbeddingPyramid
+from flow.flow_blender import upsample_confidence_2x, upsample_flow_2x
 from flow.window_flow import WindowFlowProcessor
-from flow.flow_blender import upsample_flow_2x, upsample_confidence_2x
-from flow.window_grid import crop_to_valid, compute_valid_resolution
+from flow.window_grid import compute_valid_resolution, crop_to_valid
 
 
 class HierarchicalFlowModel(nnx.Module):
@@ -196,8 +197,8 @@ class HierarchicalFlowModel(nnx.Module):
             # Stop gradient to prevent backpropagation through hierarchy
             # Each level trains independently on its own objective
             if level_idx < self.num_levels - 1:
-                prior_flow = jax.lax.stop_gradient(upsample_flow_2x(flow))
-                prior_confidence = jax.lax.stop_gradient(upsample_confidence_2x(conf))
+                prior_flow = upsample_flow_2x(flow)
+                prior_confidence = upsample_confidence_2x(conf)
 
         # Final flow is from the finest level (already includes prior guidance)
         flow_final = flow_levels[-1]

@@ -66,7 +66,7 @@ class TestTyroSettingsIntegration:
 
         # Check non-overridden defaults still present
         assert settings.model.embed_dim == 16
-        assert settings.dataset.batch_size == 4
+        assert settings.dataset.batch_size == 32  # Default is 32
         assert settings.training.epochs == 100
 
     def test_tyro_partial_override(self):

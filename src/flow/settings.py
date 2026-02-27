@@ -216,14 +216,9 @@ class Settings:
             (is_valid, message): Boolean validity and descriptive message
         """
         return validate_resolution(
-            self.dataset.img_size,
-            self.model.num_levels,
-            self.model.window_size
+            self.dataset.img_size, self.model.num_levels, self.model.window_size
         )
 
     def get_required_image_size(self) -> int:
         """Get minimum required image size for current model configuration."""
-        return compute_valid_resolution(
-            self.model.num_levels,
-            self.model.window_size
-        )
+        return compute_valid_resolution(self.model.num_levels, self.model.window_size)

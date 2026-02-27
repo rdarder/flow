@@ -668,8 +668,8 @@ def create_components_figure(
     flow_peer: np.ndarray,
     conf_lookup: np.ndarray,
     conf_peer: np.ndarray,
-    flow_blended: np.ndarray,
-    conf_blended: np.ndarray,
+    flow_mixed: np.ndarray,
+    conf_mixed: np.ndarray,
     original_resolution: int,
     level_name: str = "Level",
     flow_max_percent: float = 0.1,
@@ -677,16 +677,16 @@ def create_components_figure(
     """Create component comparison figure (PatchLookup vs PeerPropagation).
 
     Layout (2 rows × 3 columns):
-    Row 1: PatchLookup Flow | PeerPropagation Flow | Blended Flow
-    Row 2: PatchLookup Conf | PeerPropagation Conf | Blended Conf
+    Row 1: PatchLookup Flow | Blended/Mixed Flow | PeerPropagation Flow
+    Row 2: PatchLookup Conf | Mixed Conf | PeerPropagation Conf
 
     Args:
         flow_lookup: Flow from PatchLookup (H, W, 2) in normalized coordinates
         flow_peer: Flow from PeerPropagation (H, W, 2) in normalized coordinates
         conf_lookup: Confidence from PatchLookup (H, W, 1)
         conf_peer: Confidence from PeerPropagation (H, W, 1)
-        flow_blended: Final blended flow (H, W, 2) in normalized coordinates
-        conf_blended: Final blended confidence (H, W, 1)
+        flow_mixed: Blended flow between lookup and prior (H, W, 2) in normalized coordinates
+        conf_mixed: Blended confidence between lookup and prior (H, W, 1)
         original_resolution: Original image resolution (for pixel-equivalent conversion)
         level_name: Name of the pyramid level (e.g., "Level 0", "Level 1")
         flow_max_percent: Percentage of original resolution for max flow color scale
@@ -707,15 +707,15 @@ def create_components_figure(
     flow_peer = squeeze_batch(flow_peer)
     conf_lookup = squeeze_batch(conf_lookup)
     conf_peer = squeeze_batch(conf_peer)
-    flow_blended = squeeze_batch(flow_blended)
-    conf_blended = squeeze_batch(conf_blended)
+    flow_mixed = squeeze_batch(flow_mixed)
+    conf_mixed = squeeze_batch(conf_mixed)
 
     # Convert flows to pixel-equivalent coordinates
     # All flows represent movement in the original image space
     resolution_scale = np.array([original_resolution, original_resolution])
     flow_lookup_px = flow_lookup * resolution_scale
     flow_peer_px = flow_peer * resolution_scale
-    flow_blended_px = flow_blended * resolution_scale
+    flow_mixed_px = flow_mixed * resolution_scale
 
     # Calculate max_flow as percentage of original image resolution
     max_flow = flow_max_percent * original_resolution
@@ -735,14 +735,12 @@ def create_components_figure(
         "PatchLookup Flow\n(Cross-Attention)", fontsize=11, fontweight="bold"
     )
 
-    axes[0, 1].imshow(flow_to_color(flow_peer_px, max_flow=max_flow))
-    axes[0, 1].set_title(
-        "PeerPropagation Flow\n(Self-Attention)", fontsize=11, fontweight="bold"
-    )
+    axes[0, 1].imshow(flow_to_color(flow_mixed_px, max_flow=max_flow))
+    axes[0, 1].set_title("Mixed Flow\n(Blend w/ Prior)", fontsize=11, fontweight="bold")
 
-    axes[0, 2].imshow(flow_to_color(flow_blended_px, max_flow=max_flow))
+    axes[0, 2].imshow(flow_to_color(flow_peer_px, max_flow=max_flow))
     axes[0, 2].set_title(
-        "Blended Flow\n(Confidence-Weighted)", fontsize=11, fontweight="bold"
+        "PeerPropagation Flow\n(Self-Attention)", fontsize=11, fontweight="bold"
     )
 
     # Row 2: Confidences
@@ -752,17 +750,17 @@ def create_components_figure(
     axes[1, 0].set_title("PatchLookup Conf", fontsize=11, fontweight="bold")
     plt.colorbar(im_cl, ax=axes[1, 0], fraction=0.046, pad=0.04)
 
-    im_cp = axes[1, 1].imshow(
+    im_cm = axes[1, 1].imshow(
+        conf_mixed, cmap=CONFIDENCE_CMAP, vmin=CONFIDENCE_VMIN, vmax=CONFIDENCE_VMAX
+    )
+    axes[1, 1].set_title("Mixed Conf", fontsize=11, fontweight="bold")
+    plt.colorbar(im_cm, ax=axes[1, 1], fraction=0.046, pad=0.04)
+
+    im_cp = axes[1, 2].imshow(
         conf_peer, cmap=CONFIDENCE_CMAP, vmin=CONFIDENCE_VMIN, vmax=CONFIDENCE_VMAX
     )
-    axes[1, 1].set_title("PeerPropagation Conf", fontsize=11, fontweight="bold")
-    plt.colorbar(im_cp, ax=axes[1, 1], fraction=0.046, pad=0.04)
-
-    im_cb = axes[1, 2].imshow(
-        conf_blended, cmap=CONFIDENCE_CMAP, vmin=CONFIDENCE_VMIN, vmax=CONFIDENCE_VMAX
-    )
-    axes[1, 2].set_title("Blended Conf", fontsize=11, fontweight="bold")
-    plt.colorbar(im_cb, ax=axes[1, 2], fraction=0.046, pad=0.04)
+    axes[1, 2].set_title("PeerPropagation Conf", fontsize=11, fontweight="bold")
+    plt.colorbar(im_cp, ax=axes[1, 2], fraction=0.046, pad=0.04)
 
     # Clean up axes
     for ax in axes.flat:

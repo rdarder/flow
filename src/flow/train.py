@@ -18,10 +18,7 @@ import tyro
 from flax import nnx
 from torch.utils.data import DataLoader
 
-from flow.checkpoint_manager import (
-    AbstractCheckpointManager,
-    create_checkpoint_manager,
-)
+from flow.checkpoint_manager import AbstractCheckpointManager, create_checkpoint_manager
 from flow.hierarchical_model import HierarchicalFlowModel
 from flow.logging_utils import (
     JaxLogger,
@@ -80,16 +77,16 @@ def loss_fn(
     flow_gt: jnp.ndarray,
 ):
     """Compute loss and auxiliary outputs.
-    
+
     Computes per-level losses to enable independent training of each pyramid level.
     This is necessary because stop_gradient is applied on priors between levels,
     so each level must have its own gradient signal from the loss.
     """
     flow_pred, aux = model(img1, img2, return_intermediates=True)
-    
+
     # Main loss on finest level
-    total_loss = endpoint_error_loss(flow_pred, flow_gt)
-    
+    loss = endpoint_error_loss(flow_pred, flow_gt)
+
     # Auxiliary losses on intermediate levels (with downsampled ground truth)
     if "level_flows" in aux:
         level_flows = aux["level_flows"]
@@ -98,11 +95,10 @@ def loss_fn(
             level_flow = level_flows[level_idx]
             # Compute loss at this level's resolution
             # endpoint_error_loss handles downsampling automatically
-            level_loss = endpoint_error_loss(level_flow, flow_gt)
+            loss += endpoint_error_loss(level_flow, flow_gt)
             # Weight intermediate losses lower (0.1) to prioritize finest level
-            total_loss = total_loss + 0.1 * level_loss
-    
-    return total_loss, (flow_pred, aux)
+
+    return loss, (flow_pred, aux)
 
 
 # --- 2. Training Steps ---
@@ -124,25 +120,6 @@ def train_step_fast(
     )
     optimizer.update(model, grads)
     return loss, flow_pred, grads
-
-
-@nnx.jit
-def train_step_with_aux(
-    model: HierarchicalFlowModel,
-    optimizer: nnx.Optimizer,
-    img1: jnp.ndarray,
-    img2: jnp.ndarray,
-    flow_gt: jnp.ndarray,
-):
-    """Training step that returns full aux for visualization.
-
-    Used once per epoch for logging detailed diagnostics.
-    """
-    (loss, (flow_pred, aux)), grads = nnx.value_and_grad(loss_fn, has_aux=True)(
-        model, img1, img2, flow_gt
-    )
-    optimizer.update(model, grads)
-    return loss, flow_pred, grads, aux
 
 
 # --- 3. Training Class ---
@@ -278,14 +255,14 @@ class Trainer:
             if "level_aux" in aux:
                 # Extract from first level's window_flow aux (Level 0)
                 level0_aux = aux["level_aux"][0]
-                if "flow_lookup" in level0_aux:
+                if "flow_lookup" in level0_aux and "flow_mixed" in level0_aux:
                     fig_components = create_components_figure(
                         flow_lookup=np.array(level0_aux["flow_lookup"][0]),
                         flow_peer=np.array(level0_aux["flow_peer"][0]),
                         conf_lookup=np.array(level0_aux["conf_lookup"][0]),
                         conf_peer=np.array(level0_aux["conf_peer"][0]),
-                        flow_blended=np.array(aux["level_flows"][0][0]),
-                        conf_blended=np.array(aux["level_confidences"][0][0]),
+                        flow_mixed=np.array(level0_aux["flow_mixed"][0]),
+                        conf_mixed=np.array(level0_aux["conf_mixed"][0]),
                         original_resolution=self.settings.dataset.img_size,
                         level_name="Level 0",
                         flow_max_percent=self.settings.visualization.flow_max_percent,

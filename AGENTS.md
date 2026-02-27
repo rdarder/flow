@@ -50,5 +50,3 @@ See `settings.py` for all available options:
 ## Development Notes
 
 - Methodology: "Integrate immediately, verify always" - smoke test after each change
-- Shape-aware loss function handles pyramid output vs input size mismatch
-- Fixed color scales for cross-epoch comparison (configurable via `flow_max_percent`)
