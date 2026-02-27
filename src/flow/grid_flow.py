@@ -53,6 +53,38 @@ class GridFlowEstimator(nnx.Module):
         # Blending module for combining lookup results with prior flow
         self.prior_blender = PriorBlender()
 
+    def _tokens_to_stitched_grid(
+        self,
+        tokens: jnp.ndarray,
+        batch_size: int,
+        num_windows: int,
+        num_h: int,
+        num_w: int,
+    ) -> jnp.ndarray:
+        """Convert tokens back to full resolution grid via stitching.
+
+        Args:
+            tokens: (B*num_windows, N, C) where N = window_size^2
+            batch_size: Original batch size B
+            num_windows: Number of windows
+            num_h: Number of windows along height
+            num_w: Number of windows along width
+
+        Returns:
+            Stitched grid of shape (B, H, W, C)
+        """
+        # Convert to grid: (B*num_windows, W*W, C) -> (B*num_windows, W, W, C)
+        grid_batched = tokens_to_grid(tokens, self.window_size, self.window_size)
+
+        # Reshape to window format: (B*num_windows, W, W, C) -> (B, num_windows, W, W, C)
+        _, _, _, C = grid_batched.shape
+        windows = grid_batched.reshape(
+            batch_size, num_windows, self.window_size, self.window_size, C
+        )
+
+        # Stitch back to full resolution
+        return self.window_grid.stitch(windows, grid_h=num_h, grid_w=num_w)
+
     def __call__(
         self,
         emb1: jnp.ndarray,  # (B, H, W, C)
@@ -170,49 +202,17 @@ class GridFlowEstimator(nnx.Module):
         confidence = self.window_grid.stitch(conf_windows, grid_h=num_h, grid_w=num_w)
 
         # Prepare auxiliary outputs for debugging
+        # Helper to convert intermediate token outputs back to full grid
+        def stitch_tokens(tokens):
+            return self._tokens_to_stitched_grid(tokens, B, num_windows, num_h, num_w)
+
         aux = {
-            "flow_lookup": self.window_grid.stitch(
-                tokens_to_grid(flow_lookup, self.window_size, self.window_size).reshape(
-                    B, num_windows, self.window_size, self.window_size, 2
-                ),
-                grid_h=num_h,
-                grid_w=num_w,
-            ),
-            "flow_mixed": self.window_grid.stitch(
-                tokens_to_grid(flow_mixed, self.window_size, self.window_size).reshape(
-                    B, num_windows, self.window_size, self.window_size, 2
-                ),
-                grid_h=num_h,
-                grid_w=num_w,
-            ),
-            "flow_peer": self.window_grid.stitch(
-                tokens_to_grid(flow_peer, self.window_size, self.window_size).reshape(
-                    B, num_windows, self.window_size, self.window_size, 2
-                ),
-                grid_h=num_h,
-                grid_w=num_w,
-            ),
-            "conf_lookup": self.window_grid.stitch(
-                tokens_to_grid(conf_lookup, self.window_size, self.window_size).reshape(
-                    B, num_windows, self.window_size, self.window_size, 1
-                ),
-                grid_h=num_h,
-                grid_w=num_w,
-            ),
-            "conf_mixed": self.window_grid.stitch(
-                tokens_to_grid(conf_mixed, self.window_size, self.window_size).reshape(
-                    B, num_windows, self.window_size, self.window_size, 1
-                ),
-                grid_h=num_h,
-                grid_w=num_w,
-            ),
-            "conf_peer": self.window_grid.stitch(
-                tokens_to_grid(conf_peer, self.window_size, self.window_size).reshape(
-                    B, num_windows, self.window_size, self.window_size, 1
-                ),
-                grid_h=num_h,
-                grid_w=num_w,
-            ),
+            "flow_lookup": stitch_tokens(flow_lookup),
+            "flow_mixed": stitch_tokens(flow_mixed),
+            "flow_peer": stitch_tokens(flow_peer),
+            "conf_lookup": stitch_tokens(conf_lookup),
+            "conf_mixed": stitch_tokens(conf_mixed),
+            "conf_peer": stitch_tokens(conf_peer),
             "prior_flow": prior_flow,  # Prior flow passed to this level
             "prior_confidence": prior_confidence,  # Prior confidence passed to this level
             "num_windows": num_windows,
