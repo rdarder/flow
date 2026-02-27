@@ -2,44 +2,47 @@ from typing import Tuple
 
 import jax.numpy as jnp
 
-WINDOW_SIZE = 16
 
-
-def compute_valid_resolution(num_levels: int) -> int:
+def compute_valid_resolution(num_levels: int, window_size: int = 16) -> int:
     """
     Compute the required image resolution for a given number of pyramid levels.
 
-    For num_levels pyramid levels, we need:
-    - Level N-1 (finest): WINDOW_SIZE * 2^(num_levels-1) embeddings
+    For num_levels pyramid levels and given window_size, we need:
+    - Level N-1 (finest): window_size * 2^(num_levels-1) embeddings
     - Each embedding comes from a 2x2 region
 
-    From the doc:
-    - Level 1 (finest): 64x64 image -> 32x32 embeddings (2x2 patchify)
-    - Level 0 (coarse): 32x32 embeddings -> 16x16 embeddings (2x2 patchify)
+    Pattern: image_size = window_size * 2^num_levels
+    - 1 level: window_size * 2^1 = window_size * 2
+    - 2 levels: window_size * 2^2 = window_size * 4
+    - 3 levels: window_size * 2^3 = window_size * 8
 
-    So for 2 levels:
-    - Coarse level has 16x16 embeddings
-    - Fine level has 32x32 embeddings
-    - Image is 64x64
+    So: valid_resolution = window_size * 2^num_levels
 
-    Pattern: image_size = WINDOW_SIZE * 2^num_levels
-    - 1 level: 16 * 2^1 = 32 -> but we'd want 16x16 attention on 16x16 embeddings
-      Actually for 1 level, we have 16x16 embeddings, which means 32x32 image
-    - 2 levels: 16 * 2^2 = 64 -> 64x64 image, 32x32 fine embeddings
+    Args:
+        num_levels: Number of pyramid levels
+        window_size: Size of attention windows (default 16)
 
-    So: valid_resolution = WINDOW_SIZE * 2^num_levels
+    Returns:
+        Required image size (square, H=W)
     """
-    return WINDOW_SIZE * (2**num_levels)
+    return window_size * (2**num_levels)
 
 
-def validate_resolution(image_size: int, num_levels: int) -> Tuple[bool, str]:
+def validate_resolution(
+    image_size: int, num_levels: int, window_size: int = 16
+) -> Tuple[bool, str]:
     """
     Validate that image resolution is compatible with pyramid + windowing.
+
+    Args:
+        image_size: Input image size (square, H=W)
+        num_levels: Number of pyramid levels
+        window_size: Size of attention windows (default 16)
 
     Returns:
         (is_valid, message)
     """
-    expected_size = compute_valid_resolution(num_levels)
+    expected_size = compute_valid_resolution(num_levels, window_size)
 
     if image_size == expected_size:
         return (
@@ -52,34 +55,37 @@ def validate_resolution(image_size: int, num_levels: int) -> Tuple[bool, str]:
             return (
                 True,
                 f"Croppable: {image_size}x{image_size} can be "
-                "cropped to {expected_size}x{expected_size}",
+                f"cropped to {expected_size}x{expected_size}",
             )
         else:
             return (
                 False,
                 f"Invalid: {image_size}x{image_size} is too small. "
-                "Minimum for {num_levels} level(s) is {expected_size}x{expected_size}",
+                f"Minimum for {num_levels} level(s) is {expected_size}x{expected_size}",
             )
     else:
         return (
             False,
             f"Invalid: {image_size}x{image_size} is too small. "
-            "Expected {expected_size}x{expected_size} for {num_levels} level(s)",
+            f"Expected {expected_size}x{expected_size} for {num_levels} level(s)",
         )
 
 
-def crop_to_valid(img: jnp.ndarray, num_levels: int) -> jnp.ndarray:
+def crop_to_valid(
+    img: jnp.ndarray, num_levels: int, window_size: int = 16
+) -> jnp.ndarray:
     """
     Center-crop an image to the valid resolution for the given pyramid depth.
 
     Args:
         img: Image tensor (B, H, W, C) or (H, W, C)
         num_levels: Number of pyramid levels
+        window_size: Size of attention windows (default 16)
 
     Returns:
         Cropped image to valid size
     """
-    target_size = compute_valid_resolution(num_levels)
+    target_size = compute_valid_resolution(num_levels, window_size)
 
     if img.ndim == 3:
         h, w, c = img.shape
@@ -109,15 +115,15 @@ def crop_to_valid(img: jnp.ndarray, num_levels: int) -> jnp.ndarray:
 
 class WindowGrid:
     """
-    Handles splitting and stitching of embedding grids into 16x16 windows.
+    Handles splitting and stitching of embedding grids into windows.
 
-    For example, with WINDOW_SIZE=16:
+    For example, with window_size=16:
     - 32x32 embeddings -> 4 windows (2x2 grid)
     - 64x64 embeddings -> 16 windows (4x4 grid)
     - 16x16 embeddings -> 1 window (1x1 grid)
     """
 
-    def __init__(self, window_size: int = WINDOW_SIZE):
+    def __init__(self, window_size: int = 16):
         self.window_size = window_size
 
     def __repr__(self) -> str:
@@ -128,12 +134,12 @@ class WindowGrid:
         if h % self.window_size != 0:
             raise ValueError(
                 f"Height {h} is not divisible by window size {self.window_size}. "
-                f"Expected image size compatible with WINDOW_SIZE * 2^n."
+                f"Expected image size compatible with window_size * 2^n."
             )
         if w % self.window_size != 0:
             raise ValueError(
                 f"Width {w} is not divisible by window size {self.window_size}. "
-                f"Expected image size compatible with WINDOW_SIZE * 2^n."
+                f"Expected image size compatible with window_size * 2^n."
             )
 
         num_h = h // self.window_size
@@ -201,13 +207,13 @@ class WindowGrid:
         if num_windows != expected_windows:
             raise ValueError(
                 f"Number of windows {num_windows} doesn't match "
-                "expected grid {grid_h}x{grid_w} = {expected_windows}"
+                f"expected grid {grid_h}x{grid_w} = {expected_windows}"
             )
 
         if win_h != self.window_size or win_w != self.window_size:
             raise ValueError(
                 f"Window size ({win_h}, {win_w}) doesn't match "
-                "expected ({self.window_size}, {self.window_size})"
+                f"expected ({self.window_size}, {self.window_size})"
             )
 
         # Reshape: (B, num_windows, W, W, C) -> (B, grid_h, grid_w, W, W, C)

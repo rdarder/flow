@@ -79,10 +79,30 @@ def loss_fn(
     img2: jnp.ndarray,
     flow_gt: jnp.ndarray,
 ):
-    """Compute loss and auxiliary outputs."""
-    flow_pred, aux = model(img1, img2)
-    loss = endpoint_error_loss(flow_pred, flow_gt)
-    return loss, (flow_pred, aux)
+    """Compute loss and auxiliary outputs.
+    
+    Computes per-level losses to enable independent training of each pyramid level.
+    This is necessary because stop_gradient is applied on priors between levels,
+    so each level must have its own gradient signal from the loss.
+    """
+    flow_pred, aux = model(img1, img2, return_intermediates=True)
+    
+    # Main loss on finest level
+    total_loss = endpoint_error_loss(flow_pred, flow_gt)
+    
+    # Auxiliary losses on intermediate levels (with downsampled ground truth)
+    if "level_flows" in aux:
+        level_flows = aux["level_flows"]
+        # Process all levels except the finest (already counted in main loss)
+        for level_idx in range(len(level_flows) - 1):
+            level_flow = level_flows[level_idx]
+            # Compute loss at this level's resolution
+            # endpoint_error_loss handles downsampling automatically
+            level_loss = endpoint_error_loss(level_flow, flow_gt)
+            # Weight intermediate losses lower (0.1) to prioritize finest level
+            total_loss = total_loss + 0.1 * level_loss
+    
+    return total_loss, (flow_pred, aux)
 
 
 # --- 2. Training Steps ---

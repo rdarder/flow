@@ -1,7 +1,6 @@
 import jax.numpy as jnp
 import pytest
 from flow.window_grid import (
-    WINDOW_SIZE,
     compute_valid_resolution,
     validate_resolution,
     crop_to_valid,
@@ -16,16 +15,16 @@ class TestResolutionUtilities:
 
     def test_compute_valid_resolution(self):
         """Test that valid resolutions are computed correctly."""
-        # 1 level: WINDOW_SIZE * 2^1 = 32
+        # 1 level: 16 * 2^1 = 32
         assert compute_valid_resolution(1) == 32
 
-        # 2 levels: WINDOW_SIZE * 2^2 = 64
+        # 2 levels: 16 * 2^2 = 64
         assert compute_valid_resolution(2) == 64
 
-        # 3 levels: WINDOW_SIZE * 2^3 = 128
+        # 3 levels: 16 * 2^3 = 128
         assert compute_valid_resolution(3) == 128
 
-        # 4 levels: WINDOW_SIZE * 2^4 = 256
+        # 4 levels: 16 * 2^4 = 256
         assert compute_valid_resolution(4) == 256
 
     def test_validate_resolution_exact_match(self):
@@ -45,10 +44,6 @@ class TestResolutionUtilities:
         is_valid, msg = validate_resolution(32, 2)
         assert is_valid is False
         assert "too small" in msg.lower() or "Invalid" in msg
-
-    def test_window_size_constant(self):
-        """Test that WINDOW_SIZE is 16 as expected."""
-        assert WINDOW_SIZE == 16
 
 
 class TestWindowGrid:

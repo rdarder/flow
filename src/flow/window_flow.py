@@ -10,7 +10,7 @@ import jax.numpy as jnp
 from flax import nnx
 
 from flow.model import PatchLookup, PeerPropagation
-from flow.window_grid import WINDOW_SIZE, WindowGrid
+from flow.window_grid import WindowGrid
 
 
 class WindowFlowProcessor(nnx.Module):
@@ -24,7 +24,7 @@ class WindowFlowProcessor(nnx.Module):
     def __init__(
         self,
         embed_dim: int,
-        window_size: int = WINDOW_SIZE,
+        window_size: int = 16,
         *,
         rngs: nnx.Rngs,
     ):

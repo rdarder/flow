@@ -5,6 +5,7 @@ Coarse flow estimates guide spatial search at finer levels.
 """
 
 from typing import Tuple, Dict, Any, Optional
+import jax
 import jax.numpy as jnp
 from flax import nnx
 
@@ -59,7 +60,7 @@ class HierarchicalFlowModel(nnx.Module):
         self.auto_crop = auto_crop
 
         # Compute required input size
-        self.required_size = compute_valid_resolution(num_levels)
+        self.required_size = compute_valid_resolution(num_levels, window_size)
 
         # Pyramid generator
         self.pyramid = EmbeddingPyramid(
@@ -96,8 +97,8 @@ class HierarchicalFlowModel(nnx.Module):
         if self.auto_crop:
             if H >= self.required_size and W >= self.required_size:
                 # Can crop
-                img1_cropped = crop_to_valid(img1, self.num_levels)
-                img2_cropped = crop_to_valid(img2, self.num_levels)
+                img1_cropped = crop_to_valid(img1, self.num_levels, self.window_size)
+                img2_cropped = crop_to_valid(img2, self.num_levels, self.window_size)
                 return img1_cropped, img2_cropped
             else:
                 raise ValueError(
@@ -192,9 +193,11 @@ class HierarchicalFlowModel(nnx.Module):
             aux_levels.append(aux)
 
             # Prepare prior for next level (upsample 2x)
+            # Stop gradient to prevent backpropagation through hierarchy
+            # Each level trains independently on its own objective
             if level_idx < self.num_levels - 1:
-                prior_flow = upsample_flow_2x(flow)
-                prior_confidence = upsample_confidence_2x(conf)
+                prior_flow = jax.lax.stop_gradient(upsample_flow_2x(flow))
+                prior_confidence = jax.lax.stop_gradient(upsample_confidence_2x(conf))
 
         # Final flow is from the finest level (already includes prior guidance)
         flow_final = flow_levels[-1]
