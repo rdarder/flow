@@ -38,10 +38,10 @@ from flow.settings import (
 )
 from flow.synthetic_dataset import SyntheticFlowDataset
 from flow.visualization import (
-    create_blending_figure,
     create_components_figure,
     create_confidence_analysis_figure,
     create_overview_figure,
+    create_prior_effect_figure,
     create_pyramid_detail_figure,
 )
 
@@ -207,8 +207,12 @@ class Trainer:
                     level_flows[f"Level {i}"] = np.array(flow[0])
 
             fig_overview = create_overview_figure(
-                img1_np, img2_np, flow_gt_np, flow_pred_np, level_flows,
-                flow_max_percent=self.settings.visualization.flow_max_percent
+                img1_np,
+                img2_np,
+                flow_gt_np,
+                flow_pred_np,
+                level_flows,
+                flow_max_percent=self.settings.visualization.flow_max_percent,
             )
             self.logger.log_figure("Visualization/Overview", fig_overview, epoch)
 
@@ -226,45 +230,29 @@ class Trainer:
                 )
                 self.logger.log_figure("Visualization/Pyramid", fig_pyramid, epoch)
 
-            # 3. Blending analysis (if blend aux available)
-            # The blend data is in level_aux[1] (second level) since blending happens
-            # from coarse (level 0) into fine (level 1)
+            # 3. Prior guidance visualization (for levels 1+)
+            # Show how prior from coarser level guided the search
             if "level_aux" in aux and len(aux.get("level_flows", [])) >= 2:
-                level_aux_list = aux["level_aux"]
-                # Find a level that has blend data (usually level 1 for 2-level pyramid)
-                blend_data = None
-                blend_level_idx = None
-                for idx, level_aux in enumerate(level_aux_list):
-                    if "blend" in level_aux:
-                        blend_data = level_aux["blend"]
-                        blend_level_idx = idx
-                        break
-
-                if blend_data is not None:
-                    # For 2-level: coarse_idx = 0, fine_idx = 1
-                    coarse_idx = blend_level_idx - 1 if blend_level_idx > 0 else 0
-                    fine_idx = blend_level_idx
-
-                    fig_blending = create_blending_figure(
-                        flow_fine=np.array(aux["level_flows"][fine_idx][0]),
-                        conf_fine=np.array(aux["level_confidences"][fine_idx][0]),
-                        flow_coarse_upsampled=np.array(
-                            blend_data["flow_coarse_upsampled"][0]
-                        ),
-                        conf_coarse_upsampled=np.array(
-                            blend_data["conf_coarse_upsampled"][0]
-                        ),
-                        weight_fine=np.array(blend_data["weight_fine"][0]),
-                        weight_coarse=np.array(blend_data["weight_coarse"][0]),
-                        flow_final=np.array(aux["level_flows"][fine_idx][0]),
-                        original_resolution=self.settings.dataset.img_size,
-                        level_name=f"Level {fine_idx}",
-                        flow_max_percent=self.settings.visualization.flow_max_percent,
-                        flow_gt=flow_gt_np,
-                    )
-                    self.logger.log_figure(
-                        "Visualization/Blending", fig_blending, epoch
-                    )
+                # Show prior effect for level 1 (first level with actual prior)
+                for level_idx in range(1, len(aux["level_flows"])):
+                    level_aux = aux["level_aux"][level_idx]
+                    if "prior_flow" in level_aux:
+                        fig_prior = create_prior_effect_figure(
+                            prior_flow=np.array(level_aux["prior_flow"][0]),
+                            level_flow=np.array(aux["level_flows"][level_idx][0]),
+                            prior_confidence=np.array(level_aux["prior_confidence"][0]),
+                            level_confidence=np.array(
+                                aux["level_confidences"][level_idx][0]
+                            ),
+                            original_resolution=self.settings.dataset.img_size,
+                            level_name=f"Level {level_idx}",
+                            flow_max_percent=self.settings.visualization.flow_max_percent,
+                        )
+                        self.logger.log_figure(
+                            f"Visualization/Prior_Effect/Level_{level_idx}",
+                            fig_prior,
+                            epoch,
+                        )
 
             # 4. Components figure (if window_flow aux available)
             if "level_aux" in aux:

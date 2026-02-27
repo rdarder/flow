@@ -9,6 +9,13 @@ from flow.window_grid import WindowGrid
 from flow.embedding_pyramid import EmbeddingPyramid
 
 
+def create_zero_prior(batch_size, height, width):
+    """Create zero prior flow and neutral confidence for testing."""
+    prior_flow = jnp.zeros((batch_size, height, width, 2))
+    prior_confidence = jnp.full((batch_size, height, width, 1), 0.5)
+    return prior_flow, prior_confidence
+
+
 class TestWindowFlowProcessor:
     """Test WindowFlowProcessor functionality."""
 
@@ -93,8 +100,11 @@ class TestWindowFlowProcessor:
         emb1 = jnp.zeros((2, 16, 16, 16))
         emb2 = jnp.zeros((2, 16, 16, 16))
 
+        # Create zero priors for testing
+        prior_flow, prior_confidence = create_zero_prior(2, 16, 16)
+
         # Process
-        flow, conf, aux = processor(emb1, emb2)
+        flow, conf, aux = processor(emb1, emb2, prior_flow, prior_confidence)
 
         # Check output shapes
         assert flow.shape == (2, 16, 16, 2)
@@ -125,8 +135,11 @@ class TestWindowFlowProcessor:
         # Add some variation so flow is non-zero
         emb2 = jnp.ones((2, 32, 32, 16)) * 0.1
 
+        # Create zero priors for testing
+        prior_flow, prior_confidence = create_zero_prior(2, 32, 32)
+
         # Process
-        flow, conf, aux = processor(emb1, emb2)
+        flow, conf, aux = processor(emb1, emb2, prior_flow, prior_confidence)
 
         # Check output shapes
         assert flow.shape == (2, 32, 32, 2)
@@ -150,8 +163,11 @@ class TestWindowFlowProcessor:
         emb1 = jnp.zeros((2, 64, 64, 16))
         emb2 = jnp.ones((2, 64, 64, 16)) * 0.05
 
+        # Create zero priors for testing
+        prior_flow, prior_confidence = create_zero_prior(2, 64, 64)
+
         # Process
-        flow, conf, aux = processor(emb1, emb2)
+        flow, conf, aux = processor(emb1, emb2, prior_flow, prior_confidence)
 
         # Check output shapes
         assert flow.shape == (2, 64, 64, 2)
@@ -175,7 +191,10 @@ class TestWindowFlowProcessor:
             emb1 = jnp.zeros((batch_size, 32, 32, 16))
             emb2 = jnp.zeros((batch_size, 32, 32, 16))
 
-            flow, conf, aux = processor(emb1, emb2)
+            # Create zero priors for testing
+            prior_flow, prior_confidence = create_zero_prior(batch_size, 32, 32)
+
+            flow, conf, aux = processor(emb1, emb2, prior_flow, prior_confidence)
 
             assert flow.shape[0] == batch_size
             assert conf.shape[0] == batch_size
@@ -189,8 +208,11 @@ class TestWindowFlowProcessor:
         emb1 = jnp.zeros((2, 17, 17, 16))
         emb2 = jnp.zeros((2, 17, 17, 16))
 
+        # Create zero priors for testing
+        prior_flow, prior_confidence = create_zero_prior(2, 17, 17)
+
         with pytest.raises(ValueError, match="must be divisible by window size"):
-            processor(emb1, emb2)
+            processor(emb1, emb2, prior_flow, prior_confidence)
 
     def test_reproducibility(self):
         """Test that same inputs produce same outputs."""
@@ -201,9 +223,12 @@ class TestWindowFlowProcessor:
         emb1 = jnp.zeros((2, 32, 32, 16))
         emb2 = jnp.ones((2, 32, 32, 16)) * 0.1
 
+        # Create zero priors for testing
+        prior_flow, prior_confidence = create_zero_prior(2, 32, 32)
+
         # Run twice
-        flow1, conf1, _ = processor(emb1, emb2)
-        flow2, conf2, _ = processor(emb1, emb2)
+        flow1, conf1, _ = processor(emb1, emb2, prior_flow, prior_confidence)
+        flow2, conf2, _ = processor(emb1, emb2, prior_flow, prior_confidence)
 
         # Should be identical
         assert jnp.allclose(flow1, flow2)
@@ -238,7 +263,11 @@ class TestPyramidIntegration:
         assert emb1_pyramid[1].shape == (2, 32, 32, 16)  # fine
 
         # Process fine level (32x32) - should be 4 windows
-        flow_fine, conf_fine, aux = processor(emb1_pyramid[1], emb2_pyramid[1])
+        # Create zero priors for testing
+        prior_flow_fine, prior_conf_fine = create_zero_prior(2, 32, 32)
+        flow_fine, conf_fine, aux = processor(
+            emb1_pyramid[1], emb2_pyramid[1], prior_flow_fine, prior_conf_fine
+        )
 
         # Check outputs
         assert flow_fine.shape == (2, 32, 32, 2)
@@ -246,8 +275,10 @@ class TestPyramidIntegration:
         assert not jnp.any(jnp.isnan(flow_fine))
 
         # Process coarse level (16x16) - should be 1 window
+        # Create zero priors for testing
+        prior_flow_coarse, prior_conf_coarse = create_zero_prior(2, 16, 16)
         flow_coarse, conf_coarse, aux_coarse = processor(
-            emb1_pyramid[0], emb2_pyramid[0]
+            emb1_pyramid[0], emb2_pyramid[0], prior_flow_coarse, prior_conf_coarse
         )
 
         assert flow_coarse.shape == (2, 16, 16, 2)
@@ -277,9 +308,20 @@ class TestPyramidIntegration:
         assert emb1_pyramid[2].shape == (1, 64, 64, 16)  # finest
 
         # Process each level
-        flow_coarse, _, _ = processor(emb1_pyramid[0], emb2_pyramid[0])
-        flow_mid, _, _ = processor(emb1_pyramid[1], emb2_pyramid[1])
-        flow_fine, _, aux_fine = processor(emb1_pyramid[2], emb2_pyramid[2])
+        # Create zero priors for each level
+        prior_flow_coarse, prior_conf_coarse = create_zero_prior(1, 16, 16)
+        prior_flow_mid, prior_conf_mid = create_zero_prior(1, 32, 32)
+        prior_flow_fine, prior_conf_fine = create_zero_prior(1, 64, 64)
+
+        flow_coarse, _, _ = processor(
+            emb1_pyramid[0], emb2_pyramid[0], prior_flow_coarse, prior_conf_coarse
+        )
+        flow_mid, _, _ = processor(
+            emb1_pyramid[1], emb2_pyramid[1], prior_flow_mid, prior_conf_mid
+        )
+        flow_fine, _, aux_fine = processor(
+            emb1_pyramid[2], emb2_pyramid[2], prior_flow_fine, prior_conf_fine
+        )
 
         # Check outputs
         assert flow_coarse.shape == (1, 16, 16, 2)
@@ -313,7 +355,10 @@ class TestPositionPreservation:
         emb2 = jnp.roll(emb1, shift=(2, 3), axis=(1, 2))
 
         # Process
-        flow, conf, aux = processor(emb1, emb2)
+        # Create zero priors for testing (32x32 to match embeddings)
+        prior_flow, prior_confidence = create_zero_prior(1, 32, 32)
+
+        flow, conf, aux = processor(emb1, emb2, prior_flow, prior_confidence)
 
         # Flow should be (1, 32, 32, 2)
         assert flow.shape == (1, 32, 32, 2)
@@ -376,7 +421,10 @@ class TestPositionPreservation:
         emb2 = jnp.roll(emb1, shift=(2, 3), axis=(1, 2))
 
         # Process
-        flow, conf, aux = processor(emb1, emb2)
+        # Create zero priors for testing (32x32 to match embeddings)
+        prior_flow, prior_confidence = create_zero_prior(1, 32, 32)
+
+        flow, conf, aux = processor(emb1, emb2, prior_flow, prior_confidence)
 
         # For pixels not near the boundary (rolled region), the flow should
         # detect the 2-pixel down, 3-pixel right shift
@@ -418,8 +466,11 @@ class TestPositionPreservation:
         emb2 = jnp.zeros((1, 16, 16, 16))
         emb2 = emb2.at[0, 6, 7, :].set(1.0)
 
+        # Create zero priors for testing
+        prior_flow, prior_confidence = create_zero_prior(1, 16, 16)
+
         # Process
-        flow, conf, _ = processor(emb1, emb2)
+        flow, conf, _ = processor(emb1, emb2, prior_flow, prior_confidence)
 
         # Check flow at position (4, 5) - should point toward (6, 7)
         flow_at_marker = flow[0, 4, 5, :]  # (x_flow, y_flow)
@@ -446,7 +497,10 @@ class TestWindowFlowShapes:
             emb1 = jnp.zeros((2, 32, 32, embed_dim))
             emb2 = jnp.zeros((2, 32, 32, embed_dim))
 
-            flow, conf, _ = processor(emb1, emb2)
+            # Create zero priors for testing
+            prior_flow, prior_confidence = create_zero_prior(2, 32, 32)
+
+            flow, conf, _ = processor(emb1, emb2, prior_flow, prior_confidence)
 
             assert flow.shape == (2, 32, 32, 2)
             assert conf.shape == (2, 32, 32, 1)
@@ -461,7 +515,10 @@ class TestWindowFlowShapes:
         emb1 = jnp.zeros((2, 32, 32, 16))
         emb2 = jnp.zeros((2, 32, 32, 16))
 
-        flow, conf, _ = processor(emb1, emb2)
+        # Create zero priors for testing
+        prior_flow, prior_confidence = create_zero_prior(2, 32, 32)
+
+        flow, conf, _ = processor(emb1, emb2, prior_flow, prior_confidence)
 
         assert flow.shape == (2, 32, 32, 2)
         assert conf.shape == (2, 32, 32, 1)

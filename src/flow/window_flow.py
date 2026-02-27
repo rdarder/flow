@@ -103,12 +103,16 @@ class WindowFlowProcessor(nnx.Module):
         self,
         emb1: jnp.ndarray,  # (B, H, W, C)
         emb2: jnp.ndarray,  # (B, H, W, C)
+        prior_flow: jnp.ndarray,  # (B, H, W, 2) - Flow from coarser level
+        prior_confidence: jnp.ndarray,  # (B, H, W, 1) - Confidence in prior
     ) -> Tuple[jnp.ndarray, jnp.ndarray, Dict[str, Any]]:
         """Process embeddings through windows to estimate flow.
 
         Args:
             emb1: Embeddings from frame 1 (B, H, W, C)
             emb2: Embeddings from frame 2 (B, H, W, C)
+            prior_flow: Flow estimate from coarser level (B, H, W, 2)
+            prior_confidence: Confidence in prior flow (B, H, W, 1)
 
         Returns:
             flow: Estimated flow (B, H, W, 2) in normalized coordinates [0, 1]
@@ -129,6 +133,10 @@ class WindowFlowProcessor(nnx.Module):
         windows1 = self.window_grid.split(emb1)
         windows2 = self.window_grid.split(emb2)
 
+        # Split priors into windows (same pattern as embeddings)
+        prior_flow_windows = self.window_grid.split(prior_flow)
+        prior_conf_windows = self.window_grid.split(prior_confidence)
+
         num_windows = windows1.shape[1]
 
         # Reshape for batching: (B, num_windows, W, W, C) -> (B*num_windows, W, W, C)
@@ -139,9 +147,21 @@ class WindowFlowProcessor(nnx.Module):
             B * num_windows, self.window_size, self.window_size, C
         )
 
+        # Reshape priors: (B, num_windows, W, W, 2) -> (B*num_windows, W, W, 2)
+        prior_flow_batched = prior_flow_windows.reshape(
+            B * num_windows, self.window_size, self.window_size, 2
+        )
+        prior_conf_batched = prior_conf_windows.reshape(
+            B * num_windows, self.window_size, self.window_size, 1
+        )
+
         # Convert to patches: (B*num_windows, W, W, C) -> (B*num_windows, W*W, C)
         patches1 = self._embeddings_to_patches(windows1_batched)
         patches2 = self._embeddings_to_patches(windows2_batched)
+
+        # Convert priors to patches: (B*num_windows, W*W, 2/1)
+        prior_flow_patches = self._embeddings_to_patches(prior_flow_batched)
+        prior_conf_patches = self._embeddings_to_patches(prior_conf_batched)
 
         # Create coordinate grid for a single window
         window_coords = self._create_coordinate_grid(
@@ -156,9 +176,9 @@ class WindowFlowProcessor(nnx.Module):
         )
         k_pos = q_pos  # Same positions for key
 
-        # Run PatchLookup (cross-attention between frames)
+        # Run PatchLookup (cross-attention between frames with prior guidance)
         flow_lookup, conf_lookup, attn_weights_lookup = self.patch_lookup(
-            patches1, patches2, q_pos, k_pos
+            patches1, patches2, q_pos, k_pos, prior_flow_patches, prior_conf_patches
         )
 
         # Run PeerPropagation (self-attention within frame 1)
@@ -232,6 +252,8 @@ class WindowFlowProcessor(nnx.Module):
                 grid_h=num_h,
                 grid_w=num_w,
             ),
+            "prior_flow": prior_flow,  # Prior flow passed to this level
+            "prior_confidence": prior_confidence,  # Prior confidence passed to this level
             "num_windows": num_windows,
             "grid_h": num_h,
             "grid_w": num_w,

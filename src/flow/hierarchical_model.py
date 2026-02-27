@@ -1,7 +1,7 @@
-"""Hierarchical optical flow model.
+"""Hierarchical optical flow model with prior-guided attention.
 
-Integrates embedding pyramid, window processing, and flow blending
-into a complete end-to-end model for 64×64 (and beyond) images.
+Integrates embedding pyramid and window processing with prior-guided attention.
+Coarse flow estimates guide spatial search at finer levels.
 """
 
 from typing import Tuple, Dict, Any, Optional
@@ -10,27 +10,26 @@ from flax import nnx
 
 from flow.embedding_pyramid import EmbeddingPyramid
 from flow.window_flow import WindowFlowProcessor
-from flow.flow_blender import FlowBlender
+from flow.flow_blender import upsample_flow_2x, upsample_confidence_2x
 from flow.window_grid import crop_to_valid, compute_valid_resolution
 
 
 class HierarchicalFlowModel(nnx.Module):
-    """Complete hierarchical optical flow model.
+    """Complete hierarchical optical flow model with prior-guided attention.
 
     Processes input images through a pyramid, estimates flow at each level
-    using windowed attention, and blends results using confidence scores.
+    using windowed attention with prior guidance from coarser levels.
 
     Architecture:
     1. Generate embedding pyramid for both frames
-    2. Process coarsest level directly (single window)
-    3. Process finer levels using windowed attention
-    4. Blend coarse flow into fine flow using confidence weights
-    5. Return final flow at finest resolution
+    2. Process each level with prior-guided attention
+       - Level 0: Zero prior flow, neutral confidence (0.5)
+       - Level N: Prior from level N-1 (upsampled 2x)
+    3. Return final flow at finest resolution
 
     For 2-level pyramid with 64×64 input:
-    - Level 0 (coarse): 16×16 embeddings → 16×16 flow
-    - Level 1 (fine): 32×32 embeddings → 32×32 flow
-    - Blend: 16×16 flow upsampled to 32×32, blended with fine flow
+    - Level 0: 16×16 embeddings → 16×16 flow (with zero prior)
+    - Level 1: 32×32 embeddings → 32×32 flow (guided by upsampled level 0)
     - Output: 32×32 flow field
     """
 
@@ -77,9 +76,6 @@ class HierarchicalFlowModel(nnx.Module):
             rngs=rngs,
         )
 
-        # Flow blender (for all levels except finest)
-        self.blender = FlowBlender()
-
     def _validate_or_crop_inputs(
         self, img1: jnp.ndarray, img2: jnp.ndarray
     ) -> Tuple[jnp.ndarray, jnp.ndarray]:
@@ -117,22 +113,31 @@ class HierarchicalFlowModel(nnx.Module):
             )
 
     def _process_level(
-        self, emb1: jnp.ndarray, emb2: jnp.ndarray, level_idx: int
+        self,
+        emb1: jnp.ndarray,
+        emb2: jnp.ndarray,
+        level_idx: int,
+        prior_flow: jnp.ndarray,
+        prior_confidence: jnp.ndarray,
     ) -> Tuple[jnp.ndarray, jnp.ndarray, Dict[str, Any]]:
-        """Process a single pyramid level to estimate flow.
+        """Process a single pyramid level with prior-guided attention.
 
         Args:
             emb1: Embeddings from frame 1 at this level
             emb2: Embeddings from frame 2 at this level
             level_idx: Index of this level (0 = coarsest, num_levels-1 = finest)
+            prior_flow: Flow estimate from coarser level (B, H, W, 2)
+            prior_confidence: Confidence in prior flow (B, H, W, 1)
 
         Returns:
             flow: Flow estimate at this level (B, H, W, 2) in normalized coords
             confidence: Confidence scores (B, H, W, 1)
             aux: Auxiliary outputs
         """
-        # Use window processor for all levels (handles single or multiple windows)
-        flow, confidence, aux = self.window_processor(emb1, emb2)
+        # Process with window processor and prior guidance
+        flow, confidence, aux = self.window_processor(
+            emb1, emb2, prior_flow, prior_confidence
+        )
 
         # Add level info to aux
         aux["level_idx"] = level_idx
@@ -143,7 +148,7 @@ class HierarchicalFlowModel(nnx.Module):
     def __call__(
         self, img1: jnp.ndarray, img2: jnp.ndarray, return_intermediates: bool = False
     ) -> Tuple[jnp.ndarray, Dict[str, Any]]:
-        """Estimate optical flow between two frames.
+        """Estimate optical flow between two frames using prior-guided attention.
 
         Args:
             img1: Frame 1 (B, H, W, C) - will be cropped to valid size if needed
@@ -162,7 +167,13 @@ class HierarchicalFlowModel(nnx.Module):
         pyramid1 = self.pyramid(img1)  # List of [level_0, level_1, ...]
         pyramid2 = self.pyramid(img2)
 
-        # Process coarsest level first
+        # Initialize priors for level 0 (hardcoded: zero flow, neutral confidence)
+        B = img1.shape[0]
+        H0, W0 = pyramid1[0].shape[1], pyramid1[0].shape[2]
+        prior_flow = jnp.zeros((B, H0, W0, 2))  # Zero prior flow
+        prior_confidence = jnp.full((B, H0, W0, 1), 0.5)  # Neutral confidence
+
+        # Process each level with prior-guided attention
         flow_levels = []
         conf_levels = []
         aux_levels = []
@@ -171,42 +182,34 @@ class HierarchicalFlowModel(nnx.Module):
             emb1 = pyramid1[level_idx]
             emb2 = pyramid2[level_idx]
 
-            flow, conf, aux = self._process_level(emb1, emb2, level_idx)
+            # Process this level with prior guidance
+            flow, conf, aux = self._process_level(
+                emb1, emb2, level_idx, prior_flow, prior_confidence
+            )
 
             flow_levels.append(flow)
             conf_levels.append(conf)
             aux_levels.append(aux)
 
-        # Now blend from coarse to fine
-        # Start with coarsest level as base
-        flow_current = flow_levels[0]
-        conf_current = conf_levels[0]
+            # Prepare prior for next level (upsample 2x)
+            if level_idx < self.num_levels - 1:
+                prior_flow = upsample_flow_2x(flow)
+                prior_confidence = upsample_confidence_2x(conf)
 
-        for level_idx in range(1, self.num_levels):
-            flow_fine = flow_levels[level_idx]
-            conf_fine = conf_levels[level_idx]
+        # Final flow is from the finest level (already includes prior guidance)
+        flow_final = flow_levels[-1]
+        conf_final = conf_levels[-1]
 
-            # Blend coarse into fine
-            flow_blended, conf_blended, blend_aux = self.blender.blend_pyramid_levels(
-                flow_fine, conf_fine, flow_current, conf_current
-            )
-
-            flow_current = flow_blended
-            conf_current = conf_blended
-            aux_levels[level_idx]["blend"] = blend_aux
-
-        # flow_current is now at finest resolution in normalized coordinates
         # Convert to pixel coordinates
-        # The finest level has shape (required_size / 2, required_size / 2)
         finest_H = self.required_size // 2
-        finest_scale = float(self.required_size)  # Scale by original image size
+        finest_scale = float(self.required_size)
 
-        flow_pixels = flow_current * finest_scale
+        flow_pixels = flow_final * finest_scale
 
         # Prepare output
         aux = {
-            "flow_normalized": flow_current,
-            "confidence": conf_current,
+            "flow_normalized": flow_final,
+            "confidence": conf_final,
             "pyramid_shapes": [p.shape for p in pyramid1],
             "num_levels": self.num_levels,
             "finest_resolution": (finest_H, finest_H),

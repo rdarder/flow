@@ -113,27 +113,29 @@ def _figure_to_array(fig: matplotlib.figure.Figure) -> np.ndarray:
     return image_array
 
 
-def _upsample_flow(flow: np.ndarray, target_h: int, target_w: int, original_resolution: int) -> np.ndarray:
+def _upsample_flow(
+    flow: np.ndarray, target_h: int, target_w: int, original_resolution: int
+) -> np.ndarray:
     """Upsample flow field to target resolution and convert to pixel-equivalent.
 
     Pyramid level flows are in normalized coordinates (0-1 range relative to finest level).
     This function upsamples them to target resolution and converts to pixel-equivalent
     values by multiplying by original image resolution.
-    
+
     Args:
         flow: Flow field (H, W, 2) in normalized coordinates
         target_h: Target height (resolution to visualize at)
         target_w: Target width
         original_resolution: Original image resolution (for pixel-equivalent conversion)
-        
+
     Returns:
         Upsampled flow in pixel-equivalent coordinates (target_h, target_w, 2)
     """
     import jax.numpy as jnp
     from jax.image import resize
-    
+
     src_h, src_w = flow.shape[:2]
-    
+
     # Upsample using bilinear interpolation (normalized coords stay the same during upsampling)
     flow_upsampled = np.array(
         resize(
@@ -142,11 +144,13 @@ def _upsample_flow(flow: np.ndarray, target_h: int, target_w: int, original_reso
             method="bilinear",
         )
     )
-    
+
     # Convert to pixel-equivalent by scaling by original image resolution
     # (all flows represent movement in the original image space)
-    flow_pixel_equivalent = flow_upsampled * np.array([original_resolution, original_resolution])
-    
+    flow_pixel_equivalent = flow_upsampled * np.array(
+        [original_resolution, original_resolution]
+    )
+
     return flow_pixel_equivalent
 
 
@@ -183,14 +187,14 @@ def create_overview_figure(
     """
     # Target resolution: use flow_pred (finest level) as reference
     target_h, target_w = flow_pred.shape[:2]
-    
+
     # Original image resolution: finest pyramid level is half the original
     # (e.g., 64x64 image -> 32x32 flow, so original = 2 * target)
     original_resolution = 2 * max(target_h, target_w)
-    
+
     # Calculate max_flow as percentage of original image resolution
     max_flow = flow_max_percent * original_resolution
-    
+
     # Handle shape mismatch between GT and prediction
     if flow_pred.shape[:2] != flow_gt.shape[:2]:
         # Downsample GT to match prediction
@@ -239,11 +243,15 @@ def create_overview_figure(
     axes[0, 1].set_title("Frame 2", fontsize=12, fontweight="bold")
 
     axes[0, 2].imshow(flow_to_color(flow_gt, max_flow=max_flow))
-    axes[0, 2].set_title(f"Ground Truth Flow (max={max_flow:.1f}px)", fontsize=12, fontweight="bold")
+    axes[0, 2].set_title(
+        f"Ground Truth Flow (max={max_flow:.1f}px)", fontsize=12, fontweight="bold"
+    )
 
     # Row 2: Predictions
     axes[1, 0].imshow(flow_to_color(flow_pred, max_flow=max_flow))
-    axes[1, 0].set_title(f"Predicted Flow (max={max_flow:.1f}px)", fontsize=12, fontweight="bold")
+    axes[1, 0].set_title(
+        f"Predicted Flow (max={max_flow:.1f}px)", fontsize=12, fontweight="bold"
+    )
 
     # Error magnitude
     error = np.sqrt(np.sum((flow_pred - flow_gt) ** 2, axis=-1))
@@ -276,15 +284,21 @@ def create_overview_figure(
                 src_h, src_w = level_flow.shape[:2]
                 if (src_h, src_w) != (target_h, target_w):
                     # Upsample and convert to pixel-equivalent
-                    level_flow_vis = _upsample_flow(level_flow, target_h, target_w, original_resolution)
+                    level_flow_vis = _upsample_flow(
+                        level_flow, target_h, target_w, original_resolution
+                    )
                     upsample_info = f"({src_h}→{target_h})"
                 else:
                     # Already at target res, just convert to pixel-equivalent
-                    level_flow_vis = level_flow * np.array([original_resolution, original_resolution])
+                    level_flow_vis = level_flow * np.array(
+                        [original_resolution, original_resolution]
+                    )
                     upsample_info = f"({target_h})"
-                
+
                 axes[row, col].imshow(flow_to_color(level_flow_vis, max_flow=max_flow))
-                axes[row, col].set_title(f"{level_name} Flow {upsample_info}", fontsize=10)
+                axes[row, col].set_title(
+                    f"{level_name} Flow {upsample_info}", fontsize=10
+                )
 
     # Clean up axes
     for ax in axes.flat:
@@ -455,8 +469,12 @@ def create_blending_figure(
     max_flow = flow_max_percent * original_resolution
 
     fig, axes = plt.subplots(2, 4, figsize=BLENDING_SIZE, dpi=FIGURE_DPI)
-    fig.suptitle(f"{level_name} Blending (max={max_flow:.1f}px)", 
-                 fontsize=14, fontweight='bold', y=0.98)
+    fig.suptitle(
+        f"{level_name} Blending (max={max_flow:.1f}px)",
+        fontsize=14,
+        fontweight="bold",
+        y=0.98,
+    )
     plt.subplots_adjust(hspace=0.35, wspace=0.2, top=0.93)
 
     # Row 1
@@ -533,6 +551,118 @@ def create_blending_figure(
     return _figure_to_array(fig)
 
 
+def create_prior_effect_figure(
+    prior_flow: np.ndarray,
+    level_flow: np.ndarray,
+    prior_confidence: np.ndarray,
+    level_confidence: np.ndarray,
+    original_resolution: int,
+    level_name: str = "Level",
+    flow_max_percent: float = 0.1,
+) -> np.ndarray:
+    """Create prior effect visualization figure.
+
+    Shows how prior from coarser level guided the search at this level.
+
+    Layout (2 rows × 3 columns):
+    Row 1: Prior Flow | Level Output Flow | Difference (Level - Prior)
+    Row 2: Prior Confidence | Level Confidence | Confidence Change
+
+    Args:
+        prior_flow: Prior flow from coarser level (H, W, 2) in normalized coordinates
+        level_flow: Flow estimated at this level (H, W, 2) in normalized coordinates
+        prior_confidence: Confidence in prior (H, W, 1)
+        level_confidence: Confidence from this level (H, W, 1)
+        original_resolution: Original image resolution (for pixel-equivalent conversion)
+        level_name: Name of the pyramid level (e.g., "Level 1")
+        flow_max_percent: Percentage of original resolution for max flow color scale
+
+    Returns:
+        RGB image array for TensorBoard
+    """
+
+    # Remove batch dimensions if present
+    def squeeze_batch(arr):
+        if arr.ndim == 4:
+            return arr[0]
+        if arr.ndim == 3 and arr.shape[-1] == 1:
+            return arr[..., 0]
+        return arr
+
+    prior_flow = squeeze_batch(prior_flow)
+    level_flow = squeeze_batch(level_flow)
+    prior_confidence = squeeze_batch(prior_confidence)
+    level_confidence = squeeze_batch(level_confidence)
+
+    # Convert flows to pixel-equivalent coordinates
+    resolution_scale = np.array([original_resolution, original_resolution])
+    prior_flow_px = prior_flow * resolution_scale
+    level_flow_px = level_flow * resolution_scale
+
+    # Calculate difference (residual flow)
+    diff_flow_px = level_flow_px - prior_flow_px
+
+    # Calculate max_flow as percentage of original image resolution
+    max_flow = flow_max_percent * original_resolution
+
+    # Figure size for 2x3 layout
+    fig, axes = plt.subplots(2, 3, figsize=(14, 8), dpi=FIGURE_DPI)
+    fig.suptitle(
+        f"{level_name} Prior Effect (max={max_flow:.1f}px)",
+        fontsize=14,
+        fontweight="bold",
+        y=0.98,
+    )
+    plt.subplots_adjust(hspace=0.35, wspace=0.2, top=0.93)
+
+    # Row 1: Flow visualization
+    axes[0, 0].imshow(flow_to_color(prior_flow_px, max_flow=max_flow))
+    axes[0, 0].set_title("Prior Flow (from coarser)", fontsize=11, fontweight="bold")
+
+    axes[0, 1].imshow(flow_to_color(level_flow_px, max_flow=max_flow))
+    axes[0, 1].set_title("Level Output Flow", fontsize=11, fontweight="bold")
+
+    axes[0, 2].imshow(flow_to_color(diff_flow_px, max_flow=max_flow))
+    axes[0, 2].set_title("Correction (Output - Prior)", fontsize=11, fontweight="bold")
+
+    # Row 2: Confidence visualization
+    im_pc = axes[1, 0].imshow(
+        prior_confidence,
+        cmap=CONFIDENCE_CMAP,
+        vmin=CONFIDENCE_VMIN,
+        vmax=CONFIDENCE_VMAX,
+    )
+    axes[1, 0].set_title("Prior Confidence", fontsize=11, fontweight="bold")
+    plt.colorbar(im_pc, ax=axes[1, 0], fraction=0.046, pad=0.04)
+
+    im_lc = axes[1, 1].imshow(
+        level_confidence,
+        cmap=CONFIDENCE_CMAP,
+        vmin=CONFIDENCE_VMIN,
+        vmax=CONFIDENCE_VMAX,
+    )
+    axes[1, 1].set_title("Level Confidence", fontsize=11, fontweight="bold")
+    plt.colorbar(im_lc, ax=axes[1, 1], fraction=0.046, pad=0.04)
+
+    # Confidence change (level - prior)
+    conf_change = level_confidence - prior_confidence
+    im_change = axes[1, 2].imshow(
+        conf_change,
+        cmap="RdBu_r",  # Red for decrease, Blue for increase
+        vmin=-1.0,
+        vmax=1.0,
+    )
+    axes[1, 2].set_title("Confidence Change", fontsize=11, fontweight="bold")
+    plt.colorbar(im_change, ax=axes[1, 2], fraction=0.046, pad=0.04)
+
+    # Clean up axes
+    for ax in axes.flat:
+        ax.set_xticks([])
+        ax.set_yticks([])
+
+    return _figure_to_array(fig)
+
+
 def create_components_figure(
     flow_lookup: np.ndarray,
     flow_peer: np.ndarray,
@@ -591,8 +721,12 @@ def create_components_figure(
     max_flow = flow_max_percent * original_resolution
 
     fig, axes = plt.subplots(2, 3, figsize=COMPONENTS_SIZE, dpi=FIGURE_DPI)
-    fig.suptitle(f"{level_name} Components (max={max_flow:.1f}px)", 
-                 fontsize=14, fontweight='bold', y=0.98)
+    fig.suptitle(
+        f"{level_name} Components (max={max_flow:.1f}px)",
+        fontsize=14,
+        fontweight="bold",
+        y=0.98,
+    )
     plt.subplots_adjust(hspace=0.35, wspace=0.2, top=0.93)
 
     # Row 1: Flows

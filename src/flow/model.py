@@ -81,12 +81,23 @@ class SpatialScore(nnx.Module):
 
 class PatchLookup(nnx.Module):
     """
-    Core 'Line 4' Attention Module.
+    Core attention Module with Prior-Guided Spatial Search.
+
+    The attention weight is determined by a combination of embedding Similarity
+    and distance. Distance means how far apart it is from the expected flow. Expected
+    flow comes from a prior, be that a guess or a coarser estimation of the same
+    frame pair.
+
+    The prior flow shifts query positions, and prior confidence modulates
+    the spatial distance penalty (high confidence = stronger spatial penalty).
     """
 
     def __init__(self, embed_dim: int, *, rngs: nnx.Rngs):
         self.visual_scale = nnx.Param(1.0 / jnp.sqrt(embed_dim))
         self.spatial_score = SpatialScore(initial_scale=10.0, rngs=rngs)
+        self.prior_spatial_scale = nnx.Param(
+            1.0
+        )  # Scales confidence effect on distance
 
     def __call__(
         self,
@@ -94,6 +105,8 @@ class PatchLookup(nnx.Module):
         k_features: jnp.ndarray,  # (B, N, C)
         q_pos: jnp.ndarray,  # (B, N, 2) - Normalized [0, 1]
         k_pos: jnp.ndarray,  # (B, N, 2) - Normalized [0, 1]
+        prior_flow: jnp.ndarray,  # (B, N, 2) - Normalized flow from coarser level
+        prior_confidence: jnp.ndarray,  # (B, N, 1) - Confidence in prior
     ):
         B, N, C = q_features.shape
 
@@ -101,8 +114,20 @@ class PatchLookup(nnx.Module):
         visual_logits = q_features @ jnp.swapaxes(k_features, -2, -1)
         visual_score = visual_logits * self.visual_scale.value
 
-        # --- 2. Spatial Proximity ---
-        spatial_score = self.spatial_score(q_pos, k_pos)
+        # --- 2. Spatial Proximity with Prior Guidance ---
+        # Shift query positions by prior flow
+        q_pos_adjusted = q_pos + prior_flow  # (B, N, 2)
+
+        # Compute spatial distance from adjusted positions
+        spatial_score_raw = self.spatial_score(q_pos_adjusted, k_pos)  # (B, N, N)
+
+        # Modulate spatial penalty by prior confidence
+        # High confidence -> larger effective distance -> stronger penalty for deviation
+        # Low confidence -> smaller effective distance -> more permissive search
+        # prior_confidence is (B, N, 1), broadcasts to (B, N, N) across keys
+        spatial_score = (
+            spatial_score_raw * prior_confidence * self.prior_spatial_scale.value
+        )
 
         # --- 3. Combine & Softmax ---
         logits = visual_score + spatial_score
@@ -112,7 +137,7 @@ class PatchLookup(nnx.Module):
         target_pos_est = attn_weights @ k_pos
 
         # --- 5. Output Calculation ---
-        flow = target_pos_est - q_pos
+        flow = target_pos_est - q_pos  # Flow relative to original query position
         consensus = jnp.max(attn_weights, axis=-1, keepdims=True)
 
         return flow, consensus, attn_weights
@@ -227,8 +252,12 @@ class BarebonesFlowModel(nnx.Module):
         k_pos = jnp.broadcast_to(xy_grid_val, (batch_size, self.P, 2))
 
         # 3. Run V1: Patch Lookup
+        # For non-hierarchical model, use zero prior (no prior guidance)
+        prior_flow = jnp.zeros_like(q_pos)
+        prior_confidence = jnp.full((batch_size, self.P, 1), 0.5)
+
         F_cross, C_cross, A_cross = self.patch_lookup(
-            f1_patches, f2_patches, q_pos, k_pos
+            f1_patches, f2_patches, q_pos, k_pos, prior_flow, prior_confidence
         )
 
         # 4. Run V2: Peer Propagation
