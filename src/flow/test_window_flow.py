@@ -5,7 +5,12 @@ import pytest
 from flax import nnx
 
 from flow.window_flow import WindowFlowProcessor
-from flow.window_grid import WindowGrid
+from flow.window_grid import (
+    WindowGrid,
+    create_coordinate_grid,
+    grid_to_tokens,
+    tokens_to_grid,
+)
 from flow.embedding_pyramid import EmbeddingPyramid
 
 
@@ -34,10 +39,7 @@ class TestWindowFlowProcessor:
 
     def test_coordinate_grid_creation(self):
         """Test coordinate grid generation."""
-        rngs = nnx.Rngs(0)
-        processor = WindowFlowProcessor(embed_dim=16, rngs=rngs)
-
-        grid = processor._create_coordinate_grid(16, 16)
+        grid = create_coordinate_grid(16, 16)
 
         # Check shape
         assert grid.shape == (16, 16, 2)
@@ -55,39 +57,33 @@ class TestWindowFlowProcessor:
 
     def test_patches_conversion(self):
         """Test embeddings to patches conversion."""
-        rngs = nnx.Rngs(0)
-        processor = WindowFlowProcessor(embed_dim=16, rngs=rngs)
-
         # Create test embeddings (B, H, W, C)
         embeddings = (
             jnp.arange(2 * 16 * 16 * 8).reshape(2, 16, 16, 8).astype(jnp.float32)
         )
 
-        # Convert to patches
-        patches = processor._embeddings_to_patches(embeddings)
+        # Convert to tokens
+        tokens = grid_to_tokens(embeddings)
 
         # Should be (B, H*W, C)
-        assert patches.shape == (2, 256, 8)
+        assert tokens.shape == (2, 256, 8)
 
         # First element should match top-left of original
-        assert jnp.allclose(patches[0, 0], embeddings[0, 0, 0])
+        assert jnp.allclose(tokens[0, 0], embeddings[0, 0, 0])
 
         # Last element should match bottom-right of original
-        assert jnp.allclose(patches[0, -1], embeddings[0, 15, 15])
+        assert jnp.allclose(tokens[0, -1], embeddings[0, 15, 15])
 
     def test_patches_to_grid_roundtrip(self):
-        """Test patches -> grid -> patches is identity."""
-        rngs = nnx.Rngs(0)
-        processor = WindowFlowProcessor(embed_dim=16, rngs=rngs)
-
+        """Test tokens -> grid -> tokens is identity."""
         # Start with embeddings
         original = jnp.arange(2 * 16 * 16 * 8).reshape(2, 16, 16, 8).astype(jnp.float32)
 
-        # To patches
-        patches = processor._embeddings_to_patches(original)
+        # To tokens
+        tokens = grid_to_tokens(original)
 
         # Back to grid
-        reconstructed = processor._patches_to_grid(patches, 16, 16)
+        reconstructed = tokens_to_grid(tokens, 16, 16)
 
         # Should be identity
         assert reconstructed.shape == original.shape

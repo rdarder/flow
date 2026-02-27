@@ -113,6 +113,64 @@ def crop_to_valid(
         raise ValueError(f"Expected 3D or 4D array, got {img.ndim}D")
 
 
+def create_coordinate_grid(h: int, w: int) -> jnp.ndarray:
+    """Create normalized coordinate grid [0, 1] for a spatial grid.
+
+    Args:
+        h: Height of grid
+        w: Width of grid
+
+    Returns:
+        Grid of shape (h, w, 2) with (x, y) coordinates in [0, 1]
+    """
+    # Create coordinate grid
+    y, x = jnp.meshgrid(jnp.arange(h), jnp.arange(w), indexing="ij")
+
+    # Normalize to [0, 1]
+    x_norm = (
+        x.astype(jnp.float32) / float(w - 1)
+        if w > 1
+        else jnp.zeros_like(x, dtype=jnp.float32)
+    )
+    y_norm = (
+        y.astype(jnp.float32) / float(h - 1)
+        if h > 1
+        else jnp.zeros_like(y, dtype=jnp.float32)
+    )
+
+    # Stack to get (h, w, 2)
+    grid = jnp.stack([x_norm, y_norm], axis=-1)
+    return grid
+
+
+def grid_to_tokens(grid: jnp.ndarray) -> jnp.ndarray:
+    """Convert spatial grid to token format by flattening H and W dimensions.
+
+    Args:
+        grid: (B, H, W, C) tensor
+
+    Returns:
+        (B, H*W, C) tokens
+    """
+    B, H, W, C = grid.shape
+    return grid.reshape(B, H * W, C)
+
+
+def tokens_to_grid(tokens: jnp.ndarray, h: int, w: int) -> jnp.ndarray:
+    """Convert tokens back to spatial grid format.
+
+    Args:
+        tokens: (B, H*W, C) tensor
+        h: Target height
+        w: Target width
+
+    Returns:
+        (B, H, W, C) grid tensor
+    """
+    B, _, C = tokens.shape
+    return tokens.reshape(B, h, w, C)
+
+
 class WindowGrid:
     """
     Handles splitting and stitching of embedding grids into windows.

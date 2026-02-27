@@ -11,7 +11,12 @@ from flax import nnx
 
 from flow.token_attention import TokenCrossAttention, TokenSelfAttention
 from flow.flow_blend import PriorBlender
-from flow.window_grid import WindowGrid
+from flow.window_grid import (
+    WindowGrid,
+    create_coordinate_grid,
+    grid_to_tokens,
+    tokens_to_grid,
+)
 
 
 class WindowFlowProcessor(nnx.Module):
@@ -47,61 +52,6 @@ class WindowFlowProcessor(nnx.Module):
 
         # Blending module for combining lookup results with prior flow
         self.prior_blender = PriorBlender()
-
-    def _create_coordinate_grid(self, h: int, w: int) -> jnp.ndarray:
-        """Create normalized coordinate grid [0, 1] for a window.
-
-        Args:
-            h: Height of grid
-            w: Width of grid
-
-        Returns:
-            Grid of shape (h, w, 2) with (x, y) coordinates in [0, 1]
-        """
-        # Create coordinate grid
-        y, x = jnp.meshgrid(jnp.arange(h), jnp.arange(w), indexing="ij")
-
-        # Normalize to [0, 1]
-        x_norm = (
-            x.astype(jnp.float32) / float(w - 1)
-            if w > 1
-            else jnp.zeros_like(x, dtype=jnp.float32)
-        )
-        y_norm = (
-            y.astype(jnp.float32) / float(h - 1)
-            if h > 1
-            else jnp.zeros_like(y, dtype=jnp.float32)
-        )
-
-        # Stack to get (h, w, 2)
-        grid = jnp.stack([x_norm, y_norm], axis=-1)
-        return grid
-
-    def _embeddings_to_patches(self, embeddings: jnp.ndarray) -> jnp.ndarray:
-        """Convert embeddings from (B, H, W, C) to (B, H*W, C) patches.
-
-        Args:
-            embeddings: (B, H, W, C) tensor
-
-        Returns:
-            (B, H*W, C) patches
-        """
-        B, H, W, C = embeddings.shape
-        return embeddings.reshape(B, H * W, C)
-
-    def _patches_to_grid(self, patches: jnp.ndarray, h: int, w: int) -> jnp.ndarray:
-        """Convert patches from (B, H*W, C) back to (B, H, W, C) grid.
-
-        Args:
-            patches: (B, H*W, C) tensor
-            h: Target height
-            w: Target width
-
-        Returns:
-            (B, H, W, C) tensor
-        """
-        B, _, C = patches.shape
-        return patches.reshape(B, h, w, C)
 
     def __call__(
         self,
@@ -159,16 +109,16 @@ class WindowFlowProcessor(nnx.Module):
             B * num_windows, self.window_size, self.window_size, 1
         )
 
-        # Convert to patches: (B*num_windows, W, W, C) -> (B*num_windows, W*W, C)
-        patches1 = self._embeddings_to_patches(windows1_batched)
-        patches2 = self._embeddings_to_patches(windows2_batched)
+        # Convert to tokens: (B*num_windows, W, W, C) -> (B*num_windows, W*W, C)
+        patches1 = grid_to_tokens(windows1_batched)
+        patches2 = grid_to_tokens(windows2_batched)
 
-        # Convert priors to patches: (B*num_windows, W*W, 2/1)
-        prior_flow_patches = self._embeddings_to_patches(prior_flow_batched)
-        prior_conf_patches = self._embeddings_to_patches(prior_conf_batched)
+        # Convert priors to tokens: (B*num_windows, W*W, 2/1)
+        prior_flow_patches = grid_to_tokens(prior_flow_batched)
+        prior_conf_patches = grid_to_tokens(prior_conf_batched)
 
         # Create coordinate grid for a single window
-        window_coords = self._create_coordinate_grid(
+        window_coords = create_coordinate_grid(
             self.window_size, self.window_size
         )  # (W, W, 2)
         window_coords_flat = window_coords.reshape(-1, 2)  # (W*W, 2)
@@ -197,10 +147,10 @@ class WindowFlowProcessor(nnx.Module):
         )
 
         # Convert back to grid format: (B*num_windows, W*W, 2) -> (B*num_windows, W, W, 2)
-        flow_grid_batched = self._patches_to_grid(
+        flow_grid_batched = tokens_to_grid(
             flow_peer, self.window_size, self.window_size
         )
-        conf_grid_batched = self._patches_to_grid(
+        conf_grid_batched = tokens_to_grid(
             conf_peer, self.window_size, self.window_size
         )
 
@@ -222,44 +172,44 @@ class WindowFlowProcessor(nnx.Module):
         # Prepare auxiliary outputs for debugging
         aux = {
             "flow_lookup": self.window_grid.stitch(
-                self._patches_to_grid(
-                    flow_lookup, self.window_size, self.window_size
-                ).reshape(B, num_windows, self.window_size, self.window_size, 2),
+                tokens_to_grid(flow_lookup, self.window_size, self.window_size).reshape(
+                    B, num_windows, self.window_size, self.window_size, 2
+                ),
                 grid_h=num_h,
                 grid_w=num_w,
             ),
             "flow_mixed": self.window_grid.stitch(
-                self._patches_to_grid(
-                    flow_mixed, self.window_size, self.window_size
-                ).reshape(B, num_windows, self.window_size, self.window_size, 2),
+                tokens_to_grid(flow_mixed, self.window_size, self.window_size).reshape(
+                    B, num_windows, self.window_size, self.window_size, 2
+                ),
                 grid_h=num_h,
                 grid_w=num_w,
             ),
             "flow_peer": self.window_grid.stitch(
-                self._patches_to_grid(
-                    flow_peer, self.window_size, self.window_size
-                ).reshape(B, num_windows, self.window_size, self.window_size, 2),
+                tokens_to_grid(flow_peer, self.window_size, self.window_size).reshape(
+                    B, num_windows, self.window_size, self.window_size, 2
+                ),
                 grid_h=num_h,
                 grid_w=num_w,
             ),
             "conf_lookup": self.window_grid.stitch(
-                self._patches_to_grid(
-                    conf_lookup, self.window_size, self.window_size
-                ).reshape(B, num_windows, self.window_size, self.window_size, 1),
+                tokens_to_grid(conf_lookup, self.window_size, self.window_size).reshape(
+                    B, num_windows, self.window_size, self.window_size, 1
+                ),
                 grid_h=num_h,
                 grid_w=num_w,
             ),
             "conf_mixed": self.window_grid.stitch(
-                self._patches_to_grid(
-                    conf_mixed, self.window_size, self.window_size
-                ).reshape(B, num_windows, self.window_size, self.window_size, 1),
+                tokens_to_grid(conf_mixed, self.window_size, self.window_size).reshape(
+                    B, num_windows, self.window_size, self.window_size, 1
+                ),
                 grid_h=num_h,
                 grid_w=num_w,
             ),
             "conf_peer": self.window_grid.stitch(
-                self._patches_to_grid(
-                    conf_peer, self.window_size, self.window_size
-                ).reshape(B, num_windows, self.window_size, self.window_size, 1),
+                tokens_to_grid(conf_peer, self.window_size, self.window_size).reshape(
+                    B, num_windows, self.window_size, self.window_size, 1
+                ),
                 grid_h=num_h,
                 grid_w=num_w,
             ),
