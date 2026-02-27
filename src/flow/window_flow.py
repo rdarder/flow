@@ -9,7 +9,7 @@ from typing import Any, Dict, Tuple
 import jax.numpy as jnp
 from flax import nnx
 
-from flow.model import PatchLookup, PeerPropagation
+from flow.token_attention import TokenCrossAttention, TokenSelfAttention
 from flow.window_grid import WindowGrid
 
 
@@ -17,7 +17,7 @@ class WindowFlowProcessor(nnx.Module):
     """Processes embeddings through windows to estimate flow.
 
     Takes pyramid embeddings at a given level, splits into windows,
-    applies PatchLookup + PeerPropagation to each window, and stitches
+    applies TokenCrossAttention + TokenSelfAttention to each window, and stitches
     results back together.
     """
 
@@ -41,8 +41,8 @@ class WindowFlowProcessor(nnx.Module):
         self.window_grid = WindowGrid(window_size=window_size)
 
         # Attention modules
-        self.patch_lookup = PatchLookup(embed_dim=embed_dim, rngs=rngs)
-        self.peer_prop = PeerPropagation(embed_dim=embed_dim, rngs=rngs)
+        self.token_cross_attn = TokenCrossAttention(embed_dim=embed_dim, rngs=rngs)
+        self.token_self_attn = TokenSelfAttention(embed_dim=embed_dim, rngs=rngs)
 
     def _create_coordinate_grid(self, h: int, w: int) -> jnp.ndarray:
         """Create normalized coordinate grid [0, 1] for a window.
@@ -176,8 +176,8 @@ class WindowFlowProcessor(nnx.Module):
         )
         k_pos = q_pos  # Same positions for key
 
-        # Run PatchLookup (cross-attention between frames with prior guidance)
-        flow_lookup, conf_lookup, attn_weights_lookup = self.patch_lookup(
+        # Run TokenCrossAttention (cross-attention between frames with prior guidance)
+        flow_lookup, conf_lookup, attn_weights_lookup = self.token_cross_attn(
             patches1, patches2, q_pos, k_pos, prior_flow_patches, prior_conf_patches
         )
 
@@ -194,8 +194,8 @@ class WindowFlowProcessor(nnx.Module):
         # (consensus between what we found and what we expected)
         conf_mixed = (conf_lookup + prior_conf_patches) / 2
 
-        # Run PeerPropagation (self-attention within frame 1) with blended flow
-        flow_peer, attn_weights_peer, conf_peer = self.peer_prop(
+        # Run TokenSelfAttention (self-attention within frame 1) with blended flow
+        flow_peer, attn_weights_peer, conf_peer = self.token_self_attn(
             patches1, q_pos, flow_mixed, conf_mixed
         )
 

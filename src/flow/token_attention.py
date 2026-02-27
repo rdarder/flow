@@ -40,11 +40,11 @@ class SpatialScore(nnx.Module):
         return -jnp.abs(self.scale.get_value()) * dist_sq
 
 
-class PatchLookup(nnx.Module):
+class TokenCrossAttention(nnx.Module):
     """
-    Core attention Module with Prior-Guided Spatial Search.
+    Cross-attention between frames with prior-guided spatial search.
 
-    The attention weight is determined by a combination of embedding Similarity
+    The attention weight is determined by a combination of embedding similarity
     and distance. Distance means how far apart it is from the expected flow. Expected
     flow comes from a prior, be that a guess or a coarser estimation of the same
     frame pair.
@@ -128,9 +128,12 @@ class PatchLookup(nnx.Module):
         return flow, consensus, attn_weights
 
 
-class PeerPropagation(nnx.Module):
+class TokenSelfAttention(nnx.Module):
     """
-    Module 2: Peer Propagation (V2) - Normalized Coords
+    Self-attention within a frame for peer flow propagation.
+
+    Refines flow estimates by allowing tokens to aggregate information from
+    spatially nearby tokens with similar embeddings and high confidence.
     """
 
     def __init__(self, embed_dim: int, *, rngs: nnx.Rngs):

@@ -28,8 +28,8 @@ class TestWindowFlowProcessor:
         assert processor.embed_dim == 16
         assert processor.window_size == 16
         assert processor.window_grid is not None
-        assert processor.patch_lookup is not None
-        assert processor.peer_prop is not None
+        assert processor.token_cross_attn is not None
+        assert processor.token_self_attn is not None
 
     def test_coordinate_grid_creation(self):
         """Test coordinate grid generation."""
