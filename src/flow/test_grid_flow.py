@@ -1,10 +1,10 @@
-"""Tests for window-level flow processing."""
+"""Tests for grid-based flow processing."""
 
 import jax.numpy as jnp
 import pytest
 from flax import nnx
 
-from flow.window_flow import WindowFlowProcessor
+from flow.grid_flow import GridFlowEstimator
 from flow.window_grid import (
     WindowGrid,
     create_coordinate_grid,
@@ -22,20 +22,20 @@ def create_zero_prior(batch_size, height, width):
     return prior_flow, prior_confidence
 
 
-class TestWindowFlowProcessor:
-    """Test WindowFlowProcessor functionality."""
+class TestGridFlowEstimator:
+    """Test GridFlowEstimator functionality."""
 
     def test_init(self):
-        """Test processor initialization."""
+        """Test estimator initialization."""
         rngs = nnx.Rngs(0)
-        processor = WindowFlowProcessor(embed_dim=16, rngs=rngs)
+        estimator = GridFlowEstimator(embed_dim=16, rngs=rngs)
 
-        assert processor.embed_dim == 16
-        assert processor.window_size == 16
-        assert processor.window_grid is not None
-        assert processor.token_cross_attn is not None
-        assert processor.token_self_attn is not None
-        assert processor.prior_blender is not None
+        assert estimator.embed_dim == 16
+        assert estimator.window_size == 16
+        assert estimator.window_grid is not None
+        assert estimator.token_cross_attn is not None
+        assert estimator.token_self_attn is not None
+        assert estimator.prior_blender is not None
 
     def test_coordinate_grid_creation(self):
         """Test coordinate grid generation."""
@@ -92,7 +92,7 @@ class TestWindowFlowProcessor:
     def test_single_window_16x16(self):
         """Test processing single 16x16 window."""
         rngs = nnx.Rngs(0)
-        processor = WindowFlowProcessor(embed_dim=16, rngs=rngs)
+        estimator = GridFlowEstimator(embed_dim=16, rngs=rngs)
 
         # Create embeddings (B=2, H=16, W=16, C=16)
         emb1 = jnp.zeros((2, 16, 16, 16))
@@ -102,7 +102,7 @@ class TestWindowFlowProcessor:
         prior_flow, prior_confidence = create_zero_prior(2, 16, 16)
 
         # Process
-        flow, conf, aux = processor(emb1, emb2, prior_flow, prior_confidence)
+        flow, conf, aux = estimator(emb1, emb2, prior_flow, prior_confidence)
 
         # Check output shapes
         assert flow.shape == (2, 16, 16, 2)
@@ -126,7 +126,7 @@ class TestWindowFlowProcessor:
     def test_four_windows_32x32(self):
         """Test processing 32x32 embeddings (4 windows)."""
         rngs = nnx.Rngs(0)
-        processor = WindowFlowProcessor(embed_dim=16, rngs=rngs)
+        estimator = GridFlowEstimator(embed_dim=16, rngs=rngs)
 
         # Create embeddings (B=2, H=32, W=32, C=16)
         emb1 = jnp.zeros((2, 32, 32, 16))
@@ -137,7 +137,7 @@ class TestWindowFlowProcessor:
         prior_flow, prior_confidence = create_zero_prior(2, 32, 32)
 
         # Process
-        flow, conf, aux = processor(emb1, emb2, prior_flow, prior_confidence)
+        flow, conf, aux = estimator(emb1, emb2, prior_flow, prior_confidence)
 
         # Check output shapes
         assert flow.shape == (2, 32, 32, 2)
@@ -155,7 +155,7 @@ class TestWindowFlowProcessor:
     def test_sixteen_windows_64x64(self):
         """Test processing 64x64 embeddings (16 windows)."""
         rngs = nnx.Rngs(0)
-        processor = WindowFlowProcessor(embed_dim=16, rngs=rngs)
+        estimator = GridFlowEstimator(embed_dim=16, rngs=rngs)
 
         # Create embeddings (B=2, H=64, W=64, C=16)
         emb1 = jnp.zeros((2, 64, 64, 16))
@@ -165,7 +165,7 @@ class TestWindowFlowProcessor:
         prior_flow, prior_confidence = create_zero_prior(2, 64, 64)
 
         # Process
-        flow, conf, aux = processor(emb1, emb2, prior_flow, prior_confidence)
+        flow, conf, aux = estimator(emb1, emb2, prior_flow, prior_confidence)
 
         # Check output shapes
         assert flow.shape == (2, 64, 64, 2)
@@ -182,7 +182,7 @@ class TestWindowFlowProcessor:
     def test_batch_processing(self):
         """Test that batching multiple images works correctly."""
         rngs = nnx.Rngs(0)
-        processor = WindowFlowProcessor(embed_dim=16, rngs=rngs)
+        estimator = GridFlowEstimator(embed_dim=16, rngs=rngs)
 
         # Process different batch sizes
         for batch_size in [1, 2, 4]:
@@ -192,7 +192,7 @@ class TestWindowFlowProcessor:
             # Create zero priors for testing
             prior_flow, prior_confidence = create_zero_prior(batch_size, 32, 32)
 
-            flow, conf, aux = processor(emb1, emb2, prior_flow, prior_confidence)
+            flow, conf, aux = estimator(emb1, emb2, prior_flow, prior_confidence)
 
             assert flow.shape[0] == batch_size
             assert conf.shape[0] == batch_size
@@ -200,7 +200,7 @@ class TestWindowFlowProcessor:
     def test_invalid_dimensions_error(self):
         """Test that invalid dimensions raise clear errors."""
         rngs = nnx.Rngs(0)
-        processor = WindowFlowProcessor(embed_dim=16, rngs=rngs)
+        estimator = GridFlowEstimator(embed_dim=16, rngs=rngs)
 
         # 17x17 is not divisible by 16
         emb1 = jnp.zeros((2, 17, 17, 16))
@@ -210,12 +210,12 @@ class TestWindowFlowProcessor:
         prior_flow, prior_confidence = create_zero_prior(2, 17, 17)
 
         with pytest.raises(ValueError, match="must be divisible by window size"):
-            processor(emb1, emb2, prior_flow, prior_confidence)
+            estimator(emb1, emb2, prior_flow, prior_confidence)
 
     def test_reproducibility(self):
         """Test that same inputs produce same outputs."""
         rngs = nnx.Rngs(42)
-        processor = WindowFlowProcessor(embed_dim=16, rngs=rngs)
+        estimator = GridFlowEstimator(embed_dim=16, rngs=rngs)
 
         # Same inputs
         emb1 = jnp.zeros((2, 32, 32, 16))
@@ -225,8 +225,8 @@ class TestWindowFlowProcessor:
         prior_flow, prior_confidence = create_zero_prior(2, 32, 32)
 
         # Run twice
-        flow1, conf1, _ = processor(emb1, emb2, prior_flow, prior_confidence)
-        flow2, conf2, _ = processor(emb1, emb2, prior_flow, prior_confidence)
+        flow1, conf1, _ = estimator(emb1, emb2, prior_flow, prior_confidence)
+        flow2, conf2, _ = estimator(emb1, emb2, prior_flow, prior_confidence)
 
         # Should be identical
         assert jnp.allclose(flow1, flow2)
@@ -243,8 +243,8 @@ class TestPyramidIntegration:
         # Create pyramid
         pyramid = EmbeddingPyramid(num_levels=2, embed_dim=16, in_channels=1, rngs=rngs)
 
-        # Create processor
-        processor = WindowFlowProcessor(embed_dim=16, rngs=rngs)
+        # Create estimator
+        estimator = GridFlowEstimator(embed_dim=16, rngs=rngs)
 
         # 64x64 images
         img1 = jnp.zeros((2, 64, 64, 1))
@@ -263,7 +263,7 @@ class TestPyramidIntegration:
         # Process fine level (32x32) - should be 4 windows
         # Create zero priors for testing
         prior_flow_fine, prior_conf_fine = create_zero_prior(2, 32, 32)
-        flow_fine, conf_fine, aux = processor(
+        flow_fine, conf_fine, aux = estimator(
             emb1_pyramid[1], emb2_pyramid[1], prior_flow_fine, prior_conf_fine
         )
 
@@ -275,7 +275,7 @@ class TestPyramidIntegration:
         # Process coarse level (16x16) - should be 1 window
         # Create zero priors for testing
         prior_flow_coarse, prior_conf_coarse = create_zero_prior(2, 16, 16)
-        flow_coarse, conf_coarse, aux_coarse = processor(
+        flow_coarse, conf_coarse, aux_coarse = estimator(
             emb1_pyramid[0], emb2_pyramid[0], prior_flow_coarse, prior_conf_coarse
         )
 
@@ -289,7 +289,7 @@ class TestPyramidIntegration:
 
         # 3 levels for 128x128
         pyramid = EmbeddingPyramid(num_levels=3, embed_dim=16, in_channels=3, rngs=rngs)
-        processor = WindowFlowProcessor(embed_dim=16, rngs=rngs)
+        estimator = GridFlowEstimator(embed_dim=16, rngs=rngs)
 
         # 128x128 RGB images
         img1 = jnp.zeros((1, 128, 128, 3))
@@ -311,13 +311,13 @@ class TestPyramidIntegration:
         prior_flow_mid, prior_conf_mid = create_zero_prior(1, 32, 32)
         prior_flow_fine, prior_conf_fine = create_zero_prior(1, 64, 64)
 
-        flow_coarse, _, _ = processor(
+        flow_coarse, _, _ = estimator(
             emb1_pyramid[0], emb2_pyramid[0], prior_flow_coarse, prior_conf_coarse
         )
-        flow_mid, _, _ = processor(
+        flow_mid, _, _ = estimator(
             emb1_pyramid[1], emb2_pyramid[1], prior_flow_mid, prior_conf_mid
         )
-        flow_fine, _, aux_fine = processor(
+        flow_fine, _, aux_fine = estimator(
             emb1_pyramid[2], emb2_pyramid[2], prior_flow_fine, prior_conf_fine
         )
 
@@ -334,7 +334,7 @@ class TestPositionPreservation:
     def test_window_order_preservation_32x32(self):
         """Verify that 4 windows are split and stitched in correct spatial order."""
         rngs = nnx.Rngs(0)
-        processor = WindowFlowProcessor(embed_dim=16, rngs=rngs)
+        estimator = GridFlowEstimator(embed_dim=16, rngs=rngs)
 
         # Create embeddings where each window has a unique signature
         # We'll manually create 32x32 with 4 distinct 16x16 windows
@@ -356,7 +356,7 @@ class TestPositionPreservation:
         # Create zero priors for testing (32x32 to match embeddings)
         prior_flow, prior_confidence = create_zero_prior(1, 32, 32)
 
-        flow, conf, aux = processor(emb1, emb2, prior_flow, prior_confidence)
+        flow, conf, aux = estimator(emb1, emb2, prior_flow, prior_confidence)
 
         # Flow should be (1, 32, 32, 2)
         assert flow.shape == (1, 32, 32, 2)
@@ -393,7 +393,7 @@ class TestPositionPreservation:
     def test_coordinate_consistency_within_windows(self):
         """Test that coordinate grids within each window are correct."""
         rngs = nnx.Rngs(0)
-        processor = WindowFlowProcessor(embed_dim=16, rngs=rngs)
+        estimator = GridFlowEstimator(embed_dim=16, rngs=rngs)
 
         # Create embeddings that encode their position
         # Each pixel's embedding will be [y/32, x/32, 0, 0, ...]
@@ -422,7 +422,7 @@ class TestPositionPreservation:
         # Create zero priors for testing (32x32 to match embeddings)
         prior_flow, prior_confidence = create_zero_prior(1, 32, 32)
 
-        flow, conf, aux = processor(emb1, emb2, prior_flow, prior_confidence)
+        flow, conf, aux = estimator(emb1, emb2, prior_flow, prior_confidence)
 
         # For pixels not near the boundary (rolled region), the flow should
         # detect the 2-pixel down, 3-pixel right shift
@@ -450,7 +450,7 @@ class TestPositionPreservation:
     def test_spatial_correspondence_16x16(self):
         """Test exact spatial correspondence for single window case."""
         rngs = nnx.Rngs(0)
-        processor = WindowFlowProcessor(embed_dim=16, rngs=rngs)
+        estimator = GridFlowEstimator(embed_dim=16, rngs=rngs)
 
         # Create simple 16x16 case with identifiable positions
         # Use one-hot-like encoding in channel dimension
@@ -468,7 +468,7 @@ class TestPositionPreservation:
         prior_flow, prior_confidence = create_zero_prior(1, 16, 16)
 
         # Process
-        flow, conf, _ = processor(emb1, emb2, prior_flow, prior_confidence)
+        flow, conf, _ = estimator(emb1, emb2, prior_flow, prior_confidence)
 
         # Check flow at position (4, 5) - should point toward (6, 7)
         flow_at_marker = flow[0, 4, 5, :]  # (x_flow, y_flow)
@@ -490,7 +490,7 @@ class TestWindowFlowShapes:
         """Test with different embedding dimensions."""
         for embed_dim in [8, 16, 32]:
             rngs = nnx.Rngs(0)
-            processor = WindowFlowProcessor(embed_dim=embed_dim, rngs=rngs)
+            estimator = GridFlowEstimator(embed_dim=embed_dim, rngs=rngs)
 
             emb1 = jnp.zeros((2, 32, 32, embed_dim))
             emb2 = jnp.zeros((2, 32, 32, embed_dim))
@@ -498,7 +498,7 @@ class TestWindowFlowShapes:
             # Create zero priors for testing
             prior_flow, prior_confidence = create_zero_prior(2, 32, 32)
 
-            flow, conf, _ = processor(emb1, emb2, prior_flow, prior_confidence)
+            flow, conf, _ = estimator(emb1, emb2, prior_flow, prior_confidence)
 
             assert flow.shape == (2, 32, 32, 2)
             assert conf.shape == (2, 32, 32, 1)
@@ -506,9 +506,9 @@ class TestWindowFlowShapes:
     def test_grayscale_and_rgb(self):
         """Test that embedding dimension matters, not original channels."""
         rngs = nnx.Rngs(0)
-        processor = WindowFlowProcessor(embed_dim=16, rngs=rngs)
+        estimator = GridFlowEstimator(embed_dim=16, rngs=rngs)
 
-        # The processor works on embeddings (always 16-dim), not raw images
+        # The estimator works on embeddings (always 16-dim), not raw images
         # So grayscale vs RGB doesn't matter at this stage
         emb1 = jnp.zeros((2, 32, 32, 16))
         emb2 = jnp.zeros((2, 32, 32, 16))
@@ -516,7 +516,7 @@ class TestWindowFlowShapes:
         # Create zero priors for testing
         prior_flow, prior_confidence = create_zero_prior(2, 32, 32)
 
-        flow, conf, _ = processor(emb1, emb2, prior_flow, prior_confidence)
+        flow, conf, _ = estimator(emb1, emb2, prior_flow, prior_confidence)
 
         assert flow.shape == (2, 32, 32, 2)
         assert conf.shape == (2, 32, 32, 1)

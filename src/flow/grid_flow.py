@@ -1,6 +1,6 @@
-"""Window-level flow processing module.
+"""Grid-based flow processing module.
 
-Processes pyramid embeddings through windowed attention to estimate flow.
+Processes pyramid embeddings through grid-based windowed attention to estimate flow.
 Batches multiple windows together for efficient processing.
 """
 
@@ -19,10 +19,10 @@ from flow.window_grid import (
 )
 
 
-class WindowFlowProcessor(nnx.Module):
-    """Processes embeddings through windows to estimate flow.
+class GridFlowEstimator(nnx.Module):
+    """Estimates flow for a grid of windows using token-level attention.
 
-    Takes pyramid embeddings at a given level, splits into windows,
+    Takes pyramid embeddings at a given level, splits into a grid of windows,
     applies TokenCrossAttention + TokenSelfAttention to each window, and stitches
     results back together.
     """

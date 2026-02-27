@@ -12,7 +12,7 @@ from flax import nnx
 
 from flow.embedding_pyramid import EmbeddingPyramid
 from flow.flow_blender import upsample_confidence_2x, upsample_flow_2x
-from flow.window_flow import WindowFlowProcessor
+from flow.grid_flow import GridFlowEstimator
 from flow.window_grid import compute_valid_resolution, crop_to_valid
 
 
@@ -71,8 +71,8 @@ class HierarchicalFlowModel(nnx.Module):
             rngs=rngs,
         )
 
-        # Window flow processor (for all levels)
-        self.window_processor = WindowFlowProcessor(
+        # Grid flow estimator (for all levels)
+        self.grid_flow_estimator = GridFlowEstimator(
             embed_dim=embed_dim,
             window_size=window_size,
             rngs=rngs,
@@ -136,8 +136,8 @@ class HierarchicalFlowModel(nnx.Module):
             confidence: Confidence scores (B, H, W, 1)
             aux: Auxiliary outputs
         """
-        # Process with window processor and prior guidance
-        flow, confidence, aux = self.window_processor(
+        # Process with grid flow estimator and prior guidance
+        flow, confidence, aux = self.grid_flow_estimator(
             emb1, emb2, prior_flow, prior_confidence
         )
 
