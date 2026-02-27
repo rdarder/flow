@@ -98,6 +98,9 @@ class PatchLookup(nnx.Module):
         self.prior_spatial_scale = nnx.Param(
             1.0
         )  # Scales confidence effect on distance
+        self.outside_spatial_scale = nnx.Param(
+            1.0
+        )  # Scales penalty for prior pointing outside window
 
     def __call__(
         self,
@@ -128,6 +131,27 @@ class PatchLookup(nnx.Module):
         spatial_score = (
             spatial_score_raw * prior_confidence * self.prior_spatial_scale.value
         )
+
+        # --- 2b. Outside Window Penalty ---
+        # When prior flow points outside the lookup window, increase penalty
+        # to compensate for the fact that we can't verify against true prior neighborhood
+        # Manhattan distance to [0, 1] bounds in normalized coordinates
+        outside_x = jnp.maximum(0.0, q_pos_adjusted[..., 0] - 1.0) + jnp.maximum(
+            0.0, 0.0 - q_pos_adjusted[..., 0]
+        )
+        outside_y = jnp.maximum(0.0, q_pos_adjusted[..., 1] - 1.0) + jnp.maximum(
+            0.0, 0.0 - q_pos_adjusted[..., 1]
+        )
+        outside_distance = outside_x + outside_y  # (B, N)
+        outside_distance = outside_distance[..., None]  # (B, N, 1) for broadcasting
+
+        # Penalty scales with: how far outside, prior confidence, and learned scale
+        outside_penalty = (
+            outside_distance * prior_confidence * self.outside_spatial_scale.value
+        )  # (B, N, 1) -> broadcasts to (B, N, N)
+
+        # Combine spatial scores
+        spatial_score = spatial_score - outside_penalty
 
         # --- 3. Combine & Softmax ---
         logits = visual_score + spatial_score
