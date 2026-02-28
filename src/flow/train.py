@@ -18,6 +18,7 @@ import tyro
 from flax import nnx
 from torch.utils.data import DataLoader
 
+from flow.chairs_dataset_loader import ChairsSDHomDataset
 from flow.checkpoint_manager import AbstractCheckpointManager, create_checkpoint_manager
 from flow.hierarchical_model import HierarchicalFlowModel
 from flow.logging_utils import (
@@ -33,7 +34,6 @@ from flow.settings import (
     TrainingSettings,
     VisualizationSettings,
 )
-from flow.chairs_dataset_loader import ChairsSDHomDataset
 from flow.visualization import (
     create_components_figure,
     create_confidence_analysis_figure,
@@ -41,6 +41,113 @@ from flow.visualization import (
     create_prior_effect_figure,
     create_pyramid_detail_figure,
 )
+
+
+# --- 0. Benchmarking Utilities ---
+class StepsPerSecondTracker:
+    """Tracks training speed in steps per second with running average.
+
+    Simple wall-clock timer that reports steps/sec and ETA.
+    """
+
+    def __init__(self, log_interval: int = 10):
+        """Initialize tracker.
+
+        Args:
+            log_interval: Report speed every N steps
+        """
+        self.log_interval = log_interval
+        self.step_count = 0
+        self.start_time = None
+        self.last_report_time = None
+
+    def start(self):
+        """Start timing. Call at beginning of training."""
+        import time
+
+        self.start_time = time.perf_counter()
+        self.last_report_time = self.start_time
+        self.step_count = 0
+
+    def step(self) -> Optional[Dict[str, float]]:
+        """Record a completed step.
+
+        Returns:
+            Dictionary with metrics if it's time to report, else None
+        """
+        import time
+
+        self.step_count += 1
+
+        if self.step_count % self.log_interval == 0:
+            current_time = time.perf_counter()
+
+            # Guard against timing before start() is called
+            if self.start_time is None:
+                return None
+
+            elapsed_since_start = current_time - self.start_time
+
+            if self.last_report_time is not None:
+                elapsed_since_last = current_time - self.last_report_time
+                steps_per_sec = (
+                    self.log_interval / elapsed_since_last
+                    if elapsed_since_last > 0
+                    else 0.0
+                )
+                ms_per_step = (elapsed_since_last / self.log_interval) * 1000
+            else:
+                steps_per_sec = 0.0
+                ms_per_step = 0.0
+
+            overall_steps_per_sec = (
+                self.step_count / elapsed_since_start
+                if elapsed_since_start > 0
+                else 0.0
+            )
+
+            self.last_report_time = current_time
+
+            return {
+                "steps": self.step_count,
+                "steps_per_sec": steps_per_sec,
+                "overall_steps_per_sec": overall_steps_per_sec,
+                "elapsed_sec": elapsed_since_start,
+                "ms_per_step": ms_per_step,
+            }
+
+        return None
+
+    def get_eta(self, total_steps: int) -> Optional[str]:
+        """Get estimated time to completion.
+
+        Args:
+            total_steps: Total steps expected
+
+        Returns:
+            ETA string or None if not enough data
+        """
+        import time
+
+        if self.step_count < 5 or self.start_time is None:
+            return None
+
+        current_time = time.perf_counter()
+        elapsed = current_time - self.start_time
+        steps_per_sec = self.step_count / elapsed
+
+        remaining_steps = total_steps - self.step_count
+        remaining_sec = remaining_steps / steps_per_sec
+
+        # Format as HH:MM:SS
+        hours = int(remaining_sec // 3600)
+        minutes = int((remaining_sec % 3600) // 60)
+        seconds = int(remaining_sec % 60)
+
+        if hours > 0:
+            return f"{hours}h {minutes:02d}m {seconds:02d}s"
+        else:
+            return f"{minutes}m {seconds:02d}s"
 
 
 # --- 1. Loss Functions ---
@@ -76,28 +183,9 @@ def loss_fn(
     img2: jnp.ndarray,
     flow_gt: jnp.ndarray,
 ):
-    """Compute loss and auxiliary outputs.
-
-    Computes per-level losses to enable independent training of each pyramid level.
-    This is necessary because stop_gradient is applied on priors between levels,
-    so each level must have its own gradient signal from the loss.
-    """
-    flow_pred, aux = model(img1, img2, return_intermediates=True)
-
-    # Main loss on finest level
+    """Compute loss and auxiliary outputs."""
+    flow_pred, aux = model(img1, img2)
     loss = endpoint_error_loss(flow_pred, flow_gt)
-
-    # Auxiliary losses on intermediate levels (with downsampled ground truth)
-    if "level_flows" in aux:
-        level_flows = aux["level_flows"]
-        # Process all levels except the finest (already counted in main loss)
-        for level_idx in range(len(level_flows) - 1):
-            level_flow = level_flows[level_idx]
-            # Compute loss at this level's resolution
-            # endpoint_error_loss handles downsampling automatically
-            loss += endpoint_error_loss(level_flow, flow_gt)
-            # Weight intermediate losses lower (0.1) to prioritize finest level
-
     return loss, (flow_pred, aux)
 
 
@@ -171,6 +259,11 @@ class Trainer:
             drop_last=True,
         )
 
+        # Speed tracker for benchmarking
+        self.speed_tracker = StepsPerSecondTracker(
+            log_interval=settings.training.log_every_steps
+        )
+
     def log_all_visualizations(
         self, epoch: int, img1: jnp.ndarray, img2: jnp.ndarray, flow_gt: jnp.ndarray
     ):
@@ -187,7 +280,7 @@ class Trainer:
         """
         try:
             # Get full aux with intermediates (not jitted, called once per epoch)
-            flow_pred, aux = self.model(img1, img2, return_intermediates=True)
+            flow_pred, aux = self.model(img1, img2)
 
             # Convert to numpy for visualization
             img1_np = np.array(img1[0])
@@ -294,6 +387,9 @@ class Trainer:
         last_batch = None
         last_grads = None
 
+        # Start timing for this epoch
+        self.speed_tracker.start()
+
         # Determine number of steps
         max_steps = self.settings.training.steps_per_epoch
         if max_steps < 0:
@@ -318,7 +414,27 @@ class Trainer:
             batch_count += 1
             self.global_step += 1
 
-            # Log step-level metrics
+            # Track speed and log periodically
+            speed_metrics = self.speed_tracker.step()
+            if speed_metrics:
+                # Log to TensorBoard
+                self.logger.log_scalar(
+                    "Speed/steps_per_sec",
+                    speed_metrics["steps_per_sec"],
+                    self.global_step,
+                )
+                self.logger.log_scalar(
+                    "Speed/ms_per_step", speed_metrics["ms_per_step"], self.global_step
+                )
+
+                # Print to console
+                eta = self.speed_tracker.get_eta(max_steps)
+                eta_str = f", ETA: {eta}" if eta else ""
+                print(
+                    f"  Step {i}/{max_steps} | {speed_metrics['steps_per_sec']:.2f} steps/sec | {speed_metrics['ms_per_step']:.1f} ms/step{eta_str}"
+                )
+
+            # Log step-level loss metrics
             if i % self.settings.training.log_every_steps == 0:
                 self.logger.log_scalar("Loss/train_step", float(loss), self.global_step)
 
@@ -526,6 +642,9 @@ if __name__ == "__main__":
     if "--smoke-test" in sys.argv:
         sys.argv.remove("--smoke-test")
         settings = create_smoke_test_settings()
+        # Parse any remaining CLI args to override smoke test defaults
+        if len(sys.argv) > 1:
+            settings = tyro.cli(Settings, default=settings)
         exit(main(settings))
     else:
         # Use tyro to parse CLI arguments into Settings

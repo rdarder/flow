@@ -36,7 +36,12 @@ Token (B*num_windows, 256, embed_dim) - flattened for attention
 
 ## Data Flow (Forward Pass)
 
-**Input**: Two frames `img1`, `img2` (B, 64, 64, 3) → auto-cropped to valid size
+**Input**: Two frames `img1`, `img2` (B, H, W, 3) → auto-cropped to valid size
+
+Valid dimensions: both H and W must be multiples of `window_size * 2^num_levels`.
+Examples:
+- 2 levels, window_size=16: requires multiples of 64 (e.g., 384×512)
+- 3 levels, window_size=16: requires multiples of 128 (e.g., 256×384)
 
 ### Phase 1: Embedding Pyramid
 ```python
@@ -180,32 +185,35 @@ Located in `window_grid.py`
 
 ## Resolution Requirements
 
-For `num_levels` pyramid levels and `window_size=16`:
+For `num_levels` pyramid levels and `window_size`:
 
 ```
-valid_resolution = window_size * 2^num_levels
+min_size = window_size * 2^num_levels
 
-Examples:
-- 1 level: 16 * 2^1 = 32×32 → 16×16 flow
-- 2 levels: 16 * 2^2 = 64×64 → 32×32 flow
-- 3 levels: 16 * 2^3 = 128×128 → 64×64 flow
+Both height and width must be multiples of min_size.
+
+Examples (window_size=16):
+- 1 level: 16 * 2^1 = 32 → 32×32 or 32×64 or 64×96, etc.
+- 2 levels: 16 * 2^2 = 64 → 64×64 or 384×512, etc.
+- 3 levels: 16 * 2^3 = 128 → 128×128 or 256×384, etc.
 ```
 
-The model auto-crops inputs if `auto_crop=True` (default).
+The model auto-crops inputs if `auto_crop=True` (default). Non-square resolutions are fully supported.
 
 ## Configuration
 
 Training configured via `settings.py` with tyro CLI:
 
 ```bash
-python -m flow.train --model.num-levels 2 --dataset.img-size 64 --training.epochs 50
+python -m flow.train --model.num-levels 2 --dataset.img-size 384 512 --training.epochs 50
 ```
 
 Key settings:
 - `ModelSettings.num_levels`: Pyramid depth (default 2)
 - `ModelSettings.embed_dim`: Embedding dimension (default 16)
 - `ModelSettings.window_size`: Attention window size (default 16)
-- `TrainingSettings.auto_crop`: Enable automatic input cropping (default True)
+- `DatasetSettings.img_size`: Input resolution as (height, width) tuple (default 384×512)
+- `ModelSettings.auto_crop`: Enable automatic input cropping (default True)
 
 ## Development Notes
 

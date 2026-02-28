@@ -29,8 +29,8 @@ src/flow/
 ├── checkpoint_manager.py     # Orbax checkpointing
 ├── visualization.py          # Multi-view diagnostics
 ├── logging_utils.py          # TensorBoard logging
-├── synthetic_dataset.py      # Training data generation
-└── chairs_dataset.py         # Real training data (FlyingChairs)
+├── chairs_dataset_loader.py  # ChairsSDHom dataset loader
+└── pfm_utils.py              # PFM flow file reader
 ```
 
 ## Settings
@@ -39,7 +39,7 @@ Configuration via tyro CLI with nested dataclass support:
 
 ```bash
 # Example: Train with custom settings
-python -m flow.train --model.num-levels 3 --dataset.img-size 128 --training.epochs 50
+python -m flow.train --model.num-levels 3 --dataset.img-size 384 512 --training.epochs 50
 
 # Resume from checkpoint
 python -m flow.train --training.resume

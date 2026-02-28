@@ -162,14 +162,15 @@ class HierarchicalFlowModel(nnx.Module):
         return flow, confidence, aux
 
     def __call__(
-        self, img1: jnp.ndarray, img2: jnp.ndarray, return_intermediates: bool = False
+        self,
+        img1: jnp.ndarray,
+        img2: jnp.ndarray,
     ) -> Tuple[jnp.ndarray, Dict[str, Any]]:
         """Estimate optical flow between two frames using prior-guided attention.
 
         Args:
             img1: Frame 1 (B, H, W, C) - will be cropped to valid size if needed
             img2: Frame 2 (B, H, W, C)
-            return_intermediates: If True, include all intermediate outputs
 
         Returns:
             flow: Final flow estimate (B, H', W', 2) in pixel coordinates
@@ -236,11 +237,10 @@ class HierarchicalFlowModel(nnx.Module):
             "pixel_scale": finest_scale,
         }
 
-        if return_intermediates:
-            aux["level_flows"] = flow_levels
-            aux["level_confidences"] = conf_levels
-            aux["level_aux"] = aux_levels
-            aux["pyramid1"] = pyramid1
-            aux["pyramid2"] = pyramid2
+        aux["level_flows"] = flow_levels
+        aux["level_confidences"] = conf_levels
+        aux["level_aux"] = aux_levels
+        aux["pyramid1"] = pyramid1
+        aux["pyramid2"] = pyramid2
 
         return flow_pixels, aux
