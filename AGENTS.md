@@ -8,8 +8,11 @@ Hierarchical optical flow model using multi-level pyramid with windowed attentio
 - **Windowed Attention**: Each level processes embeddings within attention windows
 - **Confidence Blending**: Coarse flow is blended into fine flow using confidence weights
 - **Flow Visualization**: All levels displayed at same resolution using pixel-equivalent scaling
+- **No Warping**: Pure attention-based matching, no gatherND operations
+- **Gradient Isolation**: Each level trains independently (stop-gradient on upsampled priors)
+- **Abstraction Layers**: Clean separation: image → grid → window → token
 
-For detailed algorithm design, see [design.md](design.md).
+For detailed algorithm design, see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Project Structure
 
@@ -17,12 +20,17 @@ For detailed algorithm design, see [design.md](design.md).
 src/flow/
 ├── train.py                  # Main training loop
 ├── settings.py               # Configuration dataclasses
-├── hierarchical_model.py     # Complete flow model
+├── hierarchical_model.py     # Complete flow model (orchestrates pyramid + levels)
+├── token_attention.py        # Token-level attention (TokenCrossAttention, TokenSelfAttention)
+├── grid_flow.py              # Grid flow estimator (window splitting + attention orchestration)
+├── flow_blender.py           # Flow blending utilities (PriorBlender, upsampling)
+├── embedding_pyramid.py      # Multi-scale embedding generation
+├── window_grid.py            # Spatial utilities (split/stitch windows, coordinates)
 ├── checkpoint_manager.py     # Orbax checkpointing
 ├── visualization.py          # Multi-view diagnostics
 ├── logging_utils.py          # TensorBoard logging
 ├── synthetic_dataset.py      # Training data generation
-└── window_grid.py            # Resolution validation utilities
+└── chairs_dataset.py         # Real training data (FlyingChairs)
 ```
 
 ## Settings
