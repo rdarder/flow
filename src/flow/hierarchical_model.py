@@ -61,7 +61,9 @@ class HierarchicalFlowModel(nnx.Module):
         self.auto_crop = auto_crop
 
         # Compute required input size
-        self.required_size = compute_valid_resolution(num_levels, window_size)
+        self.required_h, self.required_w = compute_valid_resolution(
+            num_levels, window_size
+        )
 
         # Pyramid generator
         self.pyramid = EmbeddingPyramid(
@@ -92,25 +94,37 @@ class HierarchicalFlowModel(nnx.Module):
         """
         _, H, W, _ = img1.shape
 
-        if H == self.required_size and W == self.required_size:
+        if H == self.required_h and W == self.required_w:
             return img1, img2
 
         if self.auto_crop:
-            if H >= self.required_size and W >= self.required_size:
+            if H >= self.required_h and W >= self.required_w:
                 # Can crop
-                img1_cropped = crop_to_valid(img1, self.num_levels, self.window_size)
-                img2_cropped = crop_to_valid(img2, self.num_levels, self.window_size)
+                img1_cropped = crop_to_valid(
+                    img1,
+                    self.num_levels,
+                    self.window_size,
+                    self.required_h,
+                    self.required_w,
+                )
+                img2_cropped = crop_to_valid(
+                    img2,
+                    self.num_levels,
+                    self.window_size,
+                    self.required_h,
+                    self.required_w,
+                )
                 return img1_cropped, img2_cropped
             else:
                 raise ValueError(
                     f"Input size ({H}, {W}) is smaller than required "
-                    f"({self.required_size}, {self.required_size}). "
+                    f"({self.required_h}, {self.required_w}). "
                     f"Cannot auto-crop. Set auto_crop=False and provide correct size."
                 )
         else:
             raise ValueError(
                 f"Input size ({H}, {W}) doesn't match required size "
-                f"({self.required_size}, {self.required_size}) for {self.num_levels} pyramid levels. "
+                f"({self.required_h}, {self.required_w}) for {self.num_levels} pyramid levels. "
                 f"Set auto_crop=True to enable automatic cropping."
             )
 
@@ -205,8 +219,10 @@ class HierarchicalFlowModel(nnx.Module):
         conf_final = conf_levels[-1]
 
         # Convert to pixel coordinates
-        finest_H = self.required_size // 2
-        finest_scale = float(self.required_size)
+        finest_H = self.required_h // 2
+        finest_W = self.required_w // 2
+        # Use average of H and W for pixel scale to handle non-square
+        finest_scale = float((self.required_h + self.required_w) / 2)
 
         flow_pixels = flow_final * finest_scale
 
@@ -216,7 +232,7 @@ class HierarchicalFlowModel(nnx.Module):
             "confidence": conf_final,
             "pyramid_shapes": [p.shape for p in pyramid1],
             "num_levels": self.num_levels,
-            "finest_resolution": (finest_H, finest_H),
+            "finest_resolution": (finest_H, finest_W),
             "pixel_scale": finest_scale,
         }
 

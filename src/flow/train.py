@@ -33,7 +33,7 @@ from flow.settings import (
     TrainingSettings,
     VisualizationSettings,
 )
-from flow.synthetic_dataset import SyntheticFlowDataset
+from flow.chairs_dataset_loader import ChairsSDHomDataset
 from flow.visualization import (
     create_components_figure,
     create_confidence_analysis_figure,
@@ -158,12 +158,10 @@ class Trainer:
         )
 
         # Dataset and loader
-        self.train_dataset = SyntheticFlowDataset(
-            img_size=settings.dataset.img_size,
-            length=settings.dataset.length,
-            max_flow=settings.dataset.max_flow,
-            blob_size_range=settings.dataset.blob_size_range,
-            num_blobs_range=settings.dataset.num_blobs_range,
+        self.train_dataset = ChairsSDHomDataset(
+            root=settings.dataset.data_root,
+            split=settings.dataset.split,
+            target_size=settings.dataset.img_size,
         )
         self.train_loader = DataLoader(
             self.train_dataset,
@@ -241,7 +239,9 @@ class Trainer:
                             level_confidence=np.array(
                                 aux["level_confidences"][level_idx][0]
                             ),
-                            original_resolution=self.settings.dataset.img_size,
+                            original_resolution=self.settings.dataset.img_size[
+                                0
+                            ],  # Use height
                             level_name=f"Level {level_idx}",
                             flow_max_percent=self.settings.visualization.flow_max_percent,
                         )
@@ -263,7 +263,9 @@ class Trainer:
                         conf_peer=np.array(level0_aux["conf_peer"][0]),
                         flow_mixed=np.array(level0_aux["flow_mixed"][0]),
                         conf_mixed=np.array(level0_aux["conf_mixed"][0]),
-                        original_resolution=self.settings.dataset.img_size,
+                        original_resolution=self.settings.dataset.img_size[
+                            0
+                        ],  # Use height
                         level_name="Level 0",
                         flow_max_percent=self.settings.visualization.flow_max_percent,
                     )
@@ -404,10 +406,11 @@ def main(settings: Settings):
         return 1
 
     print("Settings validated successfully!")
+    h, w = settings.dataset.img_size
     print(
         f"Model: {settings.model.num_levels} levels, embed_dim={settings.model.embed_dim}"
     )
-    print(f"Dataset: {settings.dataset.img_size}x{settings.dataset.img_size} images")
+    print(f"Dataset: {h}x{w} images")
     print(
         f"Training: {settings.training.epochs} epochs, lr={settings.training.learning_rate}"
     )
@@ -425,9 +428,7 @@ def main(settings: Settings):
         rngs=nnx.Rngs(key),
     )
 
-    print(
-        f"Model initialized (required size: {model.required_size}x{model.required_size})"
-    )
+    print(f"Model initialized (required size: {model.required_h}x{model.required_w})")
 
     # Initialize optimizer for potential checkpoint loading
     if settings.training.grad_clip_norm > 0:
@@ -488,12 +489,11 @@ def create_smoke_test_settings() -> Settings:
             auto_crop=True,
         ),
         dataset=DatasetSettings(
-            img_size=64,
-            length=100,  # Small dataset
-            max_flow=5,
+            img_size=(128, 128),  # Small resolution for smoke test
+            data_root="datasets/ChairsSDHom/data",
+            split="train",
             batch_size=4,
             num_workers=0,  # No multiprocessing for small runs
-            blob_size_range=(2, 6),
         ),
         training=TrainingSettings(
             learning_rate=1e-3,

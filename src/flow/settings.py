@@ -44,45 +44,33 @@ class DatasetSettings:
     """Dataset configuration settings.
 
     Attributes:
-        img_size: Size of input images (square, H=W)
-        length: Number of samples in synthetic dataset
-        max_flow: Maximum flow magnitude in pixels
+        img_size: Input image size as (height, width) tuple
+        data_root: Path to dataset root directory
+        split: Dataset split ("train" or "test")
         batch_size: Training batch size
         num_workers: Number of data loading workers
-        blob_size_range: Min/max size of synthetic blobs
-        num_blobs_range: Min/max number of blobs (auto-scaled if None)
     """
 
-    img_size: int = 64
-    length: int = 5000
-    max_flow: int = 5
+    img_size: Tuple[int, int] = (384, 512)  # (height, width) - ChairsSDHom resolution
+    data_root: str = "datasets/ChairsSDHom/data"
+    split: str = "train"
     batch_size: int = 32
     num_workers: int = 4
-    blob_size_range: Tuple[int, int] = (2, 6)
-    num_blobs_range: Optional[Tuple[int, int]] = None
 
     def __post_init__(self):
-        if self.img_size < 8:
-            raise ValueError(f"img_size must be >= 8, got {self.img_size}")
-        if self.length < 1:
-            raise ValueError(f"length must be >= 1, got {self.length}")
-        if self.max_flow < 1:
-            raise ValueError(f"max_flow must be >= 1, got {self.max_flow}")
+        if len(self.img_size) != 2:
+            raise ValueError(
+                f"img_size must be a tuple of (height, width), got {self.img_size}"
+            )
+        h, w = self.img_size
+        if h < 8:
+            raise ValueError(f"img height must be >= 8, got {h}")
+        if w < 8:
+            raise ValueError(f"img width must be >= 8, got {w}")
         if self.batch_size < 1:
             raise ValueError(f"batch_size must be >= 1, got {self.batch_size}")
-        if self.blob_size_range[0] > self.blob_size_range[1]:
-            raise ValueError(
-                f"blob_size_range min must be <= max, got {self.blob_size_range}"
-            )
-
-        # Auto-calculate num_blobs_range based on image size if not provided
-        # Base is 1-2 blobs for 32x32, scale proportionally with area
-        if self.num_blobs_range is None:
-            base_blobs = 2  # Base for 32x32
-            scale_factor = (self.img_size / 32) ** 2  # Scale with area
-            min_blobs = max(1, int(base_blobs * scale_factor * 0.5))
-            max_blobs = max(min_blobs + 1, int(base_blobs * scale_factor))
-            self.num_blobs_range = (min_blobs, max_blobs)
+        if self.split not in ["train", "test"]:
+            raise ValueError(f"split must be 'train' or 'test', got {self.split}")
 
 
 @dataclass
@@ -215,10 +203,9 @@ class Settings:
         Returns:
             (is_valid, message): Boolean validity and descriptive message
         """
-        return validate_resolution(
-            self.dataset.img_size, self.model.num_levels, self.model.window_size
-        )
+        h, w = self.dataset.img_size
+        return validate_resolution(h, w, self.model.num_levels, self.model.window_size)
 
-    def get_required_image_size(self) -> int:
+    def get_required_image_size(self) -> Tuple[int, int]:
         """Get minimum required image size for current model configuration."""
         return compute_valid_resolution(self.model.num_levels, self.model.window_size)

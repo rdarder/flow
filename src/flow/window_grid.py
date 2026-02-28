@@ -1,9 +1,14 @@
-from typing import Tuple
+from typing import Optional, Tuple
 
 import jax.numpy as jnp
 
 
-def compute_valid_resolution(num_levels: int, window_size: int = 16) -> int:
+def compute_valid_resolution(
+    num_levels: int,
+    window_size: int = 16,
+    height: Optional[int] = None,
+    width: Optional[int] = None,
+) -> Tuple[int, int]:
     """
     Compute the required image resolution for a given number of pyramid levels.
 
@@ -11,102 +16,117 @@ def compute_valid_resolution(num_levels: int, window_size: int = 16) -> int:
     - Level N-1 (finest): window_size * 2^(num_levels-1) embeddings
     - Each embedding comes from a 2x2 region
 
-    Pattern: image_size = window_size * 2^num_levels
+    Pattern: valid_size = window_size * 2^num_levels
     - 1 level: window_size * 2^1 = window_size * 2
     - 2 levels: window_size * 2^2 = window_size * 4
     - 3 levels: window_size * 2^3 = window_size * 8
 
-    So: valid_resolution = window_size * 2^num_levels
-
     Args:
         num_levels: Number of pyramid levels
         window_size: Size of attention windows (default 16)
+        height: Target height (if None, uses square resolution)
+        width: Target width (if None, uses square resolution)
 
     Returns:
-        Required image size (square, H=W)
+        Required image size as (height, width) tuple
     """
-    return window_size * (2**num_levels)
+    min_size = window_size * (2**num_levels)
+
+    if height is None:
+        height = min_size
+    if width is None:
+        width = min_size
+
+    return (height, width)
 
 
 def validate_resolution(
-    image_size: int, num_levels: int, window_size: int = 16
+    height: int, width: int, num_levels: int, window_size: int = 16
 ) -> Tuple[bool, str]:
     """
     Validate that image resolution is compatible with pyramid + windowing.
 
     Args:
-        image_size: Input image size (square, H=W)
+        height: Input image height
+        width: Input image width
         num_levels: Number of pyramid levels
         window_size: Size of attention windows (default 16)
 
     Returns:
         (is_valid, message)
     """
-    expected_size = compute_valid_resolution(num_levels, window_size)
+    min_size = window_size * (2**num_levels)
 
-    if image_size == expected_size:
-        return (
-            True,
-            f"Valid: {image_size}x{image_size} is exactly right for {num_levels} level(s)",
-        )
-    elif image_size > expected_size:
-        # Check if it's croppable
-        if image_size >= expected_size:
+    # Check if dimensions are valid (multiples of min_size)
+    h_valid = height % min_size == 0
+    w_valid = width % min_size == 0
+
+    if h_valid and w_valid:
+        if height == min_size and width == min_size:
             return (
                 True,
-                f"Croppable: {image_size}x{image_size} can be "
-                f"cropped to {expected_size}x{expected_size}",
+                f"Valid: {height}x{width} is minimum size for {num_levels} level(s)",
             )
         else:
             return (
-                False,
-                f"Invalid: {image_size}x{image_size} is too small. "
-                f"Minimum for {num_levels} level(s) is {expected_size}x{expected_size}",
+                True,
+                f"Valid: {height}x{width} is compatible with {num_levels} level(s)",
             )
     else:
-        return (
-            False,
-            f"Invalid: {image_size}x{image_size} is too small. "
-            f"Expected {expected_size}x{expected_size} for {num_levels} level(s)",
-        )
+        issues = []
+        if not h_valid:
+            issues.append(f"height {height} (must be multiple of {min_size})")
+        if not w_valid:
+            issues.append(f"width {width} (must be multiple of {min_size})")
+        return (False, f"Invalid dimensions: {', '.join(issues)}")
 
 
 def crop_to_valid(
-    img: jnp.ndarray, num_levels: int, window_size: int = 16
+    img: jnp.ndarray,
+    num_levels: int = 2,
+    window_size: int = 16,
+    target_height: Optional[int] = None,
+    target_width: Optional[int] = None,
 ) -> jnp.ndarray:
     """
     Center-crop an image to the valid resolution for the given pyramid depth.
 
     Args:
         img: Image tensor (B, H, W, C) or (H, W, C)
-        num_levels: Number of pyramid levels
+        num_levels: Number of pyramid levels (used to compute target if not provided)
         window_size: Size of attention windows (default 16)
+        target_height: Target height (if provided, overrides num_levels computation)
+        target_width: Target width (if provided, overrides num_levels computation)
 
     Returns:
         Cropped image to valid size
     """
-    target_size = compute_valid_resolution(num_levels, window_size)
+    # Compute target size if not provided
+    if target_height is None or target_width is None:
+        target_height, target_width = compute_valid_resolution(num_levels, window_size)
 
     if img.ndim == 3:
         h, w, c = img.shape
-        if h == target_size and w == target_size:
+        if h == target_height and w == target_width:
             return img
 
         # Center crop
-        start_h = (h - target_size) // 2
-        start_w = (w - target_size) // 2
-        return img[start_h : start_h + target_size, start_w : start_w + target_size, :]
+        start_h = (h - target_height) // 2
+        start_w = (w - target_width) // 2
+        return img[
+            start_h : start_h + target_height, start_w : start_w + target_width, :
+        ]
 
     elif img.ndim == 4:
         b, h, w, c = img.shape
-        if h == target_size and w == target_size:
+        if h == target_height and w == target_width:
             return img
 
         # Center crop
-        start_h = (h - target_size) // 2
-        start_w = (w - target_size) // 2
+        start_h = (h - target_height) // 2
+        start_w = (w - target_width) // 2
         return img[
-            :, start_h : start_h + target_size, start_w : start_w + target_size, :
+            :, start_h : start_h + target_height, start_w : start_w + target_width, :
         ]
 
     else:
