@@ -20,7 +20,6 @@ class TestHierarchicalFlowModelInit:
         assert model.in_channels == 3
         assert model.window_size == 16
         assert model.auto_crop is True
-        assert model.required_size == 64  # 16 * 2^2
 
     def test_init_custom(self):
         """Test custom initialization."""
@@ -37,16 +36,7 @@ class TestHierarchicalFlowModelInit:
         assert model.num_levels == 3
         assert model.embed_dim == 32
         assert model.in_channels == 1
-        assert model.required_size == 128  # 16 * 2^3
         assert model.auto_crop is False
-
-    def test_required_size_calculation(self):
-        """Test that required size is computed correctly."""
-        for num_levels in [1, 2, 3, 4]:
-            rngs = nnx.Rngs(0)
-            model = HierarchicalFlowModel(num_levels=num_levels, rngs=rngs)
-            expected = 16 * (2**num_levels)
-            assert model.required_size == expected
 
 
 class TestInputValidation:
@@ -158,15 +148,15 @@ class TestForwardPass:
         assert aux["num_levels"] == 3
         assert aux["finest_resolution"] == (64, 64)
 
-    def test_forward_with_intermediates(self):
-        """Test that return_intermediates provides all level outputs."""
+    def test_forward_return_intermediates(self):
+        """Test that the model provides all level outputs."""
         rngs = nnx.Rngs(0)
         model = HierarchicalFlowModel(num_levels=2, in_channels=1, rngs=rngs)
 
         img1 = jnp.zeros((1, 64, 64, 1))
         img2 = jnp.roll(img1, shift=(2, 2), axis=(1, 2))
 
-        flow, aux = model(img1, img2, return_intermediates=True)
+        flow, aux = model(img1, img2)
 
         # Check intermediate outputs exist
         assert "level_flows" in aux
@@ -343,8 +333,6 @@ class TestSingleLevel:
         )
 
         # For 1 level: 16 * 2^1 = 32x32 input -> 16x16 output
-        assert model.required_size == 32
-
         img1 = jnp.zeros((2, 32, 32, 1))
         img2 = jnp.roll(img1, shift=(2, 3), axis=(1, 2))
 
@@ -353,6 +341,3 @@ class TestSingleLevel:
         # Output should be 16x16
         assert flow.shape == (2, 16, 16, 2)
         assert aux["num_levels"] == 1
-
-        # No blending for single level
-        assert "level_flows" not in aux  # Not returned by default

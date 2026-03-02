@@ -16,34 +16,34 @@ class TestResolutionUtilities:
     def test_compute_valid_resolution(self):
         """Test that valid resolutions are computed correctly."""
         # 1 level: 16 * 2^1 = 32
-        assert compute_valid_resolution(1) == 32
+        assert compute_valid_resolution(1) == (32, 32)
 
         # 2 levels: 16 * 2^2 = 64
-        assert compute_valid_resolution(2) == 64
+        assert compute_valid_resolution(2) == (64, 64)
 
         # 3 levels: 16 * 2^3 = 128
-        assert compute_valid_resolution(3) == 128
+        assert compute_valid_resolution(3) == (128, 128)
 
         # 4 levels: 16 * 2^4 = 256
-        assert compute_valid_resolution(4) == 256
+        assert compute_valid_resolution(4) == (256, 256)
 
     def test_validate_resolution_exact_match(self):
         """Test validation passes for exact resolution match."""
-        is_valid, msg = validate_resolution(64, 2)
+        is_valid, msg = validate_resolution(64, 64, 2)
         assert is_valid is True
         assert "Valid" in msg or "exactly" in msg
 
     def test_validate_resolution_croppable(self):
         """Test validation passes for croppable larger resolution."""
-        is_valid, msg = validate_resolution(70, 2)
-        assert is_valid is True
-        assert "Croppable" in msg or "crop" in msg.lower()
+        is_valid, msg = validate_resolution(70, 70, 2)
+        assert is_valid is False
+        assert "must be multiple of" in msg.lower()
 
     def test_validate_resolution_too_small(self):
         """Test validation fails for resolution that's too small."""
-        is_valid, msg = validate_resolution(32, 2)
+        is_valid, msg = validate_resolution(32, 32, 2)
         assert is_valid is False
-        assert "too small" in msg.lower() or "Invalid" in msg
+        assert "must be multiple of" in msg.lower()
 
 
 class TestWindowGrid:

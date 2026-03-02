@@ -21,7 +21,7 @@ class TestCrossValidation:
         """Standard 2-level model with 64x64 images should validate."""
         settings = Settings(
             model=ModelSettings(num_levels=2),  # requires 64 (WINDOW_SIZE * 2^2)
-            dataset=DatasetSettings(img_size=64),
+            dataset=DatasetSettings(img_size=(64, 64)),
             training=TrainingSettings(),
             logging=LoggingSettings(),
             visualization=VisualizationSettings(),
@@ -34,14 +34,14 @@ class TestCrossValidation:
         """Incompatible image size should fail validation."""
         settings = Settings(
             model=ModelSettings(num_levels=4),  # requires 256 (16 * 2^4)
-            dataset=DatasetSettings(img_size=64),  # too small
+            dataset=DatasetSettings(img_size=(64, 64)),  # too small
             training=TrainingSettings(),
             logging=LoggingSettings(),
             visualization=VisualizationSettings(),
         )
         is_valid, msg = settings.validate()
         assert is_valid is False
-        assert "too small" in msg.lower()
+        assert "must be multiple of" in msg.lower()
 
     def test_get_required_size_uses_window_grid(self):
         """Should return correct minimum size from window_grid.compute_valid_resolution."""
@@ -53,7 +53,7 @@ class TestCrossValidation:
             visualization=VisualizationSettings(),
         )
         # 2 levels with WINDOW_SIZE=16: 16 * 2^2 = 64
-        assert settings.get_required_image_size() == 64
+        assert settings.get_required_image_size() == (64, 64)
 
 
 class TestInputValidation:
@@ -64,8 +64,8 @@ class TestInputValidation:
             ModelSettings(num_levels=0)
 
     def test_invalid_img_size_raises(self):
-        with pytest.raises(ValueError, match="img_size"):
-            DatasetSettings(img_size=4)
+        with pytest.raises(ValueError, match="img height"):
+            DatasetSettings(img_size=(4, 8))
 
     def test_invalid_learning_rate_raises(self):
         with pytest.raises(ValueError, match="learning_rate"):

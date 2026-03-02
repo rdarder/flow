@@ -33,7 +33,7 @@ class TestTyroSettingsIntegration:
 
         # Check defaults were applied
         assert settings.model.num_levels == 2
-        assert settings.dataset.img_size == 64
+        assert settings.dataset.img_size == (384, 512)
         assert settings.training.learning_rate == 1e-4
         assert settings.logging.log_dir == "runs"
 
@@ -51,6 +51,7 @@ class TestTyroSettingsIntegration:
                 "4",
                 "--settings.dataset.img-size",
                 "128",
+                "128",
                 "--settings.training.learning-rate",
                 "0.001",
                 "--settings.logging.log-dir",
@@ -60,7 +61,7 @@ class TestTyroSettingsIntegration:
 
         # Check overrides were applied
         assert settings.model.num_levels == 4
-        assert settings.dataset.img_size == 128
+        assert settings.dataset.img_size == (128, 128)
         assert settings.training.learning_rate == 0.001
         assert settings.logging.log_dir == "custom_runs"
 
@@ -81,18 +82,18 @@ class TestTyroSettingsIntegration:
             args=[
                 "--settings.model.embed-dim",
                 "32",
-                "--settings.dataset.max-flow",
-                "10",
+                "--settings.dataset.batch-size",
+                "64",
             ],
         )
 
         # Check overridden values
         assert settings.model.embed_dim == 32
-        assert settings.dataset.max_flow == 10
+        assert settings.dataset.batch_size == 64
 
         # Check other defaults still present
         assert settings.model.num_levels == 2
-        assert settings.dataset.img_size == 64
+        assert settings.dataset.img_size == (384, 512)
         assert settings.training.learning_rate == 1e-4
 
     def test_settings_validation_still_works(self):
@@ -108,6 +109,7 @@ class TestTyroSettingsIntegration:
                 "--settings.model.num-levels",
                 "2",
                 "--settings.dataset.img-size",
+                "64",
                 "64",
             ],
         )
@@ -130,6 +132,7 @@ class TestTyroSettingsIntegration:
                 "4",  # requires 256
                 "--settings.dataset.img-size",
                 "64",  # too small
+                "64",
             ],
         )
 
@@ -137,7 +140,7 @@ class TestTyroSettingsIntegration:
         # But our validation should catch the error
         is_valid, msg = settings.validate()
         assert is_valid is False
-        assert "too small" in msg.lower()
+        assert "must be multiple of" in msg.lower()
 
 
 if __name__ == "__main__":
