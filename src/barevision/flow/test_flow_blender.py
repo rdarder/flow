@@ -3,7 +3,7 @@
 import jax.numpy as jnp
 import pytest
 
-from flow.flow_blender import (
+from .flow_blender import (
     upsample_flow_2x,
     upsample_confidence_2x,
 )

@@ -18,15 +18,15 @@ import tyro
 from flax import nnx
 from torch.utils.data import DataLoader
 
-from flow.chairs_dataset_loader import ChairsSDHomDataset
-from flow.checkpoint_manager import AbstractCheckpointManager, create_checkpoint_manager
-from flow.hierarchical_model import HierarchicalFlowModel
-from flow.logging_utils import (
+from .chairs_dataset_loader import ChairsSDHomDataset
+from .checkpoint_manager import AbstractCheckpointManager, create_checkpoint_manager
+from .hierarchical_model import HierarchicalFlowModel
+from .logging_utils import (
     JaxLogger,
     log_gradient_histograms,
     log_parameter_histograms,
 )
-from flow.settings import (
+from .settings import (
     DatasetSettings,
     LoggingSettings,
     ModelSettings,
@@ -34,7 +34,7 @@ from flow.settings import (
     TrainingSettings,
     VisualizationSettings,
 )
-from flow.visualization import (
+from .visualization import (
     create_components_figure,
     create_confidence_analysis_figure,
     create_overview_figure,

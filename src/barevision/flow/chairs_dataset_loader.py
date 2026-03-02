@@ -12,7 +12,7 @@ from PIL import Image
 import torchvision.transforms as T
 import torchvision.transforms.functional as TF
 
-from flow.pfm_utils import read_pfm
+from .pfm_utils import read_pfm
 
 
 class ChairsSDHomDataset(Dataset):

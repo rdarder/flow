@@ -1,12 +1,12 @@
 import jax.numpy as jnp
 import pytest
-from flow.window_grid import (
+from .window_grid import (
     compute_valid_resolution,
     validate_resolution,
     crop_to_valid,
     WindowGrid,
 )
-from flow.embedding_pyramid import EmbeddingPyramid
+from .embedding_pyramid import EmbeddingPyramid
 from flax import nnx
 
 

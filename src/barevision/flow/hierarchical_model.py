@@ -10,10 +10,10 @@ import jax
 import jax.numpy as jnp
 from flax import nnx
 
-from flow.embedding_pyramid import EmbeddingPyramid
-from flow.flow_blender import upsample_confidence_2x, upsample_flow_2x
-from flow.grid_flow import GridFlowEstimator
-from flow.window_grid import compute_valid_resolution, crop_to_valid
+from .embedding_pyramid import EmbeddingPyramid
+from .flow_blender import upsample_confidence_2x, upsample_flow_2x
+from .grid_flow import GridFlowEstimator
+from .window_grid import compute_valid_resolution, crop_to_valid
 
 
 class HierarchicalFlowModel(nnx.Module):

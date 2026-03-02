@@ -7,7 +7,7 @@ Uses window_grid utilities for image size validation against pyramid levels.
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
-from flow.window_grid import compute_valid_resolution, validate_resolution
+from .window_grid import compute_valid_resolution, validate_resolution
 
 
 @dataclass
@@ -134,7 +134,7 @@ class LoggingSettings:
     """
 
     log_dir: str = "runs"
-    run_name_prefix: str = "flow"
+    run_name_prefix: str = "barevision"
     num_visualization_samples: int = 4
     log_views: Tuple[str, ...] = (
         "overview",

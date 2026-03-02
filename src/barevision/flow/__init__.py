@@ -1,4 +1,4 @@
-"""Flow package initialization with JAX configuration."""
+"""Barevision package initialization with JAX configuration."""
 
 import os
 from pathlib import Path
@@ -7,11 +7,11 @@ import jax
 from platformdirs import user_cache_dir
 
 # Determine cache directory
-# Priority: FLOW_CACHE_DIR env var > user-specific cache directory
-if os.environ.get("FLOW_CACHE_DIR"):
-    CACHE_DIR = Path(os.environ["FLOW_CACHE_DIR"])
+# Priority: BAREVISION_CACHE_DIR env var > user-specific cache directory
+if os.environ.get("BAREVISION_CACHE_DIR"):
+    CACHE_DIR = Path(os.environ["BAREVISION_CACHE_DIR"])
 else:
-    CACHE_DIR = Path(user_cache_dir("flow"))
+    CACHE_DIR = Path(user_cache_dir("barevision"))
 
 # Ensure cache directory exists
 CACHE_DIR.mkdir(parents=True, exist_ok=True)

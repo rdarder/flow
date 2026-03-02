@@ -4,14 +4,14 @@ import jax.numpy as jnp
 import pytest
 from flax import nnx
 
-from flow.grid_flow import GridFlowEstimator
-from flow.window_grid import (
+from .grid_flow import GridFlowEstimator
+from .window_grid import (
     WindowGrid,
     create_coordinate_grid,
     grid_to_tokens,
     tokens_to_grid,
 )
-from flow.embedding_pyramid import EmbeddingPyramid
+from .embedding_pyramid import EmbeddingPyramid
 
 
 def create_zero_prior(batch_size, height, width):

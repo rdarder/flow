@@ -4,7 +4,7 @@ Focus on validation logic that ensures model-dataset compatibility.
 """
 
 import pytest
-from flow.settings import (
+from .settings import (
     ModelSettings,
     DatasetSettings,
     TrainingSettings,

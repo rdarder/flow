@@ -1,4 +1,4 @@
-# Flow Training Pipeline
+# Barevision Training Pipeline
 
 Hierarchical optical flow model using multi-level pyramid with windowed attention and confidence-based blending.
 
@@ -17,7 +17,7 @@ For detailed algorithm design, see [ARCHITECTURE.md](ARCHITECTURE.md).
 ## Project Structure
 
 ```
-src/flow/
+src/barevision/flow/
 ├── train.py                  # Main training loop
 ├── settings.py               # Configuration dataclasses
 ├── hierarchical_model.py     # Complete flow model (orchestrates pyramid + levels)
@@ -39,13 +39,13 @@ Configuration via tyro CLI with nested dataclass support:
 
 ```bash
 # Example: Train with custom settings
-python -m flow.train --model.num-levels 3 --dataset.img-size 384 512 --training.epochs 50
+python -m barevision.flow.train --model.num-levels 3 --dataset.img-size 384 512 --training.epochs 50
 
 # Resume from checkpoint
-python -m flow.train --training.resume
+python -m barevision.flow.train --training.resume
 
 # Smoke test
-python -m flow.train --smoke-test
+python -m barevision.flow.train --smoke-test
 ```
 
 See `settings.py` for all available options:

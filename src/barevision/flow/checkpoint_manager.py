@@ -12,7 +12,7 @@ import jax.numpy as jnp
 import orbax.checkpoint as ocp
 from flax import nnx
 
-from flow.hierarchical_model import HierarchicalFlowModel
+from .hierarchical_model import HierarchicalFlowModel
 
 
 class AbstractCheckpointManager(ABC):

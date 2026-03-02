@@ -23,12 +23,12 @@ class JaxLogger:
     - Automatic run naming with timestamps
     """
 
-    def __init__(self, log_dir: str = "runs", run_name_prefix: str = "flow"):
+    def __init__(self, log_dir: str = "runs", run_name_prefix: str = "barevision"):
         """Initialize logger with automatic run naming.
 
         Args:
             log_dir: Directory for TensorBoard logs
-            run_name_prefix: Prefix for run name (e.g., "flow" -> "flow_20240225_123045")
+            run_name_prefix: Prefix for run name (e.g., "barevision" -> "barevision_20240225_123045")
         """
         run_name = f"{run_name_prefix}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         log_path = os.path.join(log_dir, run_name)

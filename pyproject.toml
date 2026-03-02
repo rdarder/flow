@@ -3,16 +3,16 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "flow"
+name = "barevision"
 version = "0.1.0"
-description = "Flow project - dataset and model training tools"
+description = "Barevision project - non-semantic perception for cheap robots"
 readme = "README.md"
 requires-python = ">=3.8"
 license = {text = "MIT"}
 authors = [
     {name = "Your Name", email = "you@example.com"}
 ]
-keywords = ["flow", "dataset", "model", "training"]
+keywords = ["barevision", "dataset", "model", "training", "perception", "optical-flow", "embeddings"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -61,5 +61,5 @@ warn_return_any = true
 warn_unused_configs = true
 
 [tool.pytest.ini_options]
-testpaths = ["src/flow"]
+testpaths = ["src/barevision"]
 python_files = ["test_*.py"]

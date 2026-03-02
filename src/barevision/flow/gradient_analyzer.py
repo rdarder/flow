@@ -20,8 +20,8 @@ import jax.numpy as jnp
 import numpy as np
 from flax import nnx
 
-from flow.hierarchical_model import HierarchicalFlowModel
-from flow.settings import ModelSettings
+from .hierarchical_model import HierarchicalFlowModel
+from .settings import ModelSettings
 
 
 @dataclass

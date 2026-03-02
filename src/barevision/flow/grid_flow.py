@@ -9,9 +9,9 @@ from typing import Any, Dict, Tuple
 import jax.numpy as jnp
 from flax import nnx
 
-from flow.token_attention import TokenCrossAttention, TokenSelfAttention
-from flow.flow_blend import PriorBlender
-from flow.window_grid import (
+from .token_attention import TokenCrossAttention, TokenSelfAttention
+from .flow_blend import PriorBlender
+from .window_grid import (
     WindowGrid,
     create_coordinate_grid,
     grid_to_tokens,

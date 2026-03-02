@@ -4,7 +4,7 @@ import jax
 import jax.numpy as jnp
 from flax import nnx
 
-from flow.embedding_pyramid import EmbeddingPyramid, compute_pyramid_shapes
+from .embedding_pyramid import EmbeddingPyramid, compute_pyramid_shapes
 
 
 class TestEmbeddingPyramid:

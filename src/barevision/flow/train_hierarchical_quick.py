@@ -10,8 +10,8 @@ import jax.numpy as jnp
 from flax import nnx
 import optax
 
-from flow.hierarchical_model import HierarchicalFlowModel
-from flow.synthetic_dataset import SyntheticFlowDataset
+from .hierarchical_model import HierarchicalFlowModel
+from .synthetic_dataset import SyntheticFlowDataset
 
 
 def train_step(model, optimizer, batch):

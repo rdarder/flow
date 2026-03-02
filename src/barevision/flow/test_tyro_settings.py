@@ -10,7 +10,7 @@ from io import StringIO
 import pytest
 import tyro
 
-from flow.settings import (
+from .settings import (
     DatasetSettings,
     LoggingSettings,
     ModelSettings,
