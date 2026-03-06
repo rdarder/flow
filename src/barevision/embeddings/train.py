@@ -30,6 +30,10 @@ from barevision.embeddings.settings import (
 )
 from barevision.utils.logging import JaxLogger
 from barevision.embeddings.checkpoint_manager import create_checkpoint_manager
+from barevision.embeddings.logging_utils import (
+    log_attention_statistics,
+    log_embedding_statistics,
+)
 
 
 def create_dataloader(
@@ -252,6 +256,21 @@ def train(settings: Settings):
         epoch_time = time.time() - epoch_start
         avg_loss = sum(epoch_losses) / len(epoch_losses)
         logger.log_scalar("Loss/train_epoch", avg_loss, epoch)
+
+        # Log embedding and attention statistics once per epoch
+        # Get a sample batch for diagnostics
+        sample_loader = create_dataloader(
+            split="train",
+            batch_size=1,
+            img_size=settings.dataset.img_size,
+            max_frames=1,
+        )
+        sample_img1, sample_img2 = next(sample_loader)
+        embeddings = model(sample_img1)
+
+        log_embedding_statistics(logger, embeddings, epoch)
+        log_attention_statistics(logger, embeddings, epoch)
+
         print(f"Epoch {epoch} complete | Avg loss: {avg_loss:.4f} | {epoch_time:.1f}s")
         print()
 
