@@ -4,17 +4,20 @@ Loads video frames with sparse pairing for self-supervised training.
 Generates pairs (frame_t, frame_{t+k}) for k in [1, max_distance].
 
 Train/val split:
-- Training: First 13 videos alphabetically (backyard through table)
-- Validation: Last 2 videos (toys, workshop)
+- Training: 85% of videos (rounded down)
+- Validation: 15% of videos (rounded up)
+- Split uses JAX PRNG with configurable seed for reproducibility
 """
 
 import os
 from typing import List, NamedTuple, Optional, Tuple
 
+import jax.numpy as jnp
+import jax.random as jr
 import numpy as np
 from PIL import Image
 
-from .utils import get_datasets_dir
+from barevision.utils.path import get_datasets_dir
 
 
 class FramePair(NamedTuple):
@@ -36,7 +39,7 @@ class VideoFrameDataset:
     - k ranges from 1 to max_frame_distance
     - Pairs are only created within the same video
 
-    The dataset uses contiguous train/val splits per video to prevent leakage.
+    The dataset uses video-based train/val splits (85/15) with configurable seed.
     """
 
     def __init__(
@@ -45,6 +48,8 @@ class VideoFrameDataset:
         split: str = "train",
         max_frame_distance: int = 5,
         img_size: Tuple[int, int] = (190, 190),
+        seed: int = 42,
+        train_ratio: float = 0.85,
     ):
         """Initialize the dataset.
 
@@ -54,6 +59,8 @@ class VideoFrameDataset:
             split: 'train' or 'val'
             max_frame_distance: Maximum temporal distance k for frame pairs (t, t+k)
             img_size: Target image size (height, width)
+            seed: Random seed for reproducible train/val split
+            train_ratio: Ratio of videos for training (default 0.85 = 85%)
         """
         # Use project datasets directory if not specified
         if data_root is None:
@@ -64,6 +71,8 @@ class VideoFrameDataset:
         self.split = split
         self.max_frame_distance = max_frame_distance
         self.img_size = img_size
+        self.seed = seed
+        self.train_ratio = train_ratio
 
         assert split in ["train", "val"], f"Invalid split: {split}"
         assert os.path.isdir(
@@ -73,15 +82,43 @@ class VideoFrameDataset:
         # Get video directories
         all_videos = sorted(os.listdir(self.data_root))
 
-        # Train/val split: first 13 train, last 2 val
-        if split == "train":
-            self.videos = all_videos[:13]
-        else:
-            self.videos = all_videos[13:]
+        # Train/val split: percentage-based with JAX PRNG
+        self.videos = self._split_videos(all_videos)
 
         # Build frame pairs index
         self.frame_pairs: List[FramePair] = []
         self._build_index()
+
+    def _split_videos(self, all_videos: List[str]) -> List[str]:
+        """Split videos into train/val using percentage-based approach.
+
+        Args:
+            all_videos: Sorted list of all video directory names
+
+        Returns:
+            List of video names for this dataset's split
+        """
+        num_videos = len(all_videos)
+        num_train = int(num_videos * self.train_ratio)  # Round down for train
+        num_val = num_videos - num_train  # Remainder for val
+
+        # Use JAX PRNG for reproducible shuffling
+        key = jr.PRNGKey(self.seed)
+        shuffle_key = jr.fold_in(key, 0)  # Deterministic shuffle
+
+        # Create indices and shuffle
+        indices = jnp.arange(num_videos)
+        shuffled_indices = jr.permutation(shuffle_key, indices)
+
+        # Split indices
+        if self.split == "train":
+            selected_indices = shuffled_indices[:num_train]
+        else:
+            selected_indices = shuffled_indices[num_train:]
+
+        # Convert back to list and get video names
+        selected_indices_list = sorted(selected_indices.tolist())
+        return [all_videos[i] for i in selected_indices_list]
 
     def _build_index(self):
         """Build index of all frame pairs."""
@@ -209,6 +246,8 @@ def create_train_val_datasets(
     data_root: Optional[str] = None,
     max_frame_distance: int = 5,
     img_size: Tuple[int, int] = (190, 190),
+    seed: int = 42,
+    train_ratio: float = 0.85,
 ) -> Tuple[VideoFrameDataset, VideoFrameDataset]:
     """Create train and validation datasets.
 
@@ -217,6 +256,8 @@ def create_train_val_datasets(
                   If None, uses project's datasets/frames directory.
         max_frame_distance: Maximum temporal distance for frame pairs
         img_size: Target image size (height, width)
+        seed: Random seed for reproducible train/val split
+        train_ratio: Ratio of videos for training (default 0.85 = 85%)
 
     Returns:
         Tuple of (train_dataset, val_dataset)
@@ -226,6 +267,8 @@ def create_train_val_datasets(
         split="train",
         max_frame_distance=max_frame_distance,
         img_size=img_size,
+        seed=seed,
+        train_ratio=train_ratio,
     )
 
     val_dataset = VideoFrameDataset(
@@ -233,6 +276,8 @@ def create_train_val_datasets(
         split="val",
         max_frame_distance=max_frame_distance,
         img_size=img_size,
+        seed=seed,
+        train_ratio=train_ratio,
     )
 
     return train_dataset, val_dataset

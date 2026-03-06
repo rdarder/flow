@@ -16,7 +16,7 @@ def find_project_root(start_from: Optional[Path] = None) -> Path:
 
     Args:
         start_from: Starting path for search. If None, uses the directory
-                   containing this utils.py module (not cwd).
+                    containing this utils.py module (not cwd).
 
     Returns:
         Path to project root directory

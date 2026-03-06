@@ -13,13 +13,18 @@ class DatasetSettings:
 
     Attributes:
         batch_size: Training batch size
-        img_size: Input image size as (height, width) tuple
+        img_size: Input image size as (height, width) tuple.
+                 Must result in embeddings divisible by window_size (16).
+                 Model uses 3x3 valid conv, so output is (H-2, W-2).
+                 Recommended: (194, 194) -> (192, 192) embeddings = 12x12 windows
         max_frame_distance: Maximum temporal distance for frame pairs
+        num_workers: Number of worker processes for data loading (0 = main process only)
     """
 
     batch_size: int = 4
-    img_size: tuple[int, int] = (190, 190)
+    img_size: tuple[int, int] = (194, 194)
     max_frame_distance: int = 5
+    num_workers: int = 4
 
     def __post_init__(self):
         if self.batch_size < 1:
@@ -30,6 +35,8 @@ class DatasetSettings:
             raise ValueError(
                 f"max_frame_distance must be >= 1, got {self.max_frame_distance}"
             )
+        if self.num_workers < 0:
+            raise ValueError(f"num_workers must be >= 0, got {self.num_workers}")
 
 
 @dataclass
@@ -72,8 +79,9 @@ def create_smoke_test_settings() -> Settings:
     return Settings(
         dataset=DatasetSettings(
             batch_size=2,
-            img_size=(190, 190),
+            img_size=(194, 194),  # Results in 192x192 embeddings (12x12 windows)
             max_frame_distance=5,
+            num_workers=0,  # No multiprocessing in smoke tests (simpler debugging)
         ),
         training=TrainingSettings(
             epochs=1,

@@ -3,10 +3,16 @@
 Implements entropy-based objectives for learning sharp attention distributions:
 - Self-attention entropy: Maximize after spatial penalty (discourage distant peaks)
 - Cross-attention entropy: Minimize (encourage 1-2 sharp cross-frame matches)
+
+Design:
+- Core functions: Pure math on (B, H, W, D) batches - no splitting, no vmap
+- Wrapper functions: Handle window splitting, dimension rearranging, calling core, aggregating results
 """
 
 import jax
 import jax.numpy as jnp
+
+from barevision.utils.grid import WindowGrid
 
 
 def _compute_entropy(probabilities: jnp.ndarray) -> jnp.ndarray:
@@ -16,275 +22,169 @@ def _compute_entropy(probabilities: jnp.ndarray) -> jnp.ndarray:
         probabilities: (..., N) array where last dimension sums to 1
 
     Returns:
-        Entropy values with shape (...) - positive values
+        Entropy values with shape (...)
     """
-    # Add small epsilon to avoid log(0)
     eps = 1e-10
     return -jnp.sum(probabilities * jnp.log(probabilities + eps), axis=-1)
 
 
-def _spatial_logits_matrix(
-    window_size: int, scale: float = 10.0
-) -> jnp.ndarray:
-    """Create spatial score matrix using Gaussian kernel in log-space.
-
-    Matches the SpatialScore approach from barevision.flow.token_attention:
-        score_ij = -scale * ||pos_i - pos_j||^2
-
-    For normalized coordinates [0, 1] within a window:
-    - Nearby positions get small negative scores (higher attention)
-    - Distant positions get large negative scores (suppressed attention)
-
-    This is added to attention logits BEFORE softmax.
-
-    Args:
-        window_size: Size of the attention window (e.g., 16)
-        scale: Scaling factor for the penalty (default 10.0, matching SpatialScore)
+def _spatial_logits_matrix(window_size: int, scale: float = 10.0) -> jnp.ndarray:
+    """Create spatial penalty matrix: -scale * distance² for all position pairs.
 
     Returns:
-        (window_size*window_size, window_size*window_size) spatial score matrix
+        (N, N) matrix where N = window_size²
     """
-    # Create normalized coordinate grid [0, 1]
     coords = jnp.linspace(0, 1, window_size, dtype=jnp.float32)
     y, x = jnp.meshgrid(coords, coords, indexing="ij")
-
-    # Flatten to positions: (N, 2) where N = window_size^2
     positions = jnp.stack([x.ravel(), y.ravel()], axis=-1)
 
-    # Compute pairwise squared distances using expanded square trick
-    # ||pos_i - pos_j||^2 = ||pos_i||^2 + ||pos_j||^2 - 2 * pos_i · pos_j
-    pos_norm_sq = jnp.sum(jnp.square(positions), axis=-1, keepdims=True)  # (N, 1)
-    cross_term = positions @ positions.T  # (N, N)
-    dist_sq = pos_norm_sq + pos_norm_sq.T - 2 * cross_term  # (N, N)
+    pos_norm_sq = jnp.sum(jnp.square(positions), axis=-1, keepdims=True)
+    cross_term = positions @ positions.T
+    dist_sq = jnp.maximum(pos_norm_sq + pos_norm_sq.T - 2 * cross_term, 0.0)
 
-    # Clip negative values (numerical noise)
-    dist_sq = jnp.maximum(dist_sq, 0.0)
-
-    # Gaussian kernel in log-space: score = -scale * distance^2
     return -scale * dist_sq
 
 
-def self_attention_entropy_loss(
-    embeddings: jnp.ndarray, window_size: int = 16, spatial_scale: float = 10.0
+def self_attention_entropy_loss_core(
+    windows: jnp.ndarray, spatial_scale: float = 10.0
 ) -> jnp.ndarray:
-    """Compute self-attention entropy loss with spatial weighting.
+    """Compute self-attention entropy loss on a batch of windows.
 
-    For each 16x16 window, computes self-attention with spatial weighting
-    (nearby positions get higher attention) and then maximizes entropy.
-    
-    This encourages embeddings where distant pixels can still compete for attention
-    despite the spatial penalty. Nearby attention is "forgiven" (doesn't count much
-    toward entropy), so high entropy means the embedding creates multiple sharp peaks
-    at various distances.
-
-    The loss returned is negative entropy, so minimizing the loss maximizes entropy.
+    Pure math - no splitting, no dimension rearranging. Just the loss computation.
+    Returns negative entropy so minimizing loss = maximizing entropy.
 
     Args:
-        embeddings: (B, H, W, D) tensor of embeddings
-        window_size: Size of attention windows (default 16)
-        spatial_scale: Scale factor for spatial weighting (default 10.0, matching SpatialScore)
+        windows: (B, H, W, D) batch of windows (already split and flattened)
+        spatial_scale: Scale factor for spatial penalty
 
     Returns:
-        Per-pixel loss of shape (B, H, W) - negative entropy values
+        (B, H, W) per-pixel loss (negative entropy)
     """
-    B, H, W, D = embeddings.shape
+    B, H, W, D = windows.shape
+    N = H * W
 
-    # Pad if necessary to make dimensions divisible by window_size
-    pad_h = (window_size - H % window_size) % window_size
-    pad_w = (window_size - W % window_size) % window_size
+    # Flatten spatial dimensions
+    flat_windows = windows.reshape(B, N, D)
 
-    if pad_h > 0 or pad_w > 0:
-        embeddings = jnp.pad(
-            embeddings,
-            [(0, 0), (0, pad_h), (0, pad_w), (0, 0)],
-            mode="edge",
-        )
-        H_padded, W_padded = embeddings.shape[1:3]
-    else:
-        H_padded, W_padded = H, W
+    # Compute attention logits: dot products
+    logits = flat_windows @ flat_windows.transpose(0, 2, 1)  # (B, N, N)
 
-    # Split into windows: (B, num_windows, window_size, window_size, D)
-    num_h = H_padded // window_size
-    num_w = W_padded // window_size
+    # Mask self-attention
+    mask = jnp.eye(N, dtype=jnp.float32)
+    logits = logits - mask * 1e9
 
-    # Reshape to windows
-    emb_windows = embeddings.reshape(
-        B, num_h, window_size, num_w, window_size, D
-    )
-    emb_windows = emb_windows.transpose(0, 1, 3, 2, 4, 5)
-    emb_windows = emb_windows.reshape(
-        B, num_h * num_w, window_size, window_size, D
-    )
+    # Add spatial penalty
+    spatial_matrix = _spatial_logits_matrix(H, spatial_scale)
+    logits = logits + spatial_matrix
 
-    # Precompute spatial score matrix (matches SpatialScore from flow)
-    spatial_matrix = _spatial_logits_matrix(window_size, spatial_scale)
+    # Softmax and entropy
+    attn_weights = jax.nn.softmax(logits, axis=-1)
+    entropy = _compute_entropy(attn_weights)
 
-    def window_loss(window_emb: jnp.ndarray) -> jnp.ndarray:
-        """Compute loss for a single window.
-
-        Args:
-            window_emb: (window_size * window_size, D) flattened window
-
-        Returns:
-            Per-position loss (window_size * window_size,)
-        """
-        # Compute dot products (attention logits)
-        # Shape: (N, N) where N = window_size^2
-        logits = window_emb @ window_emb.T
-
-        # Mask self-attention (each position attending to itself)
-        N = window_emb.shape[0]
-        mask = jnp.eye(N, dtype=jnp.float32)
-        logits = logits - mask * 1e9
-
-        # Add spatial scores: nearby positions get boost, distant get suppressed
-        # spatial_matrix contains negative values: -scale * distance^2
-        logits = logits + spatial_matrix
-
-        # Softmax to get attention weights
-        # Shape: (N, N) - each row is a distribution
-        attn_weights = jax.nn.softmax(logits, axis=-1)
-
-        # Compute entropy for each position
-        # Shape: (N,)
-        entropy = _compute_entropy(attn_weights)
-
-        # Return negative entropy (so minimizing loss = maximizing entropy)
-        return -entropy
-
-    # Vectorize over batch and windows
-    # First flatten batch and windows together
-    flat_windows = emb_windows.reshape(B * num_h * num_w, window_size * window_size, D)
-
-    # Compute loss for each window
-    per_window_loss = jax.vmap(window_loss)(flat_windows)
-
-    # Reshape back to (B, num_h, num_w, window_size, window_size)
-    per_window_loss = per_window_loss.reshape(
-        B, num_h, num_w, window_size, window_size
-    )
-
-    # Transpose and reshape to original spatial dimensions
-    per_window_loss = per_window_loss.transpose(0, 1, 3, 2, 4)
-    per_window_loss = per_window_loss.reshape(B, H_padded, W_padded)
-
-    # Crop back to original size if we padded
-    if pad_h > 0 or pad_w > 0:
-        per_window_loss = per_window_loss[:, :H, :W]
-
-    return per_window_loss
+    # Return NEGATIVE entropy (maximize entropy = minimize negative entropy)
+    # Reshape back to spatial grid: (B, H, W)
+    return -entropy.reshape(B, H, W)
 
 
-def cross_attention_entropy_loss(
+def cross_attention_entropy_loss_core(
+    windows1: jnp.ndarray, windows2: jnp.ndarray
+) -> jnp.ndarray:
+    """Compute cross-attention entropy loss on a batch of windows.
+
+    Pure math - no splitting, no dimension rearranging. Just the loss computation.
+
+    Args:
+        windows1: (B, H, W, D) batch of windows from frame 1
+        windows2: (B, H, W, D) batch of windows from frame 2
+
+    Returns:
+        (B, H, W) per-pixel loss (positive entropy)
+    """
+    B, H, W, D = windows1.shape
+    N = H * W
+
+    # Flatten spatial dimensions
+    flat1 = windows1.reshape(B, N, D)
+    flat2 = windows2.reshape(B, N, D)
+
+    # Compute cross-attention logits
+    logits = flat1 @ flat2.transpose(0, 2, 1)  # (B, N, N)
+
+    # Softmax and entropy
+    attn_weights = jax.nn.softmax(logits, axis=-1)
+    entropy = _compute_entropy(attn_weights)
+
+    # Reshape back to spatial grid: (B, H, W)
+    return entropy.reshape(B, H, W)
+
+
+def combined_loss(
     emb1: jnp.ndarray,
     emb2: jnp.ndarray,
     window_size: int = 16,
+    alpha: float = 1.0,
+    beta: float = 1.0,
+    spatial_scale: float = 10.0,
 ) -> jnp.ndarray:
-    """Compute cross-attention entropy loss.
+    """Compute combined self + cross attention loss.
 
-    For each 16x16 window, computes cross-attention from frame1 to frame2
-    and minimizes entropy to encourage sharp matches.
+    Wrapper that handles all window splitting, dimension rearranging, and aggregation.
+    Calls core loss functions which only do the math.
+
+    Fails explicitly if input resolution is not aligned with window_size.
 
     Args:
         emb1: (B, H, W, D) embeddings from frame 1
         emb2: (B, H, W, D) embeddings from frame 2
         window_size: Size of attention windows (default 16)
+        alpha: Weight for self-attention loss (default 1.0)
+        beta: Weight for cross-attention loss (default 1.0)
+        spatial_scale: Scale factor for spatial penalty (default 10.0)
 
     Returns:
-        Per-pixel loss of shape (B, H, W) - positive entropy values
+        (B, H, W) combined per-pixel loss
+
+    Raises:
+        ValueError: If H or W is not divisible by window_size
     """
     B, H, W, D = emb1.shape
 
-    # Ensure emb2 has same shape
-    assert emb2.shape == emb1.shape, f"emb2 shape {emb2.shape} != emb1 shape {emb1.shape}"
+    # Validate resolution
+    if H % window_size != 0:
+        raise ValueError(f"Height {H} not divisible by window_size {window_size}")
+    if W % window_size != 0:
+        raise ValueError(f"Width {W} not divisible by window_size {window_size}")
 
-    # Pad if necessary
-    pad_h = (window_size - H % window_size) % window_size
-    pad_w = (window_size - W % window_size) % window_size
-
-    if pad_h > 0 or pad_w > 0:
-        emb1 = jnp.pad(emb1, [(0, 0), (0, pad_h), (0, pad_w), (0, 0)], mode="edge")
-        emb2 = jnp.pad(emb2, [(0, 0), (0, pad_h), (0, pad_w), (0, 0)], mode="edge")
-        H_padded, W_padded = emb1.shape[1:3]
-    else:
-        H_padded, W_padded = H, W
+    # Validate shapes match
+    assert (
+        emb2.shape == emb1.shape
+    ), f"emb2 shape {emb2.shape} != emb1 shape {emb1.shape}"
 
     # Split into windows
-    num_h = H_padded // window_size
-    num_w = W_padded // window_size
+    grid = WindowGrid(window_size=window_size)
+    windows1 = grid.split(emb1)  # (B, num_windows, window_size, window_size, D)
+    windows2 = grid.split(emb2)
 
-    # Reshape both to windows
-    emb1_windows = emb1.reshape(B, num_h, window_size, num_w, window_size, D)
-    emb1_windows = emb1_windows.transpose(0, 1, 3, 2, 4, 5)
-    emb1_windows = emb1_windows.reshape(B * num_h * num_w, window_size * window_size, D)
+    # Flatten batch and windows together for core functions
+    num_windows = (H // window_size) * (W // window_size)
+    flat_windows1 = windows1.reshape(B * num_windows, window_size, window_size, D)
+    flat_windows2 = windows2.reshape(B * num_windows, window_size, window_size, D)
 
-    emb2_windows = emb2.reshape(B, num_h, window_size, num_w, window_size, D)
-    emb2_windows = emb2_windows.transpose(0, 1, 3, 2, 4, 5)
-    emb2_windows = emb2_windows.reshape(B * num_h * num_w, window_size * window_size, D)
+    # Call core loss functions (pure math)
+    self_loss = self_attention_entropy_loss_core(flat_windows1, spatial_scale)
+    cross_loss = cross_attention_entropy_loss_core(flat_windows1, flat_windows2)
 
-    def window_cross_loss(args) -> jnp.ndarray:
-        """Compute cross-attention loss for a pair of windows.
+    # Combine with weights
+    combined = alpha * self_loss + beta * cross_loss
 
-        Args:
-            args: Tuple of (emb1_window, emb2_window)
-                  Each is (window_size * window_size, D)
+    # Reshape: (B * num_windows, window_size, window_size) -> (B, H, W)
+    # First reshape to separate batch and windows
+    combined = combined.reshape(B, num_windows, window_size, window_size)
+    # Transpose to interleave windows spatially: (B, num_h, num_w, wh, ww) -> (B, num_h, wh, num_w, ww)
+    num_h = H // window_size
+    num_w = W // window_size
+    combined = combined.reshape(B, num_h, num_w, window_size, window_size)
+    combined = combined.transpose(0, 1, 3, 2, 4)
+    combined = combined.reshape(B, num_h * window_size, num_w * window_size)
 
-        Returns:
-            Per-position loss (window_size * window_size,)
-        """
-        q_emb, k_emb = args
-
-        # Compute cross-attention logits
-        # Shape: (N, N) where N = window_size^2
-        logits = q_emb @ k_emb.T
-
-        # Softmax over key positions (frame 2)
-        # Shape: (N, N) - each row is a distribution over frame 2 positions
-        attn_weights = jax.nn.softmax(logits, axis=-1)
-
-        # Compute entropy for each query position
-        # Shape: (N,)
-        entropy = _compute_entropy(attn_weights)
-
-        # Return entropy (minimize)
-        return entropy
-
-    # Vectorize over all windows
-    per_window_loss = jax.vmap(window_cross_loss)((emb1_windows, emb2_windows))
-
-    # Reshape back to (B, num_h, num_w, window_size, window_size)
-    per_window_loss = per_window_loss.reshape(B, num_h, num_w, window_size, window_size)
-
-    # Transpose and reshape to original spatial dimensions
-    per_window_loss = per_window_loss.transpose(0, 1, 3, 2, 4)
-    per_window_loss = per_window_loss.reshape(B, H_padded, W_padded)
-
-    # Crop back to original size if we padded
-    if pad_h > 0 or pad_w > 0:
-        per_window_loss = per_window_loss[:, :H, :W]
-
-    return per_window_loss
-
-
-def combined_loss(
-    self_loss: jnp.ndarray,
-    cross_loss: jnp.ndarray,
-    alpha: float = 1.0,
-    beta: float = 1.0,
-) -> jnp.ndarray:
-    """Compute weighted combination of self and cross attention losses.
-
-    Args:
-        self_loss: Per-pixel self-attention loss (negative entropy)
-        cross_loss: Per-pixel cross-attention loss (positive entropy)
-        alpha: Weight for self-attention loss (default 1.0)
-        beta: Weight for cross-attention loss (default 1.0)
-
-    Returns:
-        Combined per-pixel loss
-    """
-    assert self_loss.shape == cross_loss.shape, (
-        f"Loss shapes mismatch: self={self_loss.shape}, cross={cross_loss.shape}"
-    )
-
-    return alpha * self_loss + beta * cross_loss
+    return combined

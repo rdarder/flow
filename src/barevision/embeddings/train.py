@@ -6,10 +6,12 @@ Uses tyro for CLI configuration.
 Run:
     python -m barevision.embeddings.train
     python -m barevision.embeddings.train --training.epochs 5 --dataset.batch-size 8
-    python -m barevision.embeddings.train --smoke-test
+    python -m barevision.embeddings.train --training.smoke-test
 """
 
+import random
 import time
+from typing import Iterator, List, Tuple
 
 import jax
 import jax.numpy as jnp
@@ -18,11 +20,7 @@ import tyro
 from flax import nnx
 
 from barevision.embeddings.model import SimpleEmbeddingModel
-from barevision.embeddings.loss import (
-    self_attention_entropy_loss,
-    cross_attention_entropy_loss,
-    combined_loss,
-)
+from barevision.embeddings.loss import combined_loss
 from barevision.embeddings.video_dataset import VideoFrameDataset
 from barevision.embeddings.settings import (
     Settings,
@@ -32,12 +30,22 @@ from barevision.embeddings.settings import (
 )
 
 
-def create_dataloader(split: str, batch_size: int, max_frames: int | None = None):
+def create_dataloader(
+    split: str,
+    batch_size: int,
+    img_size: tuple[int, int],
+    max_frames: int | None = None,
+) -> Iterator[Tuple[jnp.ndarray, jnp.ndarray]]:
     """Simple data loader that yields batches.
+
+    Note: Currently uses single-process loading. For multiprocessing,
+    integrate with PyTorch DataLoader or equivalent.
+    See dataset.num_workers setting for configuration.
 
     Args:
         split: 'train' or 'val'
         batch_size: Number of samples per batch
+        img_size: Image size (height, width) - must produce embeddings divisible by 16
         max_frames: Maximum number of frames to load (for smoke tests)
 
     Yields:
@@ -46,7 +54,7 @@ def create_dataloader(split: str, batch_size: int, max_frames: int | None = None
     dataset = VideoFrameDataset(
         split=split,
         max_frame_distance=5,
-        img_size=(190, 190),
+        img_size=img_size,
     )
 
     # For smoke tests, limit dataset size
@@ -57,7 +65,6 @@ def create_dataloader(split: str, batch_size: int, max_frames: int | None = None
 
     # Shuffle training data
     if split == "train":
-        import random
         random.shuffle(indices)
 
     # Yield batches
@@ -66,8 +73,8 @@ def create_dataloader(split: str, batch_size: int, max_frames: int | None = None
         if len(batch_indices) < batch_size:
             continue  # Skip incomplete batches
 
-        imgs1 = []
-        imgs2 = []
+        imgs1: List[jnp.ndarray] = []
+        imgs2: List[jnp.ndarray] = []
 
         for idx in batch_indices:
             img1, img2, _ = dataset[idx]
@@ -99,9 +106,8 @@ def train_step(model, optimizer, img1, img2, alpha=1.0, beta=1.0):
         emb1 = m(img1)
         emb2 = m(img2)
 
-        self_loss = self_attention_entropy_loss(emb1)
-        cross_loss = cross_attention_entropy_loss(emb1, emb2)
-        total = combined_loss(self_loss, cross_loss, alpha=alpha, beta=beta)
+        # Use combined_loss which handles window splitting internally
+        total = combined_loss(emb1, emb2, alpha=alpha, beta=beta)
 
         return total.mean()
 
@@ -137,8 +143,10 @@ def train(settings: Settings):
         in_channels=3,
         rngs=nnx.Rngs(jax.random.PRNGKey(0)),
     )
-    optimizer = nnx.Optimizer(model, optax.adam(settings.training.learning_rate), wrt=nnx.Param)
-    
+    optimizer = nnx.Optimizer(
+        model, optax.adam(settings.training.learning_rate), wrt=nnx.Param
+    )
+
     # Count parameters
     state = nnx.state(model)
     param_count = 0
@@ -150,7 +158,9 @@ def train(settings: Settings):
     print()
 
     # Training loop
-    print(f"Training for {settings.training.epochs} epochs with batch_size={settings.dataset.batch_size}")
+    print(
+        f"Training for {settings.training.epochs} epochs with batch_size={settings.dataset.batch_size}"
+    )
     if settings.training.steps_per_epoch > 0:
         print(f"Steps per epoch: {settings.training.steps_per_epoch}")
     print()
@@ -163,12 +173,19 @@ def train(settings: Settings):
         loader = create_dataloader(
             split="train",
             batch_size=settings.dataset.batch_size,
-            max_frames=settings.training.steps_per_epoch * settings.dataset.batch_size 
-                       if settings.training.steps_per_epoch > 0 else None,
+            img_size=settings.dataset.img_size,
+            max_frames=(
+                settings.training.steps_per_epoch * settings.dataset.batch_size
+                if settings.training.steps_per_epoch > 0
+                else None
+            ),
         )
 
         for step, (img1, img2) in enumerate(loader):
-            if settings.training.steps_per_epoch > 0 and step >= settings.training.steps_per_epoch:
+            if (
+                settings.training.steps_per_epoch > 0
+                and step >= settings.training.steps_per_epoch
+            ):
                 break
 
             # Training step
