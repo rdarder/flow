@@ -11,7 +11,7 @@ import sys
 def test_smoke_train():
     """Test that training smoke test completes successfully."""
     result = subprocess.run(
-        [sys.executable, "-m", "barevision.embeddings.train", "--smoke-test"],
+        [sys.executable, "-m", "barevision.embeddings.train", "--training.smoke-test"],
         capture_output=True,
         text=True,
         timeout=60,

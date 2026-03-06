@@ -1,18 +1,20 @@
 """Minimal training script for embedding model.
 
 Bare-bones training loop with just enough to verify the pipeline works.
-No checkpointing, no TensorBoard, no fancy configuration yet.
+Uses tyro for CLI configuration.
 
 Run:
-    python -m barevision.embeddings.train [--epochs N] [--batch-size N] [--smoke-test]
+    python -m barevision.embeddings.train
+    python -m barevision.embeddings.train --training.epochs 5 --dataset.batch-size 8
+    python -m barevision.embeddings.train --smoke-test
 """
 
-import argparse
 import time
 
 import jax
 import jax.numpy as jnp
 import optax
+import tyro
 from flax import nnx
 
 from barevision.embeddings.model import SimpleEmbeddingModel
@@ -22,6 +24,12 @@ from barevision.embeddings.loss import (
     combined_loss,
 )
 from barevision.embeddings.video_dataset import VideoFrameDataset
+from barevision.embeddings.settings import (
+    Settings,
+    DatasetSettings,
+    TrainingSettings,
+    create_smoke_test_settings,
+)
 
 
 def create_dataloader(split: str, batch_size: int, max_frames: int | None = None):
@@ -108,24 +116,14 @@ def train_step(model, optimizer, img1, img2, alpha=1.0, beta=1.0):
     return loss
 
 
-def train(
-    epochs: int = 1,
-    batch_size: int = 4,
-    steps_per_epoch: int | None = None,
-    smoke_test: bool = False,
-):
+def train(settings: Settings):
     """Main training loop.
 
     Args:
-        epochs: Number of training epochs
-        batch_size: Batch size
-        steps_per_epoch: Number of steps per epoch (None = full dataset)
-        smoke_test: If True, run minimal smoke test (1 epoch, 10 steps)
+        settings: Training configuration
     """
-    if smoke_test:
-        epochs = 1
-        steps_per_epoch = 10
-        batch_size = 2
+    if settings.training.smoke_test:
+        settings = create_smoke_test_settings()
 
     print("=" * 60)
     print("EMBEDDING TRAINING (Minimal)")
@@ -139,7 +137,7 @@ def train(
         in_channels=3,
         rngs=nnx.Rngs(jax.random.PRNGKey(0)),
     )
-    optimizer = nnx.Optimizer(model, optax.adam(1e-4), wrt=nnx.Param)
+    optimizer = nnx.Optimizer(model, optax.adam(settings.training.learning_rate), wrt=nnx.Param)
     
     # Count parameters
     state = nnx.state(model)
@@ -152,24 +150,25 @@ def train(
     print()
 
     # Training loop
-    print(f"Training for {epochs} epochs with batch_size={batch_size}")
-    if steps_per_epoch:
-        print(f"Steps per epoch: {steps_per_epoch}")
+    print(f"Training for {settings.training.epochs} epochs with batch_size={settings.dataset.batch_size}")
+    if settings.training.steps_per_epoch > 0:
+        print(f"Steps per epoch: {settings.training.steps_per_epoch}")
     print()
 
-    for epoch in range(epochs):
+    for epoch in range(settings.training.epochs):
         epoch_start = time.time()
         epoch_losses = []
 
         # Create data loader
         loader = create_dataloader(
             split="train",
-            batch_size=batch_size,
-            max_frames=steps_per_epoch * batch_size if steps_per_epoch else None,
+            batch_size=settings.dataset.batch_size,
+            max_frames=settings.training.steps_per_epoch * settings.dataset.batch_size 
+                       if settings.training.steps_per_epoch > 0 else None,
         )
 
         for step, (img1, img2) in enumerate(loader):
-            if steps_per_epoch and step >= steps_per_epoch:
+            if settings.training.steps_per_epoch > 0 and step >= settings.training.steps_per_epoch:
                 break
 
             # Training step
@@ -199,23 +198,9 @@ def train(
 
 
 def main():
-    """Entry point with CLI args."""
-    parser = argparse.ArgumentParser(description="Train embedding model")
-    parser.add_argument("--epochs", type=int, default=1, help="Number of epochs")
-    parser.add_argument("--batch-size", type=int, default=4, help="Batch size")
-    parser.add_argument(
-        "--steps-per-epoch", type=int, default=None, help="Steps per epoch"
-    )
-    parser.add_argument("--smoke-test", action="store_true", help="Run smoke test")
-
-    args = parser.parse_args()
-
-    train(
-        epochs=args.epochs,
-        batch_size=args.batch_size,
-        steps_per_epoch=args.steps_per_epoch,
-        smoke_test=args.smoke_test,
-    )
+    """Entry point with tyro CLI support."""
+    settings = tyro.cli(Settings)
+    train(settings)
 
 
 if __name__ == "__main__":
