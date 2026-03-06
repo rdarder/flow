@@ -1,18 +1,16 @@
-"""Checkpoint management with Orbax for Flow model training.
+"""Checkpoint management with Orbax for embedding model training.
 
 Provides a unified interface for checkpointing with Null Object pattern support.
 """
 
-import shutil
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Optional, Tuple, Union
 
-import jax.numpy as jnp
 import orbax.checkpoint as ocp
 from flax import nnx
 
-from .hierarchical_model import HierarchicalFlowModel
+from barevision.embeddings.model import SimpleEmbeddingModel
 
 
 class AbstractCheckpointManager(ABC):
@@ -30,18 +28,27 @@ class AbstractCheckpointManager(ABC):
     def save(
         self,
         step: int,
-        model: HierarchicalFlowModel,
+        model: SimpleEmbeddingModel,
         optimizer: nnx.Optimizer,
         epoch: int,
-        metrics: Optional[Dict[str, Any]] = None,
     ) -> bool:
-        """Save a checkpoint."""
+        """Save a checkpoint.
+
+        Args:
+            step: Current global step
+            model: Model to save
+            optimizer: Optimizer to save
+            epoch: Current epoch number
+
+        Returns:
+            True if save was successful
+        """
         pass
 
     @abstractmethod
     def restore(
         self,
-        model: HierarchicalFlowModel,
+        model: SimpleEmbeddingModel,
         optimizer: nnx.Optimizer,
         step: Optional[int] = None,
     ) -> Tuple[int, int]:
@@ -68,16 +75,15 @@ class NullCheckpointManager(AbstractCheckpointManager):
     def save(
         self,
         step: int,
-        model: HierarchicalFlowModel,
+        model: SimpleEmbeddingModel,
         optimizer: nnx.Optimizer,
         epoch: int,
-        metrics: Optional[Dict[str, Any]] = None,
     ) -> bool:
         return False
 
     def restore(
         self,
-        model: HierarchicalFlowModel,
+        model: SimpleEmbeddingModel,
         optimizer: nnx.Optimizer,
         step: Optional[int] = None,
     ) -> Tuple[int, int]:
@@ -110,7 +116,7 @@ class OrbaxCheckpointManager(AbstractCheckpointManager):
         self.checkpoint_dir = Path(checkpoint_dir).resolve()
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
-        # Store save interval for manual checking (Orbax's should_save doesn't work as expected)
+        # Store save interval for manual checking
         self.save_interval_steps = save_interval_steps
         self._last_saved_step = -1
 
@@ -125,9 +131,6 @@ class OrbaxCheckpointManager(AbstractCheckpointManager):
             self.checkpoint_dir,
             options=options,
         )
-
-        # Track current epoch for metadata
-        self._current_epoch = 0
 
     def should_save(self, step: int) -> bool:
         """Check if checkpoint should be saved at this step.
@@ -151,10 +154,9 @@ class OrbaxCheckpointManager(AbstractCheckpointManager):
     def save(
         self,
         step: int,
-        model: HierarchicalFlowModel,
+        model: SimpleEmbeddingModel,
         optimizer: nnx.Optimizer,
         epoch: int,
-        metrics: Optional[Dict[str, Any]] = None,
     ) -> bool:
         """Save a checkpoint.
 
@@ -163,13 +165,10 @@ class OrbaxCheckpointManager(AbstractCheckpointManager):
             model: Model to save
             optimizer: Optimizer to save
             epoch: Current epoch number
-            metrics: Optional metrics to save
 
         Returns:
             True if save was successful
         """
-        self._current_epoch = epoch
-
         # Prepare checkpoint data
         checkpoint = {
             "model": nnx.state(model),
@@ -188,12 +187,12 @@ class OrbaxCheckpointManager(AbstractCheckpointManager):
             print(f"Checkpoint saved at step {step}")
             return True
         except Exception as e:
-            print(f"Warning: Failed to save checkpoint at step {step}: {e}")
-            return False
+            # Fail on checkpoint errors
+            raise RuntimeError(f"Failed to save checkpoint at step {step}: {e}")
 
     def restore(
         self,
-        model: HierarchicalFlowModel,
+        model: SimpleEmbeddingModel,
         optimizer: nnx.Optimizer,
         step: Optional[int] = None,
     ) -> Tuple[int, int]:
@@ -225,8 +224,8 @@ class OrbaxCheckpointManager(AbstractCheckpointManager):
         nnx.update(model, current_state)
 
         # Restore optimizer state
-        optimizer.opt_state = checkpoint["optimizer_state"]  # type: ignore[attr-defined]
-        optimizer.step = checkpoint["optimizer_step"]  # type: ignore[attr-defined]
+        optimizer.opt_state = checkpoint["optimizer_state"]
+        optimizer.step = checkpoint["optimizer_step"]
 
         epoch = int(checkpoint.get("epoch", 0))
         global_step = step

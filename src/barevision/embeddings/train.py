@@ -29,6 +29,7 @@ from barevision.embeddings.settings import (
     create_smoke_test_settings,
 )
 from barevision.utils.logging import JaxLogger
+from barevision.embeddings.checkpoint_manager import create_checkpoint_manager
 
 
 def create_dataloader(
@@ -143,6 +144,14 @@ def train(settings: Settings):
         run_name_prefix="embeddings",
     )
 
+    # Initialize checkpoint manager with hardcoded defaults
+    checkpoint_manager = create_checkpoint_manager(
+        checkpoint_dir="test_checkpoints/embeddings",  # Separate from flow
+        save_interval_steps=1,  # Save every step for testing
+        max_to_keep=3,
+        enabled=True,
+    )
+
     # Initialize model
     print("Initializing model...")
     model = SimpleEmbeddingModel(
@@ -205,6 +214,15 @@ def train(settings: Settings):
             # Log loss to TensorBoard
             logger.log_scalar("Loss/train_step", float(loss), global_step)
 
+            # Save checkpoint if needed
+            if checkpoint_manager.should_save(global_step):
+                checkpoint_manager.save(
+                    step=global_step,
+                    model=model,
+                    optimizer=optimizer,
+                    epoch=epoch,
+                )
+
             # Log every few steps to console
             if step % 5 == 0:
                 elapsed = time.time() - epoch_start
@@ -221,6 +239,7 @@ def train(settings: Settings):
         print(f"Epoch {epoch} complete | Avg loss: {avg_loss:.4f} | {epoch_time:.1f}s")
         print()
 
+    checkpoint_manager.close()
     logger.close()
 
     print("=" * 60)
