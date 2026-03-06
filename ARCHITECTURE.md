@@ -1,21 +1,17 @@
 # Barevision: Non-Semantic Perception Architecture
 
-Barevision is a collection of machine learning models for non-semantic perception tasks, specifically designed to run on cheap NPUs with strict hardware constraints.
+Barevision is a collection of machine learning models for non-semantic perception tasks, specifically designed to run on cheap inference hardware.
 
 ## Project Vision
 
 Create a complete perception pipeline for low-cost robots using only a monocular camera. The system understands the 3D world through geometric reasoning (optical flow → depth → pose → SLAM) without semantic labels ("this is a wall, a person"), focusing instead on low-level "voxel" reconstruction.
 
-## Hardware Constraints (NPU-Bound)
+## Known hardware Constraints
 
-This project targets NPUs with the following limitations:
-
-- **No `gatherND` operations**: Traditional image warping is prohibited
-- **Fixed memory access patterns**: Only convolutions, pooling, element-wise operations
-- **Limited memory**: Hierarchical designs keep attention matrices tractable
-- **Cheap deployment**: Models must run on sub-$10 hardware
-
-**Design principle**: Every algorithm must respect these constraints. If an operation requires `gatherND`, we find an alternative (e.g., attention-based matching instead of warping).
+- We limit ourselves to using only one camera, so the approach is monocular.
+- Most solutions involving images as matrices tend to involve `gatherND` style operations, which serve as a basis for image warping. For example, 
+if we wanted to apply flow to an image, gatherND would be the go to approach. The NPUs we're targeting don't have support for gatherND. Even if they had it, it'd be inefficient. we don't resort to solutions involving this kind of dynamic memory access (a matrix containing individual memory offsets)
+- We aim to be able to reconstruct a 3d scene on very cheap hardware, so optimization doesn't haappen after the design, but rather guide the solution search space. 
 
 ## Component Map
 
@@ -29,33 +25,31 @@ This project targets NPUs with the following limitations:
 
 ## Core Design Patterns
 
-### 1. Hierarchical Processing
-- Coarse-to-fine pyramids capture large motions
-- Fixed-size attention windows (16×16) regardless of image resolution
-- Confidence-weighted blending across levels
-
-### 2. Attention-Based Matching
-- Replace `gatherND` warping with attention mechanisms
-- Visual similarity + spatial proximity scoring
-- Self-attention for peer propagation in textureless regions
-
-### 3. Gradient Isolation
-- Each pyramid level trains independently
-- Stop-gradient on upsampled priors
-- Prevents gradient confusion in deep hierarchies
+- We use a simplified cross attention mechanisms to find a patch in one frame inside the other frame. 
+- We use a small attention window size for being able to run attention efficiently.
+- We use simplified self attention mechanism to help guess flow on areas where cross attention didn't match well.
+- We process frames in a pyramid of resolutions to be able to capture large flow with a small window size. 
+- Hierarchies in the pyramid are processed coarse to fine grained, each level becoming a prior for next level flow. 
+- Attention mechanism use visual similarity and spatial proximity for computing weights. 
+- The sharpness of the attention vectors is a strong indicator of a good match, we use it as confidence.
 
 ### 4. Abstraction Boundaries
 ```
-Image → Grid → Window → Token
+Embedding <- Window <- Grid <- Image level
 ```
 Clean separation between spatial operations (splitting/stitching) and attention mechanics.
 
-## Development Methodology
+Embedding: A dimensional representation of a patch of the image, computed by a model. An abstract "pixel".
+Window: A square contiguous region of embeddings where attention mechanism can run on.
+Grid: A rectangular arrangement of non overlapping windows that makes up the entire image being analyzed. 
+Image: the raw rame, typically in 1 or 3 channels.
 
-**"Integrate immediately, verify always"** – Run smoke tests after each architectural change to ensure the system remains functional.
+* Images are analyzed in pairs (as in a pair of consecutive frames in a video
+
+TODO: downsampling and levels is not correctly explained here. perhaps done in the embeddings package.
 
 ### Verification Pipeline
-1. **Unit tests**: `pytest src/barevision/flow`
+1. **Unit tests**: `pytest barevision.flow`
 2. **Smoke test**: `python -m barevision.flow.train --smoke-test`
 3. **Import validation**: `from barevision.flow import HierarchicalFlowModel`
 

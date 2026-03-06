@@ -1,14 +1,25 @@
 # Hierarchical Optical Flow: Architecture
 
-An attention-based optical flow estimator designed for cheap NPUs without gatherND (warping) support.
+An attention-based optical flow estimator designed for cheap hardware.
 
 > **Note**: This document describes the optical flow component of the Barevision project. For high-level project overview, see [../../ARCHITECTURE.md](../../ARCHITECTURE.md).
 
 ## Overview
 
-This model estimates optical flow between two frames using a hierarchical pyramid with windowed attention. Instead of warping pixels (which requires gatherND), we use attention mechanisms to find correspondences between frames. The pyramid structure enables capturing large motions while keeping attention matrices tractable (16×16 windows).
+This model estimates optical flow between two frames using a hierarchical pyramid with windowed attention. It estimates flow by trying to densely find where each pixel from a frame landed on another frame.
+- It uses attention mechanisms to match image patches on both frames. 
+- It does so in small attention windows for performance. 
+- Attention windows don't overlap for simplicity and performance.
+- The model relies on some heuristics for making the attention based matching perform better:
 
-**Constraint-driven design**: Traditional optical flow methods warp frame 2 toward frame 1 using estimated flow. Our target NPU cannot do this efficiently. We use pure attention-based matching instead.
+  - attention is weighted by distance: embeddings that are farther apart need higher scores to be considered a match. 
+  - Large flow cannot be captured at the finest resolution with a small window. It can be matched from a coarser resolution level. Flow at one level is considered a prior flow on the next level, which influences the flow guess based on how well it matched with reachable embeddings.
+  - When a prior flow is available (such as from temporal estimation or from coarser levels), "farther away" is interpreted as farther away from the prior, not from the exact source embedding position. 
+  - Near the lookup window edges, matching is also altered since there's a higher chance that the target pixel is outside the lookup window. 
+  - When cross frame attention doesn't find a sharp match, the model resorts to using self attention and copying flow from similarly looking embeddings that did have a better cross frame match, assuming they may be part of the same rigid object. 
+
+- The model has only a few parameters. Most of the learning aspect of the model comes from projecting the best embeddings for a given scene. Besides embeddings, the model holds a few scaling parameters that govern how strong is each heuristic. 
+- We never "apply" flow at inference time, since that kind of operation implies using operations like GatherND, which is not supported in some of the hardware we run this for inference. We _may_ use gatherND at training time, specially for self supervision and an optical reconstruction loss. 
 
 ## Architecture Layers
 

@@ -10,3 +10,5 @@ datasets/chairs_32
 src/barevision.egg-info/
 tmp/
 test_checkpoints/
+datasets/frames/
+datasets/videos/
