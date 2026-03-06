@@ -1,6 +1,6 @@
 """Barevision: Non-semantic perception for cheap robots.
 
-This package contains modules for optical flow, embedding generation, 
+This package contains modules for optical flow, embedding generation,
 and other perception tasks targeting NPU-constrained hardware.
 """
 

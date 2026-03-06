@@ -12,3 +12,4 @@ tmp/
 test_checkpoints/
 datasets/frames/
 datasets/videos/
+test_runs/

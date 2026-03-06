@@ -28,6 +28,7 @@ from barevision.embeddings.settings import (
     TrainingSettings,
     create_smoke_test_settings,
 )
+from barevision.utils.logging import JaxLogger
 
 
 def create_dataloader(
@@ -136,6 +137,12 @@ def train(settings: Settings):
     print("=" * 60)
     print()
 
+    # Initialize logger
+    logger = JaxLogger(
+        log_dir="runs",
+        run_name_prefix="embeddings",
+    )
+
     # Initialize model
     print("Initializing model...")
     model = SimpleEmbeddingModel(
@@ -165,6 +172,8 @@ def train(settings: Settings):
         print(f"Steps per epoch: {settings.training.steps_per_epoch}")
     print()
 
+    global_step = 0
+
     for epoch in range(settings.training.epochs):
         epoch_start = time.time()
         epoch_losses = []
@@ -191,8 +200,12 @@ def train(settings: Settings):
             # Training step
             loss = train_step(model, optimizer, img1, img2)
             epoch_losses.append(float(loss))
+            global_step += 1
 
-            # Log every few steps
+            # Log loss to TensorBoard
+            logger.log_scalar("Loss/train_step", float(loss), global_step)
+
+            # Log every few steps to console
             if step % 5 == 0:
                 elapsed = time.time() - epoch_start
                 steps_per_sec = (step + 1) / elapsed
@@ -204,8 +217,11 @@ def train(settings: Settings):
         # Epoch summary
         epoch_time = time.time() - epoch_start
         avg_loss = sum(epoch_losses) / len(epoch_losses)
+        logger.log_scalar("Loss/train_epoch", avg_loss, epoch)
         print(f"Epoch {epoch} complete | Avg loss: {avg_loss:.4f} | {epoch_time:.1f}s")
         print()
+
+    logger.close()
 
     print("=" * 60)
     print("TRAINING COMPLETE")

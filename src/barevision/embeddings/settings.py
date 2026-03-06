@@ -78,14 +78,14 @@ def create_smoke_test_settings() -> Settings:
     """Minimal settings for quick validation."""
     return Settings(
         dataset=DatasetSettings(
-            batch_size=2,
-            img_size=(194, 194),  # Results in 192x192 embeddings (12x12 windows)
+            batch_size=1,  # Minimum for speed
+            img_size=(194, 194),
             max_frame_distance=5,
-            num_workers=0,  # No multiprocessing in smoke tests (simpler debugging)
+            num_workers=0,
         ),
         training=TrainingSettings(
             epochs=1,
-            steps_per_epoch=10,
+            steps_per_epoch=2,  # Only 2 steps for speed
             learning_rate=1e-4,
         ),
     )
