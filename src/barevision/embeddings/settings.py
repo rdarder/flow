@@ -4,7 +4,8 @@ Minimal settings using tyro for CLI parsing. Only includes parameters
 currently used by the training script.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Tuple
 
 
 @dataclass
@@ -14,15 +15,15 @@ class DatasetSettings:
     Attributes:
         batch_size: Training batch size
         img_size: Input image size as (height, width) tuple.
-                 Must result in embeddings divisible by window_size (16).
-                 Model uses 3x3 valid conv, so output is (H-2, W-2).
-                 Recommended: (194, 194) -> (192, 192) embeddings = 12x12 windows
+                  Must result in embeddings divisible by window_size (16).
+                  Model uses 3x3 valid conv, so output is (H-2, W-2).
+                  Recommended: (194, 194) -> (192, 192) embeddings = 12x12 windows
         max_frame_distance: Maximum temporal distance for frame pairs
         num_workers: Number of worker processes for data loading (0 = main process only)
     """
 
     batch_size: int = 4
-    img_size: tuple[int, int] = (194, 194)
+    img_size: Tuple[int, int] = (194, 194)
     max_frame_distance: int = 5
     num_workers: int = 4
 
@@ -40,6 +41,29 @@ class DatasetSettings:
 
 
 @dataclass
+class LoggingSettings:
+    """TensorBoard logging configuration.
+
+    Attributes:
+        log_dir: Root directory for TensorBoard logs
+        run_name_prefix: Prefix for auto-generated run names
+        log_every_steps: Log metrics every N steps
+    """
+
+    log_dir: str = "runs"
+    run_name_prefix: str = "embeddings"
+    log_every_steps: int = 10
+
+    def __post_init__(self):
+        if not self.log_dir:
+            raise ValueError("log_dir cannot be empty")
+        if self.log_every_steps < 1:
+            raise ValueError(
+                f"log_every_steps must be >= 1, got {self.log_every_steps}"
+            )
+
+
+@dataclass
 class TrainingSettings:
     """Training hyperparameters.
 
@@ -48,18 +72,34 @@ class TrainingSettings:
         steps_per_epoch: Steps per epoch (-1 for full dataset)
         learning_rate: Optimizer learning rate
         smoke_test: Run minimal smoke test (overrides epochs=1, steps_per_epoch=10, batch_size=2)
+        checkpoint_freq: Save checkpoint every N steps (0 to disable)
+        checkpoint_dir: Directory to save checkpoints
+        keep_last_n_checkpoints: Number of recent checkpoints to keep (0 to keep all)
+        resume: Whether to resume from latest checkpoint in checkpoint_dir
     """
 
     epochs: int = 1
     steps_per_epoch: int = -1
     learning_rate: float = 1e-4
     smoke_test: bool = False
+    checkpoint_freq: int = 50
+    checkpoint_dir: str = "checkpoints/embeddings"
+    keep_last_n_checkpoints: int = 3
+    resume: bool = False
 
     def __post_init__(self):
         if self.epochs < 1:
             raise ValueError(f"epochs must be >= 1, got {self.epochs}")
         if self.learning_rate <= 0:
             raise ValueError(f"learning_rate must be > 0, got {self.learning_rate}")
+        if self.checkpoint_freq < 0:
+            raise ValueError(
+                f"checkpoint_freq must be >= 0, got {self.checkpoint_freq}"
+            )
+        if self.keep_last_n_checkpoints < 0:
+            raise ValueError(
+                f"keep_last_n_checkpoints must be >= 0, got {self.keep_last_n_checkpoints}"
+            )
 
 
 @dataclass
@@ -72,6 +112,7 @@ class Settings:
 
     dataset: DatasetSettings
     training: TrainingSettings
+    logging: LoggingSettings
 
 
 def create_smoke_test_settings() -> Settings:
@@ -87,5 +128,13 @@ def create_smoke_test_settings() -> Settings:
             epochs=1,
             steps_per_epoch=2,  # Only 2 steps for speed
             learning_rate=1e-4,
+            checkpoint_freq=1,  # Save every step for testing
+            checkpoint_dir="test_checkpoints/embeddings",
+            keep_last_n_checkpoints=2,
+        ),
+        logging=LoggingSettings(
+            log_dir="runs",
+            run_name_prefix="smoke_test",
+            log_every_steps=1,  # Log every step in smoke test
         ),
     )

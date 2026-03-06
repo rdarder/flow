@@ -140,16 +140,16 @@ def train(settings: Settings):
 
     # Initialize logger
     logger = JaxLogger(
-        log_dir="runs",
-        run_name_prefix="embeddings",
+        log_dir=settings.logging.log_dir,
+        run_name_prefix=settings.logging.run_name_prefix,
     )
 
-    # Initialize checkpoint manager with hardcoded defaults
+    # Initialize checkpoint manager
     checkpoint_manager = create_checkpoint_manager(
-        checkpoint_dir="test_checkpoints/embeddings",  # Separate from flow
-        save_interval_steps=1,  # Save every step for testing
-        max_to_keep=3,
-        enabled=True,
+        checkpoint_dir=settings.training.checkpoint_dir,
+        save_interval_steps=settings.training.checkpoint_freq,
+        max_to_keep=settings.training.keep_last_n_checkpoints,
+        enabled=settings.training.checkpoint_freq > 0,
     )
 
     # Initialize model
