@@ -134,7 +134,7 @@ def train(settings: Settings):
         settings = create_smoke_test_settings()
 
     print("=" * 60)
-    print("EMBEDDING TRAINING (Minimal)")
+    print("EMBEDDING TRAINING")
     print("=" * 60)
     print()
 
@@ -144,14 +144,6 @@ def train(settings: Settings):
         run_name_prefix=settings.logging.run_name_prefix,
     )
 
-    # Initialize checkpoint manager
-    checkpoint_manager = create_checkpoint_manager(
-        checkpoint_dir=settings.training.checkpoint_dir,
-        save_interval_steps=settings.training.checkpoint_freq,
-        max_to_keep=settings.training.keep_last_n_checkpoints,
-        enabled=settings.training.checkpoint_freq > 0,
-    )
-
     # Initialize model
     print("Initializing model...")
     model = SimpleEmbeddingModel(
@@ -159,6 +151,8 @@ def train(settings: Settings):
         in_channels=3,
         rngs=nnx.Rngs(jax.random.PRNGKey(0)),
     )
+
+    # Initialize optimizer
     optimizer = nnx.Optimizer(
         model, optax.adam(settings.training.learning_rate), wrt=nnx.Param
     )
@@ -173,6 +167,30 @@ def train(settings: Settings):
     print(f"Model parameters: {param_count}")
     print()
 
+    # Initialize checkpoint manager
+    checkpoint_manager = create_checkpoint_manager(
+        checkpoint_dir=settings.training.checkpoint_dir,
+        save_interval_steps=settings.training.checkpoint_freq,
+        max_to_keep=settings.training.keep_last_n_checkpoints,
+        enabled=settings.training.checkpoint_freq > 0,
+    )
+
+    # Handle resume
+    start_epoch = 0
+    global_step = 0
+
+    if settings.training.resume:
+        latest_step = checkpoint_manager.latest_step()
+        if latest_step is not None:
+            print(f"Resuming from checkpoint at step {latest_step}")
+            start_epoch, global_step = checkpoint_manager.restore(
+                model=model,
+                optimizer=optimizer,
+            )
+        else:
+            print("Warning: No checkpoint found to resume from")
+            print("Starting fresh training...")
+
     # Training loop
     print(
         f"Training for {settings.training.epochs} epochs with batch_size={settings.dataset.batch_size}"
@@ -181,9 +199,7 @@ def train(settings: Settings):
         print(f"Steps per epoch: {settings.training.steps_per_epoch}")
     print()
 
-    global_step = 0
-
-    for epoch in range(settings.training.epochs):
+    for epoch in range(start_epoch, settings.training.epochs):
         epoch_start = time.time()
         epoch_losses = []
 

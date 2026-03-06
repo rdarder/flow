@@ -174,7 +174,7 @@ class OrbaxCheckpointManager(AbstractCheckpointManager):
             "model": nnx.state(model),
             "optimizer_state": optimizer.opt_state,
             "optimizer_step": optimizer.step,
-            "epoch": epoch,
+            "epoch": epoch + 1,  # Save next epoch to resume from
         }
 
         # Save using Orbax

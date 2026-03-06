@@ -43,7 +43,7 @@ def test_checkpoint_manager_smoke():
     optimizer2 = nnx.Optimizer(model2, optax.adam(1e-4), wrt=nnx.Param)
 
     epoch, step = manager.restore(model2, optimizer2)
-    assert epoch == 0, f"Expected epoch 0, got {epoch}"
+    assert epoch == 1, f"Expected epoch 1 (next after saved epoch 0), got {epoch}"
     assert step == 5, f"Expected step 5, got {step}"
 
     manager.close()
