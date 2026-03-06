@@ -135,3 +135,25 @@ class TestSimpleEmbeddingModel:
         is_nonzero_pw = jnp.any(pw_value != 0)
         assert bool(is_nonzero_dw), "Zero gradients in depthwise_conv.kernel"
         assert bool(is_nonzero_pw), "Zero gradients in pointwise_conv.kernel"
+
+
+def test_model_initialization():
+    """Test that model initializes with correct parameter count."""
+    import jax.random as jr
+    from flax import nnx
+
+    from barevision.embeddings.model import SimpleEmbeddingModel
+
+    model = SimpleEmbeddingModel(
+        embed_dim=16, in_channels=3, rngs=nnx.Rngs(jr.PRNGKey(0))
+    )
+
+    # Count parameters (same logic as train.py)
+    state = nnx.state(model)
+    param_count = 0
+    for module_state in state.values():
+        for param_value in module_state.values():
+            if hasattr(param_value, "size"):
+                param_count += param_value.size
+
+    assert param_count == 328, f"Expected 328 parameters, got {param_count}"

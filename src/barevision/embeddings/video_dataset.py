@@ -9,11 +9,10 @@ Train/val split:
 """
 
 import os
-from pathlib import Path
-from typing import List, Tuple, NamedTuple, Optional
+from typing import List, NamedTuple, Optional, Tuple
 
-from PIL import Image
 import numpy as np
+from PIL import Image
 
 from .utils import get_datasets_dir
 
@@ -67,7 +66,9 @@ class VideoFrameDataset:
         self.img_size = img_size
 
         assert split in ["train", "val"], f"Invalid split: {split}"
-        assert os.path.isdir(self.data_root), f"Dataset root not found: {self.data_root}"
+        assert os.path.isdir(
+            self.data_root
+        ), f"Dataset root not found: {self.data_root}"
 
         # Get video directories
         all_videos = sorted(os.listdir(self.data_root))
@@ -165,6 +166,7 @@ class VideoFrameDataset:
         # Resize to target size (use Resampling.LANCZOS if available, else LANCZOS)
         try:
             from PIL.Image import Resampling
+
             resample = Resampling.LANCZOS
         except ImportError:
             resample = Image.LANCZOS
@@ -195,9 +197,7 @@ class VideoFrameDataset:
             video_path = os.path.join(self.data_root, video_name)
             if os.path.isdir(video_path):
                 frames = [
-                    f
-                    for f in os.listdir(video_path)
-                    if f.endswith((".jpg", ".png"))
+                    f for f in os.listdir(video_path) if f.endswith((".jpg", ".png"))
                 ]
                 if video_name in stats["videos"]:
                     stats["videos"][video_name]["frames"] = len(frames)
