@@ -1,3 +1,9 @@
+"""Grid and window utilities for spatial operations.
+
+Extracted from barevision.flow.window_grid for use across barevision modules.
+Provides window splitting/stitching, coordinate grids, and resolution validation.
+"""
+
 from typing import Optional, Tuple
 
 import jax.numpy as jnp
@@ -9,8 +15,7 @@ def compute_valid_resolution(
     height: Optional[int] = None,
     width: Optional[int] = None,
 ) -> Tuple[int, int]:
-    """
-    Compute the required image resolution for a given number of pyramid levels.
+    """Compute the required image resolution for a given number of pyramid levels.
 
     For num_levels pyramid levels and given window_size, we need:
     - Level N-1 (finest): window_size * 2^(num_levels-1) embeddings
@@ -43,8 +48,7 @@ def compute_valid_resolution(
 def validate_resolution(
     height: int, width: int, num_levels: int, window_size: int = 16
 ) -> Tuple[bool, str]:
-    """
-    Validate that image resolution is compatible with pyramid + windowing.
+    """Validate that image resolution is compatible with pyramid + windowing.
 
     Args:
         height: Input image height
@@ -88,8 +92,7 @@ def crop_to_valid(
     target_height: Optional[int] = None,
     target_width: Optional[int] = None,
 ) -> jnp.ndarray:
-    """
-    Center-crop an image to the valid resolution for the given pyramid depth.
+    """Center-crop an image to the valid resolution for the given pyramid depth.
 
     Args:
         img: Image tensor (B, H, W, C) or (H, W, C)
@@ -192,8 +195,7 @@ def tokens_to_grid(tokens: jnp.ndarray, h: int, w: int) -> jnp.ndarray:
 
 
 class WindowGrid:
-    """
-    Handles splitting and stitching of embedding grids into windows.
+    """Handles splitting and stitching of embedding grids into windows.
 
     For example, with window_size=16:
     - 32x32 embeddings -> 4 windows (2x2 grid)
@@ -225,8 +227,7 @@ class WindowGrid:
         return num_h * num_w
 
     def split(self, embeddings: jnp.ndarray) -> jnp.ndarray:
-        """
-        Split embeddings into non-overlapping windows.
+        """Split embeddings into non-overlapping windows.
 
         Args:
             embeddings: (B, H, W, C) tensor
@@ -268,8 +269,7 @@ class WindowGrid:
         return windows
 
     def stitch(self, windows: jnp.ndarray, grid_h: int, grid_w: int) -> jnp.ndarray:
-        """
-        Stitch windows back into a grid.
+        """Stitch windows back into a grid.
 
         Args:
             windows: (B, num_windows, window_size, window_size, C) tensor

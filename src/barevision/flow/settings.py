@@ -7,7 +7,7 @@ Uses window_grid utilities for image size validation against pyramid levels.
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
-from .window_grid import compute_valid_resolution, validate_resolution
+from barevision.utils.grid import compute_valid_resolution, validate_resolution
 
 
 @dataclass

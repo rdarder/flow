@@ -5,7 +5,7 @@ import pytest
 from flax import nnx
 
 from .grid_flow import GridFlowEstimator
-from .window_grid import (
+from barevision.utils.grid import (
     WindowGrid,
     create_coordinate_grid,
     grid_to_tokens,

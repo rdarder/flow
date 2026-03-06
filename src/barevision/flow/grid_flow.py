@@ -11,7 +11,7 @@ from flax import nnx
 
 from .token_attention import TokenCrossAttention, TokenSelfAttention
 from .flow_blend import PriorBlender
-from .window_grid import (
+from barevision.utils.grid import (
     WindowGrid,
     create_coordinate_grid,
     grid_to_tokens,
