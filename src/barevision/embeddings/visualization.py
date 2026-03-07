@@ -134,43 +134,59 @@ def _select_random_pixels(
 
 
 def create_frame_with_grid_figure(
-    img: np.ndarray,
+    img1: np.ndarray,
+    img2: np.ndarray,
+    metadata: dict,
     window_size: int,
     highlighted_window: Optional[Tuple[int, int]] = None,
 ) -> np.ndarray:
-    """Display input frame with 16x16 grid overlay and optional highlighted window.
+    """Display both frames with 16x16 grid overlay and highlighted window.
+    
+    Shows frame 1 and frame 2 side by side with grid overlays and frame info.
 
     Args:
-        img: (H, W, 3) RGB image, values in [0, 1]
+        img1: (H, W, 3) RGB image, values in [0, 1] - first frame
+        img2: (H, W, 3) RGB image, values in [0, 1] - second frame
+        metadata: dict with video_name, frame_t, frame_tk, distance
         window_size: Size of grid cells (typically 16)
         highlighted_window: (row, col) of window to highlight with colored border
 
     Returns:
         RGB image array (H_fig, W_fig, 3) as uint8
     """
-    H, W = img.shape[:2]
+    H, W = img1.shape[:2]
     num_windows_h = H // window_size
     num_windows_w = W // window_size
-
-    fig, ax = plt.subplots(1, 1, figsize=FRAME_WITH_GRID_SIZE, dpi=FIGURE_DPI)
-
-    # Display image
-    ax.imshow(img)
-
-    # Add grid overlay
-    _add_grid_overlay(ax, window_size, H, W, highlighted_window)
-
-    # Title with window info
+    
+    # Create figure with 2 subplots side by side
+    fig, axes = plt.subplots(1, 2, figsize=(20, 10), dpi=FIGURE_DPI)
+    
+    # Extract frame info from metadata
+    video_name = metadata.get("video_name", "unknown")
+    frame_t = metadata.get("frame_t", 0)
+    frame_tk = metadata.get("frame_tk", 0)
+    distance = metadata.get("distance", 0)
+    
+    # Frame 1 (left)
+    axes[0].imshow(img1)
+    _add_grid_overlay(axes[0], window_size, H, W, highlighted_window)
+    title1 = f"Frame {frame_t} | Video: {video_name}"
     if highlighted_window is not None:
         row, col = highlighted_window
-        title = f"Frame with Grid | Highlighted: Window ({row}, {col}) | Grid: {num_windows_h}x{num_windows_w}"
-    else:
-        title = f"Frame with Grid | {num_windows_h}x{num_windows_w} windows"
-    ax.set_title(title, fontsize=14, fontweight="bold")
-
-    ax.axis("off")
+        title1 += f" | Window ({row}, {col})"
+    axes[0].set_title(title1, fontsize=14, fontweight="bold")
+    axes[0].axis("off")
+    
+    # Frame 2 (right)
+    axes[1].imshow(img2)
+    _add_grid_overlay(axes[1], window_size, H, W, highlighted_window)
+    title2 = f"Frame {frame_tk} (t+{distance}) | Video: {video_name}"
+    if highlighted_window is not None:
+        title2 += f" | Window ({row}, {col})"
+    axes[1].set_title(title2, fontsize=14, fontweight="bold")
+    axes[1].axis("off")
+    
     plt.tight_layout()
-
     return _figure_to_array(fig)
 
 
@@ -497,6 +513,7 @@ def log_visualizations(
     model: SimpleEmbeddingModel,
     img1: jnp.ndarray,
     img2: jnp.ndarray,
+    metadata: dict,
     step: int,
     settings: Settings,
 ):
@@ -515,6 +532,7 @@ def log_visualizations(
         model: Embedding model
         img1: Frame 1 (1, H, W, 3)
         img2: Frame 2 (1, H, W, 3)
+        metadata: dict with video_name, frame_t, frame_tk, distance
         step: Global step for logging
         settings: Settings object (for window_size, etc.)
     """
@@ -547,6 +565,7 @@ def log_visualizations(
 
     # Convert JAX arrays to numpy for visualization
     img1_np = np.array(img1[0])  # (H, W, 3)
+    img2_np = np.array(img2[0])  # (H, W, 3)
     window_crop_np = np.array(attention_data.window_crop)  # (16, 16, 3)
     self_attn_np = np.array(attention_data.self_attention)  # (N, 16, 16)
     cross_attn_np = np.array(attention_data.cross_attention)  # (N, 16, 16)
@@ -590,9 +609,9 @@ def log_visualizations(
         emb_h_start : emb_h_start + window_size, emb_w_start : emb_w_start + window_size
     ] = cross_loss_window[0]
 
-    # 1. Frame with grid
+    # 1. Frame with grid (showing both frames)
     fig_frame = create_frame_with_grid_figure(
-        img1_np, window_size, highlighted_window=window_indices
+        img1_np, img2_np, metadata, window_size, highlighted_window=window_indices
     )
     logger.log_figure("Frame/Grid", fig_frame, step)
 

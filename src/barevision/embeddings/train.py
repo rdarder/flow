@@ -44,7 +44,7 @@ def create_dataloader(
     max_frames: int | None = None,
     shuffle: bool = True,
     random_seed: int | None = None,
-) -> Iterator[Tuple[jnp.ndarray, jnp.ndarray]]:
+) -> Iterator[tuple[jnp.ndarray, jnp.ndarray, list[dict]]]:
     """Simple data loader that yields batches.
 
     Note: Currently uses single-process loading. For multiprocessing,
@@ -61,7 +61,10 @@ def create_dataloader(
         random_seed: Random seed for shuffling (for reproducibility)
 
     Yields:
-        Tuple of (img1_batch, img2_batch) each of shape (B, H, W, 3)
+        Tuple of (img1_batch, img2_batch, metadata_batch) where:
+            - img1_batch: (B, H, W, 3)
+            - img2_batch: (B, H, W, 3)
+            - metadata_batch: dict with video_name, frame_t, frame_tk, distance
     """
     dataset = VideoFrameDataset(
         split=split,
@@ -97,16 +100,18 @@ def create_dataloader(
 
         imgs1: List[jnp.ndarray] = []
         imgs2: List[jnp.ndarray] = []
+        metadata_list: List[dict] = []
 
         for idx in batch_indices:
-            img1, img2, _ = dataset[idx]
+            img1, img2, meta = dataset[idx]
             imgs1.append(img1)
             imgs2.append(img2)
+            metadata_list.append(meta)
 
         img1_batch = jnp.stack(imgs1)
         img2_batch = jnp.stack(imgs2)
 
-        yield img1_batch, img2_batch
+        yield img1_batch, img2_batch, metadata_list
 
 
 def train_step(model, optimizer, img1, img2, alpha=1.0, beta=1.0):
@@ -235,7 +240,7 @@ def train(settings: Settings):
             ),
         )
 
-        for step, (img1, img2) in enumerate(loader):
+        for step, (img1, img2, metadata) in enumerate(loader):
             if (
                 settings.training.steps_per_epoch > 0
                 and step >= settings.training.steps_per_epoch
@@ -274,9 +279,9 @@ def train(settings: Settings):
                     shuffle=True,
                     random_seed=global_step,
                 )
-                viz_img1, viz_img2 = next(viz_loader)
+                viz_img1, viz_img2, viz_metadata = next(viz_loader)
                 log_visualizations(
-                    logger, model, viz_img1, viz_img2, global_step, settings
+                    logger, model, viz_img1, viz_img2, viz_metadata[0], global_step, settings
                 )
 
             # Log every few steps to console
@@ -301,7 +306,7 @@ def train(settings: Settings):
             img_size=settings.dataset.img_size,
             max_frames=1,
         )
-        sample_img1, sample_img2 = next(sample_loader)
+        sample_img1, sample_img2, _ = next(sample_loader)
         embeddings = model(sample_img1)
 
         log_embedding_statistics(logger, embeddings, epoch)
