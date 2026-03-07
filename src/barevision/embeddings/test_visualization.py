@@ -52,14 +52,23 @@ def test_loss_heatmap_figures():
 
 
 def test_attention_maps_figure():
-    """Test attention maps visualization."""
-    window_crop = np.random.rand(16, 16, 3).astype(np.float32)
+    """Test attention maps visualization with both frame crops and auto-scaling."""
+    window_crop1 = np.random.rand(16, 16, 3).astype(np.float32)
+    window_crop2 = np.random.rand(16, 16, 3).astype(np.float32)
     self_attn = np.random.rand(4, 16, 16).astype(np.float32)
     cross_attn = np.random.rand(4, 16, 16).astype(np.float32)
     pixel_positions = np.array([[1, 2], [5, 6], [9, 10], [13, 14]], dtype=np.int32)
 
     fig = create_attention_maps_figure(
-        window_crop, self_attn, cross_attn, pixel_positions, window_indices=(5, 6)
+        window_crop1,
+        window_crop2,  # Both frame crops
+        self_attn,
+        cross_attn,
+        pixel_positions,
+        window_indices=(5, 6),
+        frame_t=100,
+        frame_tk=103,
+        distance=3,
     )
 
     assert fig.dtype == np.uint8

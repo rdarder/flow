@@ -283,21 +283,29 @@ def create_loss_heatmap_figures(
 
 def create_attention_maps_figure(
     window_crop: np.ndarray,
+    window_crop2: np.ndarray,
     self_attn_maps: np.ndarray,
     cross_attn_maps: np.ndarray,
     pixel_positions: np.ndarray,
     window_size: int = 16,
     window_indices: Optional[Tuple[int, int]] = None,
+    frame_t: int = 0,
+    frame_tk: int = 0,
+    distance: int = 0,
 ) -> np.ndarray:
     """Create figure showing attention maps for selected pixels.
 
     Args:
-        window_crop: (16, 16, 3) image crop for this window
+        window_crop: (16, 16, 3) image crop for frame 1
+        window_crop2: (16, 16, 3) image crop for frame 2
         self_attn_maps: (N, 16, 16) self-attention weights for N pixels
         cross_attn_maps: (N, 16, 16) cross-attention weights for N pixels
         pixel_positions: (N, 2) (y, x) positions of queried pixels
         window_size: Window dimension (default 16)
         window_indices: (row, col) of window in grid (for title)
+        frame_t: Frame number for crop 1
+        frame_tk: Frame number for crop 2
+        distance: Temporal distance between frames
 
     Returns:
         RGB image array (H_fig, W_fig, 3) as uint8
@@ -305,7 +313,7 @@ def create_attention_maps_figure(
     n_pixels = len(pixel_positions)
 
     # Layout: 2 rows × (n_pixels + 1) columns
-    # Column 0: Window crop (spanning both rows)
+    # Column 0: Both frame crops stacked vertically
     # Columns 1..n: Attention maps for each pixel
     n_cols = n_pixels + 1
     fig, axes = plt.subplots(2, n_cols, figsize=ATTENTION_MAPS_SIZE, dpi=FIGURE_DPI)
@@ -323,18 +331,23 @@ def create_attention_maps_figure(
     elif not isinstance(axes, np.ndarray):
         axes = np.array(axes).reshape(2, n_cols)
 
-    # Column 0: Window crop (spanning both rows)
+    # Column 0: Show BOTH frame crops stacked vertically
+    # Row 0, Col 0: Frame 1 crop
     axes[0, 0].imshow(window_crop)
-    window_title = f"Window Crop{title_suffix}"
-    axes[0, 0].set_title(window_title, fontsize=12, fontweight="bold")
+    axes[0, 0].set_title(f"Frame {frame_t}{title_suffix}", fontsize=12, fontweight="bold")
     axes[0, 0].axis("off")
-    axes[1, 0].axis("off")  # Empty below
+    
+    # Row 1, Col 0: Frame 2 crop
+    axes[1, 0].imshow(window_crop2)
+    axes[1, 0].set_title(f"Frame {frame_tk} (t+{distance})", fontsize=12, fontweight="bold")
+    axes[1, 0].axis("off")
 
-    # Mark pixel positions on window crop
+    # Mark pixel positions on BOTH crops
     for i, (y, x) in enumerate(pixel_positions):
-        # Use different colors for different pixels
         colors = ["red", "blue", "green", "orange"]
         color = colors[i % len(colors)]
+        
+        # Mark on Frame 1 (row 0)
         axes[0, 0].scatter(
             [x + 0.5],
             [y + 0.5],
@@ -342,18 +355,39 @@ def create_attention_maps_figure(
             s=100,
             marker="x",
             linewidths=3,
-            label=f"Pixel {i}",
+            label=f"Pixel {i}" if i == 0 else "",
         )
-        axes[0, 0].legend(loc="upper right", fontsize=9)
+        # Mark on Frame 2 (row 1)
+        axes[1, 0].scatter(
+            [x + 0.5],
+            [y + 0.5],
+            c=color,
+            s=100,
+            marker="x",
+            linewidths=3,
+        )
+    axes[0, 0].legend(loc="upper right", fontsize=9)
 
-    # Columns 1..n: Attention maps
+    # Auto-scale across ALL attention maps for better contrast
+    all_attn_values = np.concatenate([self_attn_maps.ravel(), cross_attn_maps.ravel()])
+    attn_min = float(all_attn_values.min())
+    attn_max = float(all_attn_values.max())
+    
+    # Apply minimum scale floor to avoid over-amplifying noise
+    SCALE_FLOOR = 0.01
+    if attn_max - attn_min < SCALE_FLOOR:
+        attn_max = attn_min + SCALE_FLOOR
+
+    # Columns 1..n: Attention maps with AUTO-SCALED colors
     for i in range(n_pixels):
         col = i + 1
         y, x = pixel_positions[i]
-        color = ["red", "blue", "green", "orange"][i % 4]
+        color = colors[i % 4]
 
-        # Row 0: Self-attention
-        im_self = axes[0, col].imshow(self_attn_maps[i], cmap="viridis", vmin=0, vmax=1)
+        # Row 0: Self-attention (with auto-scaled colors)
+        im_self = axes[0, col].imshow(
+            self_attn_maps[i], cmap="viridis", vmin=attn_min, vmax=attn_max
+        )
         axes[0, col].set_title(
             f"Self-Attn (Pixel {i})\nPos: ({y}, {x})", fontsize=10, fontweight="bold"
         )
@@ -365,9 +399,9 @@ def create_attention_maps_figure(
             [x + 0.5], [y + 0.5], c=color, s=80, marker="x", linewidths=2
         )
 
-        # Row 1: Cross-attention
+        # Row 1: Cross-attention (SAME scale as self-attention)
         im_cross = axes[1, col].imshow(
-            cross_attn_maps[i], cmap="viridis", vmin=0, vmax=1
+            cross_attn_maps[i], cmap="viridis", vmin=attn_min, vmax=attn_max
         )
         axes[1, col].set_title(
             f"Cross-Attn (Pixel {i})\nPos: ({y}, {x})", fontsize=10, fontweight="bold"
@@ -594,7 +628,20 @@ def log_visualizations(
     # Convert JAX arrays to numpy for visualization
     img1_np = np.array(img1[0])  # (H, W, 3)
     img2_np = np.array(img2[0])  # (H, W, 3)
-    window_crop_np = np.array(attention_data.window_crop)  # (16, 16, 3)
+    
+    # Extract window crop from BOTH frames
+    emb_h_start = window_row * window_size
+    emb_w_start = window_col * window_size
+    
+    # Account for 2-pixel border from valid convolutions
+    img_h_start = emb_h_start
+    img_h_end = img_h_start + window_size
+    img_w_start = emb_w_start
+    img_w_end = img_w_start + window_size
+    
+    window_crop1_np = np.array(img1[0, img_h_start:img_h_end, img_w_start:img_w_end, :])
+    window_crop2_np = np.array(img2[0, img_h_start:img_h_end, img_w_start:img_w_end, :])
+    
     self_attn_np = np.array(attention_data.self_attention)  # (N, 16, 16)
     cross_attn_np = np.array(attention_data.cross_attention)  # (N, 16, 16)
     pixel_positions_np = np.array(attention_data.pixel_positions)  # (N, 2)
@@ -662,10 +709,18 @@ def log_visualizations(
     logger.log_figure("Loss/SelfEntropy", fig_self_loss, step)
     logger.log_figure("Loss/CrossEntropy", fig_cross_loss, step)
 
-    # 3. Attention maps for selected pixels
+    # 3. Attention maps for selected pixels (with both frame crops and auto-scaling)
     fig_attn = create_attention_maps_figure(
-        window_crop_np, self_attn_np, cross_attn_np, pixel_positions_np, window_size,
-        window_indices=(window_row, window_col)
+        window_crop1_np,
+        window_crop2_np,  # Both frame crops
+        self_attn_np,
+        cross_attn_np,
+        pixel_positions_np,
+        window_size,
+        window_indices=(window_row, window_col),
+        frame_t=metadata.get("frame_t", 0),
+        frame_tk=metadata.get("frame_tk", 0),
+        distance=metadata.get("distance", 0),
     )
     logger.log_figure("Attention/Maps", fig_attn, step)
 
