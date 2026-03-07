@@ -98,3 +98,52 @@ def log_embedding_statistics(
     sample_channels = [0, D // 2, D - 1] if D > 3 else list(range(D))
     for ch in sample_channels:
         logger.log_scalar(f"{prefix}/ch{ch}_mean", float(np.mean(emb[..., ch])), step)
+
+
+def log_gradient_statistics(
+    logger: JaxLogger,
+    optimizer,
+    step: int,
+    prefix: str = "Gradients",
+):
+    """Log gradient statistics from optimizer state.
+
+    Useful for detecting:
+    - Vanishing gradients (all gradients → 0)
+    - Exploding gradients (gradients too large)
+    - Dead parameters (gradients always zero)
+
+    Args:
+        logger: JaxLogger instance
+        optimizer: NNX optimizer (gradients are in optimizer state)
+        step: Global step
+        prefix: Tag prefix
+    """
+    from flax import nnx
+
+    try:
+        # Get optimizer state which contains gradients
+        opt_state = nnx.state(optimizer)
+        
+        all_grads = []
+        
+        # Iterate through optimizer state to find gradients
+        for module_path, module_state in opt_state.items():
+            for param_name, param_value in module_state.items():
+                # Look for gradient arrays in optimizer state
+                if hasattr(param_value, "value") and hasattr(param_value.value, "shape"):
+                    grad = np.array(param_value.value)
+                    if np.issubdtype(grad.dtype, np.number):
+                        all_grads.append(grad.flatten())
+        
+        if all_grads:
+            all_grads_flat = np.concatenate(all_grads)
+            
+            # Log overall gradient statistics
+            logger.log_histogram(f"{prefix}/all", all_grads_flat, step)
+            logger.log_scalar(f"{prefix}/norm", float(np.linalg.norm(all_grads_flat)), step)
+            logger.log_scalar(f"{prefix}/mean", float(np.mean(np.abs(all_grads_flat))), step)
+            logger.log_scalar(f"{prefix}/max", float(np.max(np.abs(all_grads_flat))), step)
+            
+    except Exception as e:
+        print(f"Warning: Could not log gradient statistics: {e}")

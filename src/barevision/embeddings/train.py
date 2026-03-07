@@ -33,6 +33,7 @@ from barevision.embeddings.checkpoint_manager import create_checkpoint_manager
 from barevision.embeddings.logging_utils import (
     log_attention_statistics,
     log_embedding_statistics,
+    log_gradient_statistics,
 )
 from barevision.embeddings.visualization import log_visualizations
 
@@ -126,27 +127,45 @@ def train_step(model, optimizer, img1, img2, alpha=1.0, beta=1.0):
         beta: Weight for cross-attention loss
 
     Returns:
-        Loss value (scalar)
+        Tuple of (loss, self_loss_mean, cross_loss_mean)
     """
 
     def loss_fn(m):
         emb1 = m(img1)
         emb2 = m(img2)
 
-        # Use combined_loss which handles window splitting internally
-        total = combined_loss(emb1, emb2, alpha=alpha, beta=beta)
-
-        return total.mean()
+        # Compute losses separately for logging
+        from barevision.embeddings.loss import (
+            self_attention_entropy_loss_core,
+            cross_attention_entropy_loss_core,
+        )
+        from barevision.utils.grid import WindowGrid
+        
+        window_size = 16
+        grid = WindowGrid(window_size=window_size)
+        windows1 = grid.split(emb1)
+        windows2 = grid.split(emb2)
+        
+        B, num_windows, wh, ww, D = windows1.shape
+        flat_windows1 = windows1.reshape(B * num_windows, wh, ww, D)
+        flat_windows2 = windows2.reshape(B * num_windows, wh, ww, D)
+        
+        self_loss = self_attention_entropy_loss_core(flat_windows1)
+        cross_loss = cross_attention_entropy_loss_core(flat_windows1, flat_windows2)
+        
+        # Combined loss
+        combined = alpha * self_loss + beta * cross_loss
+        
+        return combined.mean(), self_loss.mean(), cross_loss.mean()
 
     # Compute gradients
-    grads = nnx.grad(loss_fn)(model)
+    loss_value, self_loss_mean, cross_loss_mean = loss_fn(model)
+    grads = nnx.grad(lambda m: loss_fn(m)[0])(model)
 
     # Apply gradients
     nnx.update(optimizer, grads)
 
-    # Return loss value
-    loss = loss_fn(model)
-    return loss
+    return float(loss_value), float(self_loss_mean), float(cross_loss_mean)
 
 
 def train(settings: Settings):
@@ -248,12 +267,14 @@ def train(settings: Settings):
                 break
 
             # Training step
-            loss = train_step(model, optimizer, img1, img2)
-            epoch_losses.append(float(loss))
+            loss, self_loss, cross_loss = train_step(model, optimizer, img1, img2)
+            epoch_losses.append(loss)
             global_step += 1
 
-            # Log loss to TensorBoard
-            logger.log_scalar("Loss/train_step", float(loss), global_step)
+            # Log loss components to TensorBoard
+            logger.log_scalar("Loss/train_step", loss, global_step)
+            logger.log_scalar("Loss/self_entropy", self_loss, global_step)
+            logger.log_scalar("Loss/cross_entropy", cross_loss, global_step)
 
             # Save checkpoint if needed
             if checkpoint_manager.should_save(global_step):
@@ -263,6 +284,10 @@ def train(settings: Settings):
                     optimizer=optimizer,
                     epoch=epoch,
                 )
+
+            # Log gradient statistics periodically (every 10 steps)
+            if global_step % 10 == 0:
+                log_gradient_statistics(logger, optimizer, global_step)
 
             # Log visualizations periodically
             if (
@@ -290,7 +315,8 @@ def train(settings: Settings):
                 steps_per_sec = (step + 1) / elapsed
                 print(
                     f"Epoch {epoch} | Step {step} | "
-                    f"Loss: {loss:.4f} | {steps_per_sec:.1f} steps/sec"
+                    f"Loss: {loss:.4f} (self={self_loss:.4f}, cross={cross_loss:.4f}) | "
+                    f"{steps_per_sec:.1f} steps/sec"
                 )
 
         # Epoch summary
