@@ -23,8 +23,14 @@ Parameters: ~326 total
     - Total: 316 + 10 (approx, depends on implementation)
 """
 
+from dataclasses import dataclass
+from typing import Dict, List, Optional, Tuple
+
 from flax import nnx
+import jax
 import jax.numpy as jnp
+
+from barevision.utils.grid import WindowGrid
 
 
 class SimpleEmbeddingModel(nnx.Module):
@@ -92,6 +98,198 @@ class SimpleEmbeddingModel(nnx.Module):
         x = self.pointwise_conv(x)
 
         return x
+
+    def compute_attention_maps(
+        self,
+        img1: jnp.ndarray,
+        img2: jnp.ndarray,
+        window_indices: Tuple[int, int],
+        window_size: int = 16,
+        pixel_indices: Optional[jnp.ndarray] = None,
+        spatial_scale: float = 10.0,
+    ) -> AttentionMaps:
+        """Compute attention maps for visualization (not used in training loss).
+
+        This method is called separately from training for diagnostic visualization.
+        It returns detailed attention information that would be wasteful to compute
+        during training.
+
+        Args:
+            img1: Frame 1 (1, H, W, 3) - batch size must be 1
+            img2: Frame 2 (1, H, W, 3) - batch size must be 1
+            window_indices: (row, col) of window to analyze within the grid
+            window_size: Attention window size (default 16)
+            pixel_indices: List of pixel indices within window to show attention maps for.
+                          If None, picks 4 random pixels using a deterministic seed.
+            spatial_scale: Scale factor for spatial penalty in self-attention
+
+        Returns:
+            AttentionMaps dataclass containing all visualization data
+
+        Raises:
+            ValueError: If batch size != 1 or window indices out of bounds
+        """
+        # Validate batch size
+        if img1.shape[0] != 1 or img2.shape[0] != 1:
+            raise ValueError(
+                f"Batch size must be 1 for visualization, got {img1.shape[0]}"
+            )
+
+        # Compute embeddings
+        emb1 = self(img1)[0]  # Remove batch dimension: (H-2, W-2, 16)
+        emb2 = self(img2)[0]
+
+        # Validate window indices
+        H_emb, W_emb, _ = emb1.shape
+        num_windows_h = H_emb // window_size
+        num_windows_w = W_emb // window_size
+        row, col = window_indices
+
+        if row < 0 or row >= num_windows_h or col < 0 or col >= num_windows_w:
+            raise ValueError(
+                f"Window indices ({row}, {col}) out of bounds. "
+                f"Valid range: row [0, {num_windows_h}), col [0, {num_windows_w})"
+            )
+
+        # Extract window from embeddings
+        emb_h_start = row * window_size
+        emb_h_end = emb_h_start + window_size
+        emb_w_start = col * window_size
+        emb_w_end = emb_w_start + window_size
+
+        window_emb1 = emb1[
+            emb_h_start:emb_h_end, emb_w_start:emb_w_end, :
+        ]  # (16, 16, 16)
+        window_emb2 = emb2[emb_h_start:emb_h_end, emb_w_start:emb_w_end, :]
+
+        # Extract image crop for visualization
+        # Account for 2-pixel border from valid convolutions
+        img_h_start = emb_h_start
+        img_h_end = img_h_start + window_size
+        img_w_start = emb_w_start
+        img_w_end = img_w_start + window_size
+        window_crop = img1[
+            0, img_h_start:img_h_end, img_w_start:img_w_end, :
+        ]  # (16, 16, 3)
+
+        # Flatten windows for attention computation
+        flat_emb1 = window_emb1.reshape(window_size * window_size, -1)  # (256, 16)
+        flat_emb2 = window_emb2.reshape(window_size * window_size, -1)
+
+        # Select pixel indices
+        N = window_size * window_size
+        if pixel_indices is None:
+            # Use deterministic random selection based on window position
+            seed = row * 1000 + col
+            key = jax.random.PRNGKey(seed)
+            pixel_indices = jax.random.choice(key, N, shape=(4,), replace=False)
+
+        # Ensure pixel_indices is a jnp array
+        pixel_indices = jnp.asarray(pixel_indices)
+
+        # Compute self-attention logits
+        self_logits = flat_emb1 @ flat_emb1.T  # (256, 256)
+        mask = jnp.eye(N, dtype=jnp.float32)
+        self_logits = self_logits - mask * 1e9  # Mask self-attention
+        spatial_matrix = _spatial_logits_matrix(window_size, spatial_scale)
+        self_logits = self_logits + spatial_matrix
+
+        # Compute self-attention weights
+        self_attn_weights = jax.nn.softmax(self_logits, axis=-1)  # (256, 256)
+
+        # Compute cross-attention logits
+        cross_logits = flat_emb1 @ flat_emb2.T  # (256, 256)
+        cross_attn_weights = jax.nn.softmax(cross_logits, axis=-1)  # (256, 256)
+
+        # Extract attention maps for selected pixels
+        self_attn_maps = self_attn_weights[pixel_indices].reshape(
+            -1, window_size, window_size
+        )  # (N_sel, 16, 16)
+        cross_attn_maps = cross_attn_weights[pixel_indices].reshape(
+            -1, window_size, window_size
+        )
+
+        # Compute per-pixel entropy maps
+        self_entropy = _compute_entropy(self_attn_weights).reshape(
+            window_size, window_size
+        )  # (16, 16)
+        cross_entropy = _compute_entropy(cross_attn_weights).reshape(
+            window_size, window_size
+        )
+
+        # Compute pixel positions (y, x) for each selected index
+        pixel_y = pixel_indices // window_size
+        pixel_x = pixel_indices % window_size
+        pixel_positions = jnp.stack([pixel_y, pixel_x], axis=-1)  # (N_sel, 2)
+
+        return AttentionMaps(
+            embeddings1=emb1,
+            embeddings2=emb2,
+            self_attention=self_attn_maps,
+            cross_attention=cross_attn_maps,
+            self_entropy=self_entropy,
+            cross_entropy=cross_entropy,
+            window_crop=window_crop,
+            pixel_positions=pixel_positions,
+        )
+
+
+@dataclass
+class AttentionMaps:
+    """Container for attention map data used in visualization.
+
+    Returned by SimpleEmbeddingModel.compute_attention_maps().
+    Not used in training loss - only for diagnostic visualization.
+
+    Attributes:
+        embeddings1: (H-2, W-2, 16) embeddings for frame 1
+        embeddings2: (H-2, W-2, 16) embeddings for frame 2
+        self_attention: (N, 16, 16) self-attention weights for N query pixels
+        cross_attention: (N, 16, 16) cross-attention weights for N query pixels
+        self_entropy: (16, 16) per-pixel self-attention entropy within window
+        cross_entropy: (16, 16) per-pixel cross-attention entropy within window
+        window_crop: (16, 16, 3) image crop for the analyzed window
+        pixel_positions: (N, 2) (y, x) positions of queried pixels within window
+    """
+
+    embeddings1: jnp.ndarray
+    embeddings2: jnp.ndarray
+    self_attention: jnp.ndarray
+    cross_attention: jnp.ndarray
+    self_entropy: jnp.ndarray
+    cross_entropy: jnp.ndarray
+    window_crop: jnp.ndarray
+    pixel_positions: jnp.ndarray
+
+
+def _compute_entropy(probabilities: jnp.ndarray) -> jnp.ndarray:
+    """Compute entropy of a probability distribution.
+
+    Args:
+        probabilities: (..., N) array where last dimension sums to 1
+
+    Returns:
+        Entropy values with shape (...)
+    """
+    eps = 1e-10
+    return -jnp.sum(probabilities * jnp.log(probabilities + eps), axis=-1)
+
+
+def _spatial_logits_matrix(window_size: int, scale: float = 10.0) -> jnp.ndarray:
+    """Create spatial penalty matrix: -scale * distance² for all position pairs.
+
+    Returns:
+        (N, N) matrix where N = window_size²
+    """
+    coords = jnp.linspace(0, 1, window_size, dtype=jnp.float32)
+    y, x = jnp.meshgrid(coords, coords, indexing="ij")
+    positions = jnp.stack([x.ravel(), y.ravel()], axis=-1)
+
+    pos_norm_sq = jnp.sum(jnp.square(positions), axis=-1, keepdims=True)
+    cross_term = positions @ positions.T
+    dist_sq = jnp.maximum(pos_norm_sq + pos_norm_sq.T - 2 * cross_term, 0.0)
+
+    return -scale * dist_sq
 
 
 def count_parameters(model: nnx.Module) -> int:

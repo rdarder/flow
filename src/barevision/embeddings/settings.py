@@ -76,6 +76,7 @@ class TrainingSettings:
         checkpoint_dir: Directory to save checkpoints
         keep_last_n_checkpoints: Number of recent checkpoints to keep (0 to keep all)
         resume: Whether to resume from latest checkpoint in checkpoint_dir
+        log_visualizations_every_steps: Generate and log visualization figures every N steps (0 to disable)
     """
 
     epochs: int = 1
@@ -86,6 +87,7 @@ class TrainingSettings:
     checkpoint_dir: str = "checkpoints/embeddings"
     keep_last_n_checkpoints: int = 3
     resume: bool = False
+    log_visualizations_every_steps: int = 20
 
     def __post_init__(self):
         if self.epochs < 1:
@@ -99,6 +101,10 @@ class TrainingSettings:
         if self.keep_last_n_checkpoints < 0:
             raise ValueError(
                 f"keep_last_n_checkpoints must be >= 0, got {self.keep_last_n_checkpoints}"
+            )
+        if self.log_visualizations_every_steps < 0:
+            raise ValueError(
+                f"log_visualizations_every_steps must be >= 0, got {self.log_visualizations_every_steps}"
             )
 
 
@@ -131,6 +137,7 @@ def create_smoke_test_settings() -> Settings:
             checkpoint_freq=1,  # Save every step for testing
             checkpoint_dir="test_checkpoints/embeddings",
             keep_last_n_checkpoints=2,
+            log_visualizations_every_steps=1,  # Log visualizations every step in smoke test
         ),
         logging=LoggingSettings(
             log_dir="runs",

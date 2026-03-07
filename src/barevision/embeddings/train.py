@@ -34,6 +34,7 @@ from barevision.embeddings.logging_utils import (
     log_attention_statistics,
     log_embedding_statistics,
 )
+from barevision.embeddings.visualization import log_visualizations
 
 
 def create_dataloader(
@@ -41,6 +42,8 @@ def create_dataloader(
     batch_size: int,
     img_size: tuple[int, int],
     max_frames: int | None = None,
+    shuffle: bool = True,
+    random_seed: int | None = None,
 ) -> Iterator[Tuple[jnp.ndarray, jnp.ndarray]]:
     """Simple data loader that yields batches.
 
@@ -52,7 +55,10 @@ def create_dataloader(
         split: 'train' or 'val'
         batch_size: Number of samples per batch
         img_size: Image size (height, width) - must produce embeddings divisible by 16
-        max_frames: Maximum number of frames to load (for smoke tests)
+        max_frames: Maximum number of frames to load (for smoke tests).
+                   If used with shuffle=True, randomly samples this many frames.
+        shuffle: Whether to shuffle the dataset (default True for train)
+        random_seed: Random seed for shuffling (for reproducibility)
 
     Yields:
         Tuple of (img1_batch, img2_batch) each of shape (B, H, W, 3)
@@ -63,15 +69,25 @@ def create_dataloader(
         img_size=img_size,
     )
 
-    # For smoke tests, limit dataset size
-    if max_frames is not None:
-        indices = list(range(min(max_frames, len(dataset))))
-    else:
-        indices = list(range(len(dataset)))
+    # Get all indices
+    indices = list(range(len(dataset)))
 
-    # Shuffle training data
-    if split == "train":
-        random.shuffle(indices)
+    # For smoke tests, sample a subset
+    if max_frames is not None:
+        if shuffle:
+            # Randomly sample max_frames indices
+            rng = random.Random(random_seed)
+            indices = rng.sample(indices, min(max_frames, len(indices)))
+        else:
+            # Take first max_frames
+            indices = indices[: min(max_frames, len(indices))]
+    elif shuffle and split == "train":
+        # Shuffle all indices for full dataset
+        if random_seed is not None:
+            rng = random.Random(random_seed)
+            rng.shuffle(indices)
+        else:
+            random.shuffle(indices)
 
     # Yield batches
     for i in range(0, len(indices), batch_size):
@@ -241,6 +257,26 @@ def train(settings: Settings):
                     model=model,
                     optimizer=optimizer,
                     epoch=epoch,
+                )
+
+            # Log visualizations periodically
+            if (
+                settings.training.log_visualizations_every_steps > 0
+                and global_step % settings.training.log_visualizations_every_steps == 0
+            ):
+                # Get a fresh random sample batch for visualization
+                # Use global_step as seed to get different frames each time
+                viz_loader = create_dataloader(
+                    split="train",
+                    batch_size=1,
+                    img_size=settings.dataset.img_size,
+                    max_frames=1,
+                    shuffle=True,
+                    random_seed=global_step,
+                )
+                viz_img1, viz_img2 = next(viz_loader)
+                log_visualizations(
+                    logger, model, viz_img1, viz_img2, global_step, settings
                 )
 
             # Log every few steps to console
