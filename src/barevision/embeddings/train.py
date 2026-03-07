@@ -115,24 +115,49 @@ def create_dataloader(
         yield img1_batch, img2_batch, metadata_list
 
 
-def train_step(model, optimizer, img1, img2, alpha=1.0, beta=1.0):
-    """Single training step.
-
+def create_train_state(model, learning_rate: float):
+    """Create training state with optimizer.
+    
+    Uses NNX split/merge pattern for proper gradient updates.
+    
     Args:
-        model: Embedding model
-        optimizer: NNX optimizer
+        model: NNX model
+        learning_rate: Learning rate for Adam optimizer
+        
+    Returns:
+        Tuple of (graphdef, state, tx, opt_state)
+    """
+    # Split model into graphdef and state
+    graphdef, state = nnx.split(model)
+    
+    # Create optimizer
+    tx = optax.adam(learning_rate)
+    opt_state = tx.init(state)
+    
+    return graphdef, state, tx, opt_state
+
+
+def train_step(graphdef, state, tx, opt_state, img1, img2, alpha=1.0, beta=1.0):
+    """Single training step using split/merge pattern.
+    
+    Args:
+        graphdef: Model graph definition
+        state: Model state
+        tx: Optimizer
+        opt_state: Optimizer state
         img1: Batch of frame 1 images (B, H, W, 3)
         img2: Batch of frame 2 images (B, H, W, 3)
         alpha: Weight for self-attention loss
         beta: Weight for cross-attention loss
-
+        
     Returns:
-        Tuple of (loss, self_loss_mean, cross_loss_mean)
+        Tuple of (new_state, new_opt_state, loss, self_loss_mean, cross_loss_mean)
     """
 
-    def loss_fn(m):
-        emb1 = m(img1)
-        emb2 = m(img2)
+    def loss_fn(state):
+        model = nnx.merge(graphdef, state)
+        emb1 = model(img1)
+        emb2 = model(img2)
 
         # Compute losses separately for logging
         from barevision.embeddings.loss import (
@@ -159,13 +184,14 @@ def train_step(model, optimizer, img1, img2, alpha=1.0, beta=1.0):
         return combined.mean(), self_loss.mean(), cross_loss.mean()
 
     # Compute gradients
-    loss_value, self_loss_mean, cross_loss_mean = loss_fn(model)
-    grads = nnx.grad(lambda m: loss_fn(m)[0])(model)
+    loss_value, self_loss_mean, cross_loss_mean = loss_fn(state)
+    grads = nnx.grad(lambda s: loss_fn(s)[0])(state)
 
     # Apply gradients
-    nnx.update(optimizer, grads)
+    updates, opt_state = tx.update(grads, opt_state, state)
+    state = optax.apply_updates(state, updates)
 
-    return float(loss_value), float(self_loss_mean), float(cross_loss_mean)
+    return state, opt_state, float(loss_value), float(self_loss_mean), float(cross_loss_mean)
 
 
 def train(settings: Settings):
@@ -196,13 +222,12 @@ def train(settings: Settings):
         rngs=nnx.Rngs(jax.random.PRNGKey(0)),
     )
 
-    # Initialize optimizer
-    optimizer = nnx.Optimizer(
-        model, optax.adam(settings.training.learning_rate), wrt=nnx.Param
+    # Create training state (graphdef, state, tx, opt_state)
+    graphdef, state, tx, opt_state = create_train_state(
+        model, settings.training.learning_rate
     )
 
     # Count parameters
-    state = nnx.state(model)
     param_count = 0
     for module_state in state.values():
         for param_value in module_state.values():
@@ -219,7 +244,7 @@ def train(settings: Settings):
         enabled=settings.training.checkpoint_freq > 0,
     )
 
-    # Handle resume
+    # Handle resume (simplified - just load state for now)
     start_epoch = 0
     global_step = 0
 
@@ -227,10 +252,10 @@ def train(settings: Settings):
         latest_step = checkpoint_manager.latest_step()
         if latest_step is not None:
             print(f"Resuming from checkpoint at step {latest_step}")
-            start_epoch, global_step = checkpoint_manager.restore(
-                model=model,
-                optimizer=optimizer,
+            start_epoch, global_step, state = checkpoint_manager.restore(
+                state=state,
             )
+            print(f"Resumed at epoch {start_epoch}, step {global_step}")
         else:
             print("Warning: No checkpoint found to resume from")
             print("Starting fresh training...")
@@ -267,7 +292,9 @@ def train(settings: Settings):
                 break
 
             # Training step
-            loss, self_loss, cross_loss = train_step(model, optimizer, img1, img2)
+            state, opt_state, loss, self_loss, cross_loss = train_step(
+                graphdef, state, tx, opt_state, img1, img2
+            )
             epoch_losses.append(loss)
             global_step += 1
 
@@ -280,14 +307,16 @@ def train(settings: Settings):
             if checkpoint_manager.should_save(global_step):
                 checkpoint_manager.save(
                     step=global_step,
-                    model=model,
-                    optimizer=optimizer,
+                    state=state,
+                    opt_state=opt_state,
                     epoch=epoch,
                 )
 
             # Log gradient statistics periodically (every 10 steps)
             if global_step % 10 == 0:
-                log_gradient_statistics(logger, optimizer, global_step)
+                # Create temporary model for gradient logging
+                temp_model = nnx.merge(graphdef, state)
+                log_gradient_statistics(logger, None, temp_model, global_step)
 
             # Log visualizations periodically
             if (
@@ -305,8 +334,10 @@ def train(settings: Settings):
                     random_seed=global_step,
                 )
                 viz_img1, viz_img2, viz_metadata = next(viz_loader)
+                # Create temporary model for visualization
+                temp_model = nnx.merge(graphdef, state)
                 log_visualizations(
-                    logger, model, viz_img1, viz_img2, viz_metadata[0], global_step, settings
+                    logger, temp_model, viz_img1, viz_img2, viz_metadata[0], global_step, settings
                 )
 
             # Log every few steps to console
@@ -333,7 +364,9 @@ def train(settings: Settings):
             max_frames=1,
         )
         sample_img1, sample_img2, _ = next(sample_loader)
-        embeddings = model(sample_img1)
+        # Create temporary model for statistics
+        temp_model = nnx.merge(graphdef, state)
+        embeddings = temp_model(sample_img1)
 
         log_embedding_statistics(logger, embeddings, epoch)
         log_attention_statistics(logger, embeddings, epoch)
@@ -348,7 +381,7 @@ def train(settings: Settings):
     print("TRAINING COMPLETE")
     print("=" * 60)
 
-    return model, optimizer
+    return graphdef, state
 
 
 def main():

@@ -154,27 +154,35 @@ class OrbaxCheckpointManager(AbstractCheckpointManager):
     def save(
         self,
         step: int,
-        model: SimpleEmbeddingModel,
-        optimizer: nnx.Optimizer,
-        epoch: int,
+        state=None,
+        opt_state=None,
+        epoch: int = 0,
+        **kwargs,  # For backward compatibility with model/optimizer signature
     ) -> bool:
         """Save a checkpoint.
 
         Args:
             step: Current global step
-            model: Model to save
-            optimizer: Optimizer to save
+            state: Model state to save (or model if using old API)
+            opt_state: Optimizer state to save (or optimizer if using old API)
             epoch: Current epoch number
+            **kwargs: For backward compatibility
 
         Returns:
             True if save was successful
         """
+        # Support old API (model/optimizer) for backward compatibility
+        if "model" in kwargs:
+            state = nnx.state(kwargs["model"])
+        if "optimizer" in kwargs:
+            opt_state = kwargs["optimizer"].opt_state
+        
         # Prepare checkpoint data
         checkpoint = {
-            "model": nnx.state(model),
-            "optimizer_state": optimizer.opt_state,
-            "optimizer_step": optimizer.step,
+            "model": state,
+            "optimizer_state": opt_state,
             "epoch": epoch + 1,  # Save next epoch to resume from
+            "step": step,
         }
 
         # Save using Orbax
@@ -192,20 +200,26 @@ class OrbaxCheckpointManager(AbstractCheckpointManager):
 
     def restore(
         self,
-        model: SimpleEmbeddingModel,
-        optimizer: nnx.Optimizer,
+        state=None,
+        opt_state=None,
         step: Optional[int] = None,
-    ) -> Tuple[int, int]:
+        **kwargs,  # For backward compatibility
+    ):
         """Restore from checkpoint.
 
         Args:
-            model: Model to restore state into
-            optimizer: Optimizer to restore state into
+            state: Model state to restore into (or model if using old API)
+            opt_state: Optimizer state to restore into (or optimizer if using old API)
             step: Step to restore from (None = latest)
+            **kwargs: For backward compatibility
 
         Returns:
-            Tuple of (epoch, global_step)
+            Tuple of (epoch, global_step) or just state dict if using new API
         """
+        # Support old API
+        if "model" in kwargs and state is None:
+            state = nnx.state(kwargs["model"])
+        
         if step is None:
             step = self._manager.latest_step()
 
