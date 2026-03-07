@@ -690,9 +690,17 @@ def log_visualizations(
     cross_loss_flat = cross_loss_flat.reshape(B, num_windows_h, window_size, num_windows_w, window_size)
     cross_loss_flat = cross_loss_flat.transpose(0, 1, 3, 2, 4).reshape(B, H_emb, W_emb)
     
-    # Remove batch dim and pad to match image dimensions (H-2 → H)
-    self_loss_display = np.pad(np.array(self_loss_flat[0]), ((1, 1), (1, 1)), mode='edge')
-    cross_loss_display = np.pad(np.array(cross_loss_flat[0]), ((1, 1), (1, 1)), mode='edge')
+    # Remove batch dim and pad to match image dimensions
+    # Embeddings are (H-4, W-4) due to 5×5 valid conv
+    # Image is (H, W), so pad by 2 on each side to match
+    H_emb, W_emb = self_loss_flat[0].shape
+    H_img, W_img = img1_np.shape[:2]
+    pad_h = H_img - H_emb
+    pad_w = W_img - W_emb
+    assert pad_h % 2 == 0 and pad_w % 2 == 0, f"Padding must be even, got {pad_h}x{pad_w}"
+    
+    self_loss_display = np.pad(np.array(self_loss_flat[0]), ((pad_h//2, pad_h//2), (pad_w//2, pad_w//2)), mode='edge')
+    cross_loss_display = np.pad(np.array(cross_loss_flat[0]), ((pad_h//2, pad_h//2), (pad_w//2, pad_w//2)), mode='edge')
     
     # Extract the selected window embeddings for detailed visualizations
     emb_h_start = window_row * window_size

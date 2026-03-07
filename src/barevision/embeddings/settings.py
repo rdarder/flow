@@ -157,7 +157,7 @@ def create_smoke_test_settings() -> Settings:
     return Settings(
         dataset=DatasetSettings(
             batch_size=1,  # Minimum for speed
-            img_size=(194, 194),
+            img_size=(196, 196),  # 196-4=192, divisible by 16
             max_frame_distance=5,
             num_workers=0,
         ),

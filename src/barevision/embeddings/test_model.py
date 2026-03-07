@@ -18,7 +18,7 @@ class TestSimpleEmbeddingModel:
         x = jnp.ones((1, 32, 32, 3))
         y = model(x)
 
-        assert y.shape == (1, 30, 30, 16), f"Expected (1, 30, 30, 16), got {y.shape}"
+        assert y.shape == (1, 28, 28, 16), f"Expected (1, 28, 28, 16), got {y.shape}"
 
     def test_grayscale_forward_pass(self):
         """Test forward pass with grayscale input."""
@@ -28,7 +28,7 @@ class TestSimpleEmbeddingModel:
         x = jnp.ones((1, 32, 32, 1))
         y = model(x)
 
-        assert y.shape == (1, 30, 30, 16), f"Expected (1, 30, 30, 16), got {y.shape}"
+        assert y.shape == (1, 28, 28, 16), f"Expected (1, 28, 28, 16), got {y.shape}"
 
     def test_batch_processing(self):
         """Test batch processing."""
@@ -38,7 +38,7 @@ class TestSimpleEmbeddingModel:
         x = jnp.ones((4, 64, 64, 3))
         y = model(x)
 
-        assert y.shape == (4, 62, 62, 16), f"Expected (4, 62, 62, 16), got {y.shape}"
+        assert y.shape == (4, 60, 60, 16), f"Expected (4, 60, 60, 16), got {y.shape}"
 
     def test_custom_embed_dim(self):
         """Test custom embedding dimension."""
@@ -48,7 +48,7 @@ class TestSimpleEmbeddingModel:
         x = jnp.ones((1, 32, 32, 3))
         y = model(x)
 
-        assert y.shape == (1, 30, 30, 32), f"Expected (1, 30, 30, 32), got {y.shape}"
+        assert y.shape == (1, 28, 28, 32), f"Expected (1, 28, 28, 32), got {y.shape}"
 
     def test_parameter_count(self):
         """Test parameter counting."""
@@ -57,21 +57,21 @@ class TestSimpleEmbeddingModel:
         )
         param_count = count_parameters(model)
 
-        # depthwise: 3 * 4 * 9 = 108 weights + 12 bias = 120
+        # depthwise: 3 * 4 * 25 = 300 weights + 12 bias = 312
         # pointwise: 12 * 16 = 192 weights + 16 bias = 208
-        # total: 328
-        assert param_count == 328, f"Expected 328 parameters, got {param_count}"
+        # total: 520
+        assert param_count == 520, f"Expected 520 parameters, got {param_count}"
 
     def test_spatial_dimensions(self):
-        """Test that spatial dimensions reduce by 2 (valid convolution)."""
+        """Test that spatial dimensions reduce by 4 (valid convolution with 5×5 kernel)."""
         model = SimpleEmbeddingModel(
             embed_dim=16, in_channels=3, rngs=nnx.Rngs(jr.PRNGKey(0))
         )
 
         test_cases = [
-            ((1, 32, 32, 3), (1, 30, 30, 16)),
-            ((1, 64, 64, 3), (1, 62, 62, 16)),
-            ((2, 100, 100, 3), (2, 98, 98, 16)),
+            ((1, 32, 32, 3), (1, 28, 28, 16)),
+            ((1, 64, 64, 3), (1, 60, 60, 16)),
+            ((2, 100, 100, 3), (2, 96, 96, 16)),
         ]
 
         for input_shape, expected_shape in test_cases:
@@ -93,7 +93,7 @@ class TestSimpleEmbeddingModel:
         compiled_model = nnx.jit(model)
         y = compiled_model(x)
 
-        assert y.shape == (1, 30, 30, 16)
+        assert y.shape == (1, 28, 28, 16)
 
     def test_gradient_flow(self):
         """Test that gradients flow through the model."""
@@ -116,7 +116,7 @@ class TestSimpleEmbeddingModel:
         pointwise_kernel = grad_state["pointwise_conv"]["kernel"]
 
         # Verify gradients exist and are non-zero
-        assert depthwise_kernel.shape == (3, 3, 1, 12)
+        assert depthwise_kernel.shape == (5, 5, 1, 12)
         assert pointwise_kernel.shape == (1, 1, 12, 16)
 
         # Extract array values from Param objects
@@ -156,4 +156,4 @@ def test_model_initialization():
             if hasattr(param_value, "size"):
                 param_count += param_value.size
 
-    assert param_count == 328, f"Expected 328 parameters, got {param_count}"
+    assert param_count == 520, f"Expected 520 parameters, got {param_count}"

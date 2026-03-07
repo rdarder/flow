@@ -20,8 +20,8 @@ from barevision.embeddings.settings import TrainingSettings, create_smoke_test_s
 
 def test_frame_with_grid_figure():
     """Test frame with grid overlay visualization."""
-    img1 = np.random.rand(194, 194, 3).astype(np.float32)
-    img2 = np.random.rand(194, 194, 3).astype(np.float32)
+    img1 = np.random.rand(196, 196, 3).astype(np.float32)
+    img2 = np.random.rand(196, 196, 3).astype(np.float32)
     metadata = {'video_name': 'test', 'frame_t': 10, 'frame_tk': 13, 'distance': 3}
 
     # Without highlighted window
@@ -39,9 +39,9 @@ def test_frame_with_grid_figure():
 
 def test_loss_heatmap_figures():
     """Test loss heatmap visualizations."""
-    img = np.random.rand(194, 194, 3).astype(np.float32)
-    self_loss = np.random.rand(194, 194).astype(np.float32)
-    cross_loss = np.random.rand(194, 194).astype(np.float32)
+    img = np.random.rand(196, 196, 3).astype(np.float32)
+    self_loss = np.random.rand(196, 196).astype(np.float32)
+    cross_loss = np.random.rand(196, 196).astype(np.float32)
 
     fig_self, fig_cross = create_loss_heatmap_figures(img, self_loss, cross_loss, 16)
 
@@ -133,8 +133,8 @@ def test_smoke_test_settings_enable_visualizations():
 def test_model_compute_attention_maps():
     """Test model's compute_attention_maps method."""
     model = SimpleEmbeddingModel(rngs=nnx.Rngs(jr.PRNGKey(0)))
-    img1 = jr.uniform(jr.PRNGKey(1), (1, 194, 194, 3))
-    img2 = jr.uniform(jr.PRNGKey(2), (1, 194, 194, 3))
+    img1 = jr.uniform(jr.PRNGKey(1), (1, 196, 196, 3))
+    img2 = jr.uniform(jr.PRNGKey(2), (1, 196, 196, 3))
 
     attn_data = model.compute_attention_maps(img1, img2, window_indices=(0, 0))
 
@@ -148,8 +148,8 @@ def test_model_compute_attention_maps():
 def test_model_random_pixel_selection():
     """Test that different windows get different random pixels."""
     model = SimpleEmbeddingModel(rngs=nnx.Rngs(jr.PRNGKey(0)))
-    img1 = jr.uniform(jr.PRNGKey(1), (1, 194, 194, 3))
-    img2 = jr.uniform(jr.PRNGKey(2), (1, 194, 194, 3))
+    img1 = jr.uniform(jr.PRNGKey(1), (1, 196, 196, 3))
+    img2 = jr.uniform(jr.PRNGKey(2), (1, 196, 196, 3))
 
     # Get attention maps for different windows
     attn_0_0 = model.compute_attention_maps(img1, img2, (0, 0))
