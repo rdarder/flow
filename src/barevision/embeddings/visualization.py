@@ -287,6 +287,7 @@ def create_attention_maps_figure(
     cross_attn_maps: np.ndarray,
     pixel_positions: np.ndarray,
     window_size: int = 16,
+    window_indices: Optional[Tuple[int, int]] = None,
 ) -> np.ndarray:
     """Create figure showing attention maps for selected pixels.
 
@@ -296,6 +297,7 @@ def create_attention_maps_figure(
         cross_attn_maps: (N, 16, 16) cross-attention weights for N pixels
         pixel_positions: (N, 2) (y, x) positions of queried pixels
         window_size: Window dimension (default 16)
+        window_indices: (row, col) of window in grid (for title)
 
     Returns:
         RGB image array (H_fig, W_fig, 3) as uint8
@@ -307,6 +309,13 @@ def create_attention_maps_figure(
     # Columns 1..n: Attention maps for each pixel
     n_cols = n_pixels + 1
     fig, axes = plt.subplots(2, n_cols, figsize=ATTENTION_MAPS_SIZE, dpi=FIGURE_DPI)
+    
+    # Build title with window coordinates if provided
+    if window_indices is not None:
+        row, col = window_indices
+        title_suffix = f" | Window ({row}, {col})"
+    else:
+        title_suffix = ""
 
     # Ensure axes is 2D
     if n_cols == 1:
@@ -316,7 +325,8 @@ def create_attention_maps_figure(
 
     # Column 0: Window crop (spanning both rows)
     axes[0, 0].imshow(window_crop)
-    axes[0, 0].set_title("Window Crop", fontsize=12, fontweight="bold")
+    window_title = f"Window Crop{title_suffix}"
+    axes[0, 0].set_title(window_title, fontsize=12, fontweight="bold")
     axes[0, 0].axis("off")
     axes[1, 0].axis("off")  # Empty below
 
@@ -378,6 +388,7 @@ def create_similarity_matrix_figure(
     similarity_matrix: np.ndarray,
     attention_weights: np.ndarray,
     window_size: int = 16,
+    window_indices: Optional[Tuple[int, int]] = None,
 ) -> np.ndarray:
     """Create figure showing similarity matrix and attention weights as 256x256 images.
 
@@ -385,6 +396,7 @@ def create_similarity_matrix_figure(
         similarity_matrix: (256, 256) raw dot-product similarities
         attention_weights: (256, 256) softmax attention weights
         window_size: Window dimension (for title info)
+        window_indices: (row, col) of window in grid (for title)
 
     Returns:
         RGB image array (H_fig, W_fig, 3) as uint8
@@ -397,6 +409,13 @@ def create_similarity_matrix_figure(
         256,
         256,
     ), f"Expected (256, 256), got {attention_weights.shape}"
+    
+    # Build title suffix with window coordinates
+    if window_indices is not None:
+        row, col = window_indices
+        title_suffix = f" | Window ({row}, {col})"
+    else:
+        title_suffix = ""
 
     fig, axes = plt.subplots(1, 2, figsize=SIMILARITY_MATRIX_SIZE, dpi=FIGURE_DPI)
 
@@ -407,7 +426,7 @@ def create_similarity_matrix_figure(
         similarity_matrix, cmap="coolwarm", vmin=vmin_sim, vmax=vmax_sim
     )
     axes[0].set_title(
-        f"Similarity Matrix (256×{256})\nRange: [{vmin_sim:.3f}, {vmax_sim:.3f}]",
+        f"Similarity Matrix (256×256){title_suffix}\nRange: [{vmin_sim:.3f}, {vmax_sim:.3f}]",
         fontsize=12,
         fontweight="bold",
     )
@@ -442,6 +461,7 @@ def create_entropy_maps_figure(
     cross_entropy: np.ndarray,
     pixel_positions: Optional[np.ndarray] = None,
     window_size: int = 16,
+    window_indices: Optional[Tuple[int, int]] = None,
 ) -> np.ndarray:
     """Create figure showing per-pixel entropy maps within a window.
 
@@ -450,10 +470,18 @@ def create_entropy_maps_figure(
         cross_entropy: (16, 16) per-pixel cross-attention entropy
         pixel_positions: (N, 2) positions to mark on the maps
         window_size: Window dimension (default 16)
+        window_indices: (row, col) of window in grid (for title)
 
     Returns:
         RGB image array (H_fig, W_fig, 3) as uint8
     """
+    # Build title suffix with window coordinates
+    if window_indices is not None:
+        row, col = window_indices
+        title_suffix = f" | Window ({row}, {col})"
+    else:
+        title_suffix = ""
+    
     fig, axes = plt.subplots(1, 2, figsize=(16, 8), dpi=FIGURE_DPI)
 
     # Left: Self-entropy
@@ -464,7 +492,7 @@ def create_entropy_maps_figure(
     )
     mean_self = float(np.mean(self_entropy))
     axes[0].set_title(
-        f"Self-Attention Entropy\nMean: {mean_self:.4f} | Range: [{vmin_self:.4f}, {vmax_self:.4f}]",
+        f"Self-Attention Entropy{title_suffix}\nMean: {mean_self:.4f} | Range: [{vmin_self:.4f}, {vmax_self:.4f}]",
         fontsize=12,
         fontweight="bold",
     )
@@ -480,7 +508,7 @@ def create_entropy_maps_figure(
     )
     mean_cross = float(np.mean(cross_entropy))
     axes[1].set_title(
-        f"Cross-Attention Entropy\nMean: {mean_cross:.4f} | Range: [{vmin_cross:.4f}, {vmax_cross:.4f}]",
+        f"Cross-Attention Entropy{title_suffix}\nMean: {mean_cross:.4f} | Range: [{vmin_cross:.4f}, {vmax_cross:.4f}]",
         fontsize=12,
         fontweight="bold",
     )
@@ -628,9 +656,10 @@ def log_visualizations(
 
     # 3. Attention maps for selected pixels
     fig_attn = create_attention_maps_figure(
-        window_crop_np, self_attn_np, cross_attn_np, pixel_positions_np, window_size
+        window_crop_np, self_attn_np, cross_attn_np, pixel_positions_np, window_size,
+        window_indices=(window_row, window_col)
     )
-    logger.log_figure(f"Attention/Window_{window_row}_{window_col}", fig_attn, step)
+    logger.log_figure("Attention/Maps", fig_attn, step)
 
     # 4. Similarity matrix for the window
     flat_window_emb1 = window_emb1.reshape(-1, D)
@@ -652,15 +681,17 @@ def log_visualizations(
     self_attn_full = exp_logits / np.sum(exp_logits, axis=-1, keepdims=True)
 
     fig_sim = create_similarity_matrix_figure(
-        similarity_matrix, self_attn_full, window_size
+        similarity_matrix, self_attn_full, window_size,
+        window_indices=(window_row, window_col)
     )
-    logger.log_figure(f"Similarity/Window_{window_row}_{window_col}", fig_sim, step)
-
+    logger.log_figure("Similarity/Matrix", fig_sim, step)
+    
     # 5. Entropy maps
     fig_entropy = create_entropy_maps_figure(
-        self_entropy_np, cross_entropy_np, pixel_positions_np, window_size
+        self_entropy_np, cross_entropy_np, pixel_positions_np, window_size,
+        window_indices=(window_row, window_col)
     )
-    logger.log_figure(f"Entropy/Window_{window_row}_{window_col}", fig_entropy, step)
+    logger.log_figure("Entropy/Maps", fig_entropy, step)
 
     # Clean up
     del attention_data, window_emb1, flat_window_emb1, similarity_matrix, self_attn_full

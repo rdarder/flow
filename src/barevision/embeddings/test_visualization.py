@@ -20,17 +20,19 @@ from barevision.embeddings.settings import TrainingSettings, create_smoke_test_s
 
 def test_frame_with_grid_figure():
     """Test frame with grid overlay visualization."""
-    img = np.random.rand(194, 194, 3).astype(np.float32)
+    img1 = np.random.rand(194, 194, 3).astype(np.float32)
+    img2 = np.random.rand(194, 194, 3).astype(np.float32)
+    metadata = {'video_name': 'test', 'frame_t': 10, 'frame_tk': 13, 'distance': 3}
 
     # Without highlighted window
-    fig = create_frame_with_grid_figure(img, 16)
+    fig = create_frame_with_grid_figure(img1, img2, metadata, 16)
     assert fig.dtype == np.uint8
     assert fig.shape[2] == 3  # RGB
     assert fig.shape[0] > 100  # Reasonable height
     print("✓ test_frame_with_grid_figure (no highlight)")
 
     # With highlighted window
-    fig = create_frame_with_grid_figure(img, 16, highlighted_window=(5, 6))
+    fig = create_frame_with_grid_figure(img1, img2, metadata, 16, highlighted_window=(5, 6))
     assert fig.dtype == np.uint8
     print("✓ test_frame_with_grid_figure (with highlight)")
 
@@ -57,7 +59,7 @@ def test_attention_maps_figure():
     pixel_positions = np.array([[1, 2], [5, 6], [9, 10], [13, 14]], dtype=np.int32)
 
     fig = create_attention_maps_figure(
-        window_crop, self_attn, cross_attn, pixel_positions
+        window_crop, self_attn, cross_attn, pixel_positions, window_indices=(5, 6)
     )
 
     assert fig.dtype == np.uint8
@@ -72,7 +74,7 @@ def test_similarity_matrix_figure():
     attn_weights = np.random.rand(256, 256).astype(np.float32)
     attn_weights = attn_weights / attn_weights.sum(axis=-1, keepdims=True)
 
-    fig = create_similarity_matrix_figure(sim_matrix, attn_weights)
+    fig = create_similarity_matrix_figure(sim_matrix, attn_weights, window_indices=(7, 8))
 
     assert fig.dtype == np.uint8
     assert fig.shape[2] == 3
@@ -85,7 +87,7 @@ def test_entropy_maps_figure():
     cross_entropy = np.random.rand(16, 16).astype(np.float32)
     pixel_positions = np.array([[1, 2], [5, 6]], dtype=np.int32)
 
-    fig = create_entropy_maps_figure(self_entropy, cross_entropy, pixel_positions)
+    fig = create_entropy_maps_figure(self_entropy, cross_entropy, pixel_positions, window_indices=(9, 10))
 
     assert fig.dtype == np.uint8
     assert fig.shape[2] == 3
