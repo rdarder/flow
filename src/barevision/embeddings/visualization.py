@@ -377,6 +377,13 @@ def create_attention_maps_figure(
     SCALE_FLOOR = 0.01
     if attn_max - attn_min < SCALE_FLOOR:
         attn_max = attn_min + SCALE_FLOOR
+    
+    # For better spatial pattern visibility, use percentile-based scaling
+    # This enhances contrast by ignoring extreme outliers
+    p5 = float(np.percentile(all_attn_values, 5))
+    p95 = float(np.percentile(all_attn_values, 95))
+    if p95 - p5 < SCALE_FLOOR:
+        p95 = p5 + SCALE_FLOOR
 
     # Columns 1..n: Attention maps with AUTO-SCALED colors
     for i in range(n_pixels):
@@ -384,9 +391,9 @@ def create_attention_maps_figure(
         y, x = pixel_positions[i]
         color = colors[i % 4]
 
-        # Row 0: Self-attention (with auto-scaled colors)
+        # Row 0: Self-attention (use percentile scaling for better contrast)
         im_self = axes[0, col].imshow(
-            self_attn_maps[i], cmap="viridis", vmin=attn_min, vmax=attn_max
+            self_attn_maps[i], cmap="viridis", vmin=p5, vmax=p95
         )
         axes[0, col].set_title(
             f"Self-Attn (Pixel {i})\nPos: ({y}, {x})", fontsize=10, fontweight="bold"
@@ -399,9 +406,9 @@ def create_attention_maps_figure(
             [x + 0.5], [y + 0.5], c=color, s=80, marker="x", linewidths=2
         )
 
-        # Row 1: Cross-attention (SAME scale as self-attention)
+        # Row 1: Cross-attention (use percentile scaling for better contrast)
         im_cross = axes[1, col].imshow(
-            cross_attn_maps[i], cmap="viridis", vmin=attn_min, vmax=attn_max
+            cross_attn_maps[i], cmap="viridis", vmin=p5, vmax=p95
         )
         axes[1, col].set_title(
             f"Cross-Attn (Pixel {i})\nPos: ({y}, {x})", fontsize=10, fontweight="bold"

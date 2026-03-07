@@ -47,19 +47,31 @@ class LoggingSettings:
     Attributes:
         log_dir: Root directory for TensorBoard logs
         run_name_prefix: Prefix for auto-generated run names
-        log_every_steps: Log metrics every N steps
+        log_metrics_every_steps: Log scalar/histogram metrics every N steps
+        log_visualizations_every_steps: Generate and log visualization figures every N steps (0 to disable)
+        log_statistics_every_steps: Log embedding/attention statistics every N steps (0 to disable)
     """
 
     log_dir: str = "runs"
     run_name_prefix: str = "embeddings"
-    log_every_steps: int = 10
+    log_metrics_every_steps: int = 10
+    log_visualizations_every_steps: int = 20
+    log_statistics_every_steps: int = 50
 
     def __post_init__(self):
         if not self.log_dir:
             raise ValueError("log_dir cannot be empty")
-        if self.log_every_steps < 1:
+        if self.log_metrics_every_steps < 1:
             raise ValueError(
-                f"log_every_steps must be >= 1, got {self.log_every_steps}"
+                f"log_metrics_every_steps must be >= 1, got {self.log_metrics_every_steps}"
+            )
+        if self.log_visualizations_every_steps < 0:
+            raise ValueError(
+                f"log_visualizations_every_steps must be >= 0, got {self.log_visualizations_every_steps}"
+            )
+        if self.log_statistics_every_steps < 0:
+            raise ValueError(
+                f"log_statistics_every_steps must be >= 0, got {self.log_statistics_every_steps}"
             )
 
 
@@ -76,7 +88,6 @@ class TrainingSettings:
         checkpoint_dir: Directory to save checkpoints
         keep_last_n_checkpoints: Number of recent checkpoints to keep (0 to keep all)
         resume: Whether to resume from latest checkpoint in checkpoint_dir
-        log_visualizations_every_steps: Generate and log visualization figures every N steps (0 to disable)
     """
 
     epochs: int = 1
@@ -87,7 +98,6 @@ class TrainingSettings:
     checkpoint_dir: str = "checkpoints/embeddings"
     keep_last_n_checkpoints: int = 3
     resume: bool = False
-    log_visualizations_every_steps: int = 20
 
     def __post_init__(self):
         if self.epochs < 1:
@@ -101,10 +111,6 @@ class TrainingSettings:
         if self.keep_last_n_checkpoints < 0:
             raise ValueError(
                 f"keep_last_n_checkpoints must be >= 0, got {self.keep_last_n_checkpoints}"
-            )
-        if self.log_visualizations_every_steps < 0:
-            raise ValueError(
-                f"log_visualizations_every_steps must be >= 0, got {self.log_visualizations_every_steps}"
             )
 
 
@@ -137,11 +143,11 @@ def create_smoke_test_settings() -> Settings:
             checkpoint_freq=1,  # Save every step for testing
             checkpoint_dir="test_checkpoints/embeddings",
             keep_last_n_checkpoints=2,
-            log_visualizations_every_steps=1,  # Log visualizations every step in smoke test
         ),
         logging=LoggingSettings(
             log_dir="runs",
             run_name_prefix="smoke_test",
-            log_every_steps=1,  # Log every step in smoke test
+            log_metrics_every_steps=1,  # Log metrics every step in smoke test
+            log_visualizations_every_steps=1,  # Log visualizations every step in smoke test
         ),
     )

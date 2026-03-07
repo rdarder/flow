@@ -317,11 +317,30 @@ def train(settings: Settings):
                 # Create temporary model for gradient logging
                 temp_model = nnx.merge(graphdef, state)
                 log_gradient_statistics(logger, None, temp_model, global_step)
+            
+            # Log embedding and attention statistics periodically
+            if settings.logging.log_statistics_every_steps > 0 and \
+               global_step % settings.logging.log_statistics_every_steps == 0:
+                # Get a sample for statistics
+                stats_loader = create_dataloader(
+                    split="train",
+                    batch_size=1,
+                    img_size=settings.dataset.img_size,
+                    max_frames=1,
+                    shuffle=True,
+                    random_seed=global_step,
+                )
+                stats_img1, _, _ = next(stats_loader)
+                temp_model = nnx.merge(graphdef, state)
+                embeddings = temp_model(stats_img1)
+                
+                log_embedding_statistics(logger, embeddings, global_step)
+                log_attention_statistics(logger, embeddings, global_step)
 
             # Log visualizations periodically
             if (
-                settings.training.log_visualizations_every_steps > 0
-                and global_step % settings.training.log_visualizations_every_steps == 0
+                settings.logging.log_visualizations_every_steps > 0
+                and global_step % settings.logging.log_visualizations_every_steps == 0
             ):
                 # Get a fresh random sample batch for visualization
                 # Use global_step as seed to get different frames each time

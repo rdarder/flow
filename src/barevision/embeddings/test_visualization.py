@@ -114,17 +114,19 @@ def test_entropy_maps_figure():
 
 
 def test_settings_include_visualization_freq():
-    """Test that settings include visualization frequency parameter."""
-    settings = TrainingSettings()
-    assert hasattr(settings, "log_visualizations_every_steps")
-    assert settings.log_visualizations_every_steps == 20  # Default
+    """Test that logging settings include visualization frequency parameter."""
+    from barevision.embeddings.settings import LoggingSettings
+    
+    logging_settings = LoggingSettings()
+    assert hasattr(logging_settings, 'log_visualizations_every_steps')
+    assert logging_settings.log_visualizations_every_steps == 20  # Default
     print("✓ test_settings_include_visualization_freq")
 
 
 def test_smoke_test_settings_enable_visualizations():
     """Test that smoke test settings enable frequent visualizations."""
     settings = create_smoke_test_settings()
-    assert settings.training.log_visualizations_every_steps == 1
+    assert settings.logging.log_visualizations_every_steps == 1
     print("✓ test_smoke_test_settings_enable_visualizations")
 
 
