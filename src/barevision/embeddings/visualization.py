@@ -601,41 +601,49 @@ def log_visualizations(
     self_entropy_np = np.array(attention_data.self_entropy)  # (16, 16)
     cross_entropy_np = np.array(attention_data.cross_entropy)  # (16, 16)
 
-    # Compute loss for just this window (not full frame to save memory)
+    # Compute full-frame loss maps for ALL windows (not just the selected one)
+    from barevision.embeddings.loss import (
+        self_attention_entropy_loss_core,
+        cross_attention_entropy_loss_core,
+    )
+    from barevision.utils.grid import WindowGrid
+    
     D = attention_data.embeddings1.shape[-1]
-    flat_emb1 = attention_data.embeddings1.reshape(-1, D)
-
-    # Window embeddings
+    emb1 = attention_data.embeddings1[None, ...]  # Add batch dim for splitting
+    emb2 = attention_data.embeddings2[None, ...]
+    
+    # Split into windows
+    grid = WindowGrid(window_size=window_size)
+    windows1 = grid.split(emb1)  # (B, num_windows, 16, 16, D)
+    windows2 = grid.split(emb2)
+    
+    B, num_windows, wh, ww, D = windows1.shape
+    flat_windows1 = windows1.reshape(B * num_windows, wh, ww, D)
+    flat_windows2 = windows2.reshape(B * num_windows, wh, ww, D)
+    
+    # Compute losses for all windows
+    self_loss_flat = self_attention_entropy_loss_core(flat_windows1)  # (B*num_windows, 16, 16)
+    cross_loss_flat = cross_attention_entropy_loss_core(flat_windows1, flat_windows2)
+    
+    # Reshape back to full grid: (B, num_windows_h, window_size, num_windows_w, window_size)
+    self_loss_flat = self_loss_flat.reshape(B, num_windows_h, window_size, num_windows_w, window_size)
+    self_loss_flat = self_loss_flat.transpose(0, 1, 3, 2, 4).reshape(B, H_emb, W_emb)
+    
+    cross_loss_flat = cross_loss_flat.reshape(B, num_windows_h, window_size, num_windows_w, window_size)
+    cross_loss_flat = cross_loss_flat.transpose(0, 1, 3, 2, 4).reshape(B, H_emb, W_emb)
+    
+    # Remove batch dim and pad to match image dimensions (H-2 → H)
+    self_loss_display = np.pad(np.array(self_loss_flat[0]), ((1, 1), (1, 1)), mode='edge')
+    cross_loss_display = np.pad(np.array(cross_loss_flat[0]), ((1, 1), (1, 1)), mode='edge')
+    
+    # Extract the selected window embeddings for detailed visualizations
     emb_h_start = window_row * window_size
     emb_w_start = window_col * window_size
     window_emb1 = attention_data.embeddings1[
         emb_h_start : emb_h_start + window_size,
         emb_w_start : emb_w_start + window_size,
         :,
-    ].reshape(1, window_size, window_size, D)
-
-    from barevision.embeddings.loss import (
-        self_attention_entropy_loss_core,
-        cross_attention_entropy_loss_core,
-    )
-
-    self_loss_window = self_attention_entropy_loss_core(window_emb1)  # (1, 16, 16)
-
-    # For cross-entropy, we'd need embeddings from img2 window
-    # For simplicity, just use self-loss for both in visualization
-    cross_loss_window = -self_loss_window  # Approximate
-
-    # Upsample window loss to full image size for display
-    self_loss_display = np.zeros((H, W), dtype=np.float32)
-    cross_loss_display = np.zeros((H, W), dtype=np.float32)
-
-    # Place window loss in correct position
-    self_loss_display[
-        emb_h_start : emb_h_start + window_size, emb_w_start : emb_w_start + window_size
-    ] = self_loss_window[0]
-    cross_loss_display[
-        emb_h_start : emb_h_start + window_size, emb_w_start : emb_w_start + window_size
-    ] = cross_loss_window[0]
+    ]  # (16, 16, D)
 
     # 1. Frame with grid (showing both frames)
     fig_frame = create_frame_with_grid_figure(
@@ -643,7 +651,7 @@ def log_visualizations(
     )
     logger.log_figure("Frame/Grid", fig_frame, step)
 
-    # 2. Loss heatmaps (showing only the analyzed window region)
+    # 2. Loss heatmaps (showing full-frame entropy for all windows)
     fig_self_loss, fig_cross_loss = create_loss_heatmap_figures(
         img1_np,
         self_loss_display,
