@@ -91,12 +91,22 @@ def test_similarity_matrix_figure():
 
 
 def test_entropy_maps_figure():
-    """Test entropy maps visualization."""
+    """Test entropy maps visualization with 2×2 layout."""
+    window_crop1 = np.random.rand(16, 16, 3).astype(np.float32)
+    window_crop2 = np.random.rand(16, 16, 3).astype(np.float32)
     self_entropy = np.random.rand(16, 16).astype(np.float32)
     cross_entropy = np.random.rand(16, 16).astype(np.float32)
-    pixel_positions = np.array([[1, 2], [5, 6]], dtype=np.int32)
 
-    fig = create_entropy_maps_figure(self_entropy, cross_entropy, pixel_positions, window_indices=(9, 10))
+    fig = create_entropy_maps_figure(
+        window_crop1,
+        window_crop2,
+        self_entropy,
+        cross_entropy,
+        window_indices=(9, 10),
+        frame_t=100,
+        frame_tk=103,
+        distance=3,
+    )
 
     assert fig.dtype == np.uint8
     assert fig.shape[2] == 3

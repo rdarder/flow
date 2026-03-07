@@ -491,80 +491,86 @@ def create_similarity_matrix_figure(
 
 
 def create_entropy_maps_figure(
+    window_crop1: np.ndarray,
+    window_crop2: np.ndarray,
     self_entropy: np.ndarray,
     cross_entropy: np.ndarray,
-    pixel_positions: Optional[np.ndarray] = None,
     window_size: int = 16,
     window_indices: Optional[Tuple[int, int]] = None,
+    frame_t: int = 0,
+    frame_tk: int = 0,
+    distance: int = 0,
 ) -> np.ndarray:
-    """Create figure showing per-pixel entropy maps within a window.
+    """Create figure showing per-pixel entropy maps with frame crops.
+    
+    Layout: 2×2 grid showing both frames and their entropy maps.
+    This shows the entropy at EVERY pixel position (not specific query pixels).
 
     Args:
+        window_crop1: (16, 16, 3) image crop for frame 1
+        window_crop2: (16, 16, 3) image crop for frame 2
         self_entropy: (16, 16) per-pixel self-attention entropy
         cross_entropy: (16, 16) per-pixel cross-attention entropy
-        pixel_positions: (N, 2) positions to mark on the maps
         window_size: Window dimension (default 16)
         window_indices: (row, col) of window in grid (for title)
+        frame_t: Frame number for crop 1
+        frame_tk: Frame number for crop 2
+        distance: Temporal distance between frames
 
     Returns:
         RGB image array (H_fig, W_fig, 3) as uint8
     """
-    # Build title suffix with window coordinates
+    # Build title with window coordinates
     if window_indices is not None:
         row, col = window_indices
         title_suffix = f" | Window ({row}, {col})"
     else:
         title_suffix = ""
     
-    fig, axes = plt.subplots(1, 2, figsize=(16, 8), dpi=FIGURE_DPI)
+    # Create 2×2 layout
+    fig, axes = plt.subplots(2, 2, figsize=(16, 16), dpi=FIGURE_DPI)
 
-    # Left: Self-entropy
+    # Top-Left: Frame 1 crop
+    axes[0, 0].imshow(window_crop1)
+    axes[0, 0].set_title(f"Frame {frame_t}{title_suffix}", fontsize=12, fontweight="bold")
+    axes[0, 0].axis("off")
+
+    # Top-Right: Self-entropy heatmap
     vmin_self = float(np.min(self_entropy))
     vmax_self = float(np.max(self_entropy))
-    im_self = axes[0].imshow(
+    im_self = axes[0, 1].imshow(
         self_entropy, cmap="viridis", vmin=vmin_self, vmax=vmax_self
     )
     mean_self = float(np.mean(self_entropy))
-    axes[0].set_title(
-        f"Self-Attention Entropy{title_suffix}\nMean: {mean_self:.4f} | Range: [{vmin_self:.4f}, {vmax_self:.4f}]",
+    axes[0, 1].set_title(
+        f"Self-Attention Entropy\nMean: {mean_self:.4f} | Range: [{vmin_self:.4f}, {vmax_self:.4f}]",
         fontsize=12,
         fontweight="bold",
     )
-    axes[0].set_xlabel("X Position")
-    axes[0].set_ylabel("Y Position")
-    plt.colorbar(im_self, ax=axes[0], fraction=0.046, pad=0.04)
+    axes[0, 1].set_xlabel("X Position")
+    axes[0, 1].set_ylabel("Y Position")
+    plt.colorbar(im_self, ax=axes[0, 1], fraction=0.046, pad=0.04)
 
-    # Right: Cross-entropy
+    # Bottom-Left: Frame 2 crop
+    axes[1, 0].imshow(window_crop2)
+    axes[1, 0].set_title(f"Frame {frame_tk} (t+{distance})", fontsize=12, fontweight="bold")
+    axes[1, 0].axis("off")
+
+    # Bottom-Right: Cross-entropy heatmap
     vmin_cross = float(np.min(cross_entropy))
     vmax_cross = float(np.max(cross_entropy))
-    im_cross = axes[1].imshow(
+    im_cross = axes[1, 1].imshow(
         cross_entropy, cmap="viridis", vmin=vmin_cross, vmax=vmax_cross
     )
     mean_cross = float(np.mean(cross_entropy))
-    axes[1].set_title(
-        f"Cross-Attention Entropy{title_suffix}\nMean: {mean_cross:.4f} | Range: [{vmin_cross:.4f}, {vmax_cross:.4f}]",
+    axes[1, 1].set_title(
+        f"Cross-Attention Entropy\nMean: {mean_cross:.4f} | Range: [{vmin_cross:.4f}, {vmax_cross:.4f}]",
         fontsize=12,
         fontweight="bold",
     )
-    axes[1].set_xlabel("X Position")
-    axes[1].set_ylabel("Y Position")
-    plt.colorbar(im_cross, ax=axes[1], fraction=0.046, pad=0.04)
-
-    # Mark pixel positions if provided
-    if pixel_positions is not None:
-        for i, (y, x) in enumerate(pixel_positions):
-            color = ["red", "blue", "green", "orange"][i % 4]
-            for ax in axes:
-                ax.scatter(
-                    [x + 0.5],
-                    [y + 0.5],
-                    c=color,
-                    s=100,
-                    marker="x",
-                    linewidths=3,
-                    label=f"Pixel {i}" if i == 0 else "",
-                )
-        axes[0].legend(loc="upper right", fontsize=9)
+    axes[1, 1].set_xlabel("X Position")
+    axes[1, 1].set_ylabel("Y Position")
+    plt.colorbar(im_cross, ax=axes[1, 1], fraction=0.046, pad=0.04)
 
     plt.tight_layout()
     return _figure_to_array(fig)
@@ -749,10 +755,17 @@ def log_visualizations(
     )
     logger.log_figure("Similarity/Matrix", fig_sim, step)
     
-    # 5. Entropy maps
+    # 5. Entropy maps (2×2 layout with both frame crops)
     fig_entropy = create_entropy_maps_figure(
-        self_entropy_np, cross_entropy_np, pixel_positions_np, window_size,
-        window_indices=(window_row, window_col)
+        window_crop1_np,
+        window_crop2_np,
+        self_entropy_np,
+        cross_entropy_np,
+        window_size,
+        window_indices=(window_row, window_col),
+        frame_t=metadata.get("frame_t", 0),
+        frame_tk=metadata.get("frame_tk", 0),
+        distance=metadata.get("distance", 0),
     )
     logger.log_figure("Entropy/Maps", fig_entropy, step)
 
