@@ -5,7 +5,7 @@ currently used by the training script.
 """
 
 from dataclasses import dataclass, field
-from typing import Tuple
+from typing import Optional, Tuple
 
 
 @dataclass
@@ -21,12 +21,16 @@ class DatasetSettings:
                   Better: (196, 196) -> (192, 192) embeddings = 12x12 windows
         max_frame_distance: Maximum temporal distance for frame pairs
         num_workers: Number of worker processes for data loading (0 = main process only)
+        overfit_video: Name of single video to overfit on (None = normal multi-video training)
+        overfit_repeat: How many times to repeat overfit video in dataset (default 100)
     """
 
     batch_size: int = 4
     img_size: Tuple[int, int] = (196, 196)
     max_frame_distance: int = 5
     num_workers: int = 4
+    overfit_video: Optional[str] = None
+    overfit_repeat: int = 100
 
     def __post_init__(self):
         if self.batch_size < 1:

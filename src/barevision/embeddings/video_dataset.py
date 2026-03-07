@@ -40,6 +40,8 @@ class VideoFrameDataset:
     - Pairs are only created within the same video
 
     The dataset uses video-based train/val splits (85/15) with configurable seed.
+    
+    Overfit mode: Set overfit_video to a specific video name to overfit on that video only.
     """
 
     def __init__(
@@ -50,6 +52,8 @@ class VideoFrameDataset:
         img_size: Tuple[int, int] = (190, 190),
         seed: int = 42,
         train_ratio: float = 0.85,
+        overfit_video: Optional[str] = None,
+        overfit_repeat: int = 100,
     ):
         """Initialize the dataset.
 
@@ -61,6 +65,8 @@ class VideoFrameDataset:
             img_size: Target image size (height, width)
             seed: Random seed for reproducible train/val split
             train_ratio: Ratio of videos for training (default 0.85 = 85%)
+            overfit_video: Name of single video to overfit on (None = normal mode)
+            overfit_repeat: How many times to repeat the overfit video (default 100)
         """
         # Use project datasets directory if not specified
         if data_root is None:
@@ -73,6 +79,8 @@ class VideoFrameDataset:
         self.img_size = img_size
         self.seed = seed
         self.train_ratio = train_ratio
+        self.overfit_video = overfit_video
+        self.overfit_repeat = overfit_repeat
 
         assert split in ["train", "val"], f"Invalid split: {split}"
         assert os.path.isdir(
@@ -98,6 +106,17 @@ class VideoFrameDataset:
         Returns:
             List of video names for this dataset's split
         """
+        # Overfit mode: use only specified video, repeated
+        if self.overfit_video:
+            if self.overfit_video not in all_videos:
+                raise ValueError(
+                    f"Overfit video '{self.overfit_video}' not found. "
+                    f"Available videos: {all_videos[:10]}{'...' if len(all_videos) > 10 else ''}"
+                )
+            print(f"⚠️  OVERFIT MODE: Using only video '{self.overfit_video}' (repeated {self.overfit_repeat}x)")
+            return [self.overfit_video] * self.overfit_repeat
+        
+        # Normal mode: train/val split
         num_videos = len(all_videos)
         num_train = int(num_videos * self.train_ratio)  # Round down for train
         num_val = num_videos - num_train  # Remainder for val

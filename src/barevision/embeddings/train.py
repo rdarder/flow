@@ -19,24 +19,18 @@ import optax
 import tyro
 from flax import nnx
 
-from barevision.embeddings.model import SimpleEmbeddingModel
-from barevision.embeddings.loss import combined_loss
-from barevision.embeddings.video_dataset import VideoFrameDataset
-from barevision.embeddings.settings import (
-    Settings,
-    DatasetSettings,
-    TrainingSettings,
-    LossSettings,
-    create_smoke_test_settings,
-)
-from barevision.utils.logging import JaxLogger
 from barevision.embeddings.checkpoint_manager import create_checkpoint_manager
-from barevision.embeddings.logging_utils import (
-    log_attention_statistics,
-    log_embedding_statistics,
-    log_gradient_statistics,
-)
+from barevision.embeddings.logging_utils import (log_attention_statistics,
+                                                 log_embedding_statistics,
+                                                 log_gradient_statistics)
+from barevision.embeddings.loss import combined_loss
+from barevision.embeddings.model import SimpleEmbeddingModel
+from barevision.embeddings.settings import (DatasetSettings, LossSettings,
+                                            Settings, TrainingSettings,
+                                            create_smoke_test_settings)
+from barevision.embeddings.video_dataset import VideoFrameDataset
 from barevision.embeddings.visualization import log_visualizations
+from barevision.utils.logging import JaxLogger
 
 
 def create_dataloader(
@@ -46,6 +40,8 @@ def create_dataloader(
     max_frames: int | None = None,
     shuffle: bool = True,
     random_seed: int | None = None,
+    overfit_video: str | None = None,
+    overfit_repeat: int = 100,
 ) -> Iterator[tuple[jnp.ndarray, jnp.ndarray, list[dict]]]:
     """Simple data loader that yields batches.
 
@@ -61,6 +57,8 @@ def create_dataloader(
                    If used with shuffle=True, randomly samples this many frames.
         shuffle: Whether to shuffle the dataset (default True for train)
         random_seed: Random seed for shuffling (for reproducibility)
+        overfit_video: Name of single video to overfit on (None = normal mode)
+        overfit_repeat: How many times to repeat overfit video (default 100)
 
     Yields:
         Tuple of (img1_batch, img2_batch, metadata_batch) where:
@@ -72,6 +70,8 @@ def create_dataloader(
         split=split,
         max_frame_distance=5,
         img_size=img_size,
+        overfit_video=overfit_video,
+        overfit_repeat=overfit_repeat,
     )
 
     # Get all indices
@@ -162,9 +162,8 @@ def train_step(graphdef, state, tx, opt_state, img1, img2, alpha=1.0, beta=1.0):
 
         # Compute losses separately for logging
         from barevision.embeddings.loss import (
-            self_attention_entropy_loss_core,
             cross_attention_entropy_loss_core,
-        )
+            self_attention_entropy_loss_core)
         from barevision.utils.grid import WindowGrid
         
         window_size = 16
@@ -283,6 +282,8 @@ def train(settings: Settings):
                 if settings.training.steps_per_epoch > 0
                 else None
             ),
+            overfit_video=settings.dataset.overfit_video,
+            overfit_repeat=settings.dataset.overfit_repeat,
         )
 
         for step, (img1, img2, metadata) in enumerate(loader):
@@ -337,6 +338,8 @@ def train(settings: Settings):
                     max_frames=1,
                     shuffle=True,
                     random_seed=global_step,
+                    overfit_video=settings.dataset.overfit_video,
+                    overfit_repeat=settings.dataset.overfit_repeat,
                 )
                 stats_img1, _, _ = next(stats_loader)
                 temp_model = nnx.merge(graphdef, state)
@@ -359,6 +362,8 @@ def train(settings: Settings):
                     max_frames=1,
                     shuffle=True,
                     random_seed=global_step,
+                    overfit_video=settings.dataset.overfit_video,
+                    overfit_repeat=settings.dataset.overfit_repeat,
                 )
                 viz_img1, viz_img2, viz_metadata = next(viz_loader)
                 # Create temporary model for visualization
@@ -368,7 +373,7 @@ def train(settings: Settings):
                 )
 
             # Log every few steps to console
-            if step % 5 == 0:
+            if step % 10 == 0:
                 elapsed = time.time() - epoch_start
                 steps_per_sec = (step + 1) / elapsed
                 print(
@@ -389,6 +394,8 @@ def train(settings: Settings):
             batch_size=1,
             img_size=settings.dataset.img_size,
             max_frames=1,
+            overfit_video=settings.dataset.overfit_video,
+            overfit_repeat=settings.dataset.overfit_repeat,
         )
         sample_img1, sample_img2, _ = next(sample_loader)
         # Create temporary model for statistics

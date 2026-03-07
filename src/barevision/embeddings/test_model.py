@@ -57,10 +57,10 @@ class TestSimpleEmbeddingModel:
         )
         param_count = count_parameters(model)
 
-        # depthwise: 3 * 4 * 25 = 300 weights + 12 bias = 312
-        # pointwise: 12 * 16 = 192 weights + 16 bias = 208
-        # total: 520
-        assert param_count == 520, f"Expected 520 parameters, got {param_count}"
+        # depthwise: 3 * 16 * 25 = 1200 weights + 48 bias = 1248
+        # pointwise: 48 * 16 = 768 weights + 16 bias = 784
+        # total: 2032
+        assert param_count == 2032, f"Expected 2032 parameters, got {param_count}"
 
     def test_spatial_dimensions(self):
         """Test that spatial dimensions reduce by 4 (valid convolution with 5×5 kernel)."""
@@ -116,8 +116,8 @@ class TestSimpleEmbeddingModel:
         pointwise_kernel = grad_state["pointwise_conv"]["kernel"]
 
         # Verify gradients exist and are non-zero
-        assert depthwise_kernel.shape == (5, 5, 1, 12)
-        assert pointwise_kernel.shape == (1, 1, 12, 16)
+        assert depthwise_kernel.shape == (5, 5, 1, 48)
+        assert pointwise_kernel.shape == (1, 1, 48, 16)
 
         # Extract array values from Param objects
         dw_value = (
@@ -156,4 +156,4 @@ def test_model_initialization():
             if hasattr(param_value, "size"):
                 param_count += param_value.size
 
-    assert param_count == 520, f"Expected 520 parameters, got {param_count}"
+    assert param_count == 2032, f"Expected 2032 parameters, got {param_count}"

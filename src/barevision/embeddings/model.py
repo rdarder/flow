@@ -6,21 +6,21 @@ local feature extraction optimized for patch matching.
 Architecture:
     Input: (B, H, W, 3) RGB
       ↓
-    5×5 depthwise conv: 3 in → 12 out (4 filters per channel)
+    5×5 depthwise conv: 3 in → 48 out (16 filters per channel)
       ↓
-    ReLU
+    LeakyReLU (negative_slope=0.1) - prevents dying ReLU
       ↓
-    1×1 conv: 12 in → 16 out
+    1×1 conv: 48 in → 16 out
       ↓
-    Output: (B, H-4, W-4, 16) embeddings
+    Output: (B, H-4, W-4, 16) embeddings, L2-normalized
 
 Note: Uses valid convolutions (no padding), so output is 4 pixels smaller
 than input on each dimension (vs 2 pixels with 3×3 kernel).
 
-Parameters: ~526 total
-    - Depthwise: 3 channels × 4 filters × 25 weights = 300
-    - 1×1 conv: 12 in × 16 out + 16 bias = 208
-    - Total: 508 + 18 (approx, depends on implementation)
+Parameters: ~2,032 total
+    - Depthwise: 3 channels × 16 filters × 25 weights = 1,200
+    - 1×1 conv: 48 in × 16 out + 16 bias = 784
+    - Total: 1,984 + bias terms
 """
 
 from dataclasses import dataclass
@@ -44,7 +44,7 @@ class SimpleEmbeddingModel(nnx.Module):
         self,
         embed_dim: int = 16,
         in_channels: int = 3,
-        depthwise_out_channels: int = 12,
+        depthwise_out_channels: int = 48,
         kernel_size: int = 5,
         *,
         rngs: nnx.Rngs,
@@ -55,7 +55,7 @@ class SimpleEmbeddingModel(nnx.Module):
             embed_dim: Output embedding dimension (default 16)
             in_channels: Number of input channels (3 for RGB, 1 for grayscale)
             depthwise_out_channels: Number of output channels from depthwise conv
-                (default 12 = 4 filters per input channel for RGB)
+                (default 48 = 16 filters per input channel for RGB)
             kernel_size: Size of depthwise convolution kernel (default 5 for larger receptive field)
             rngs: NNX RNGs for parameter initialization
         """
@@ -91,11 +91,11 @@ class SimpleEmbeddingModel(nnx.Module):
             x: Input tensor of shape (B, H, W, in_channels)
 
         Returns:
-            Embeddings of shape (B, H-2, W-2, embed_dim), L2-normalized to unit norm
+            Embeddings of shape (B, H-4, W-4, embed_dim), L2-normalized to unit norm
         """
-        # Depthwise convolution + ReLU
+        # Depthwise convolution + LeakyReLU (prevents dying ReLU problem)
         x = self.depthwise_conv(x)
-        x = nnx.relu(x)
+        x = nnx.leaky_relu(x, negative_slope=0.1)
 
         # Pointwise convolution
         x = self.pointwise_conv(x)
