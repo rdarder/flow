@@ -16,14 +16,15 @@ class DatasetSettings:
         batch_size: Training batch size
         img_size: Input image size as (height, width) tuple.
                   Must result in embeddings divisible by window_size (16).
-                  Model uses 3x3 valid conv, so output is (H-2, W-2).
-                  Recommended: (194, 194) -> (192, 192) embeddings = 12x12 windows
+                  Model uses 5×5 valid conv, so output is (H-4, W-4).
+                  Recommended: (200, 200) -> (196, 196) embeddings, not divisible
+                  Better: (196, 196) -> (192, 192) embeddings = 12x12 windows
         max_frame_distance: Maximum temporal distance for frame pairs
         num_workers: Number of worker processes for data loading (0 = main process only)
     """
 
     batch_size: int = 4
-    img_size: Tuple[int, int] = (194, 194)
+    img_size: Tuple[int, int] = (196, 196)
     max_frame_distance: int = 5
     num_workers: int = 4
 
@@ -72,6 +73,29 @@ class LoggingSettings:
         if self.log_statistics_every_steps < 0:
             raise ValueError(
                 f"log_statistics_every_steps must be >= 0, got {self.log_statistics_every_steps}"
+            )
+
+
+@dataclass
+class LossSettings:
+    """Loss function weights.
+
+    Attributes:
+        self_entropy_weight: Weight for self-attention entropy loss (alpha)
+        cross_entropy_weight: Weight for cross-attention entropy loss (beta)
+    """
+
+    self_entropy_weight: float = 1.0
+    cross_entropy_weight: float = 0.1
+
+    def __post_init__(self):
+        if self.self_entropy_weight < 0:
+            raise ValueError(
+                f"self_entropy_weight must be >= 0, got {self.self_entropy_weight}"
+            )
+        if self.cross_entropy_weight < 0:
+            raise ValueError(
+                f"cross_entropy_weight must be >= 0, got {self.cross_entropy_weight}"
             )
 
 
@@ -125,6 +149,7 @@ class Settings:
     dataset: DatasetSettings
     training: TrainingSettings
     logging: LoggingSettings
+    loss: LossSettings = field(default_factory=LossSettings)
 
 
 def create_smoke_test_settings() -> Settings:

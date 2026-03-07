@@ -6,29 +6,29 @@ local feature extraction optimized for patch matching.
 Architecture:
     Input: (B, H, W, 3) RGB
       ↓
-    3×3 depthwise conv: 3 in → 12 out (4 filters per channel)
+    5×5 depthwise conv: 3 in → 12 out (4 filters per channel)
       ↓
     ReLU
       ↓
     1×1 conv: 12 in → 16 out
       ↓
-    Output: (B, H-2, W-2, 16) embeddings
+    Output: (B, H-4, W-4, 16) embeddings
 
-Note: Uses valid convolutions (no padding), so output is 2 pixels smaller
-than input on each dimension.
+Note: Uses valid convolutions (no padding), so output is 4 pixels smaller
+than input on each dimension (vs 2 pixels with 3×3 kernel).
 
-Parameters: ~326 total
-    - Depthwise: 3 channels × 4 filters × 9 weights = 108
+Parameters: ~526 total
+    - Depthwise: 3 channels × 4 filters × 25 weights = 300
     - 1×1 conv: 12 in × 16 out + 16 bias = 208
-    - Total: 316 + 10 (approx, depends on implementation)
+    - Total: 508 + 18 (approx, depends on implementation)
 """
 
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
-from flax import nnx
 import jax
 import jax.numpy as jnp
+from flax import nnx
 
 from barevision.utils.grid import WindowGrid
 
@@ -45,6 +45,7 @@ class SimpleEmbeddingModel(nnx.Module):
         embed_dim: int = 16,
         in_channels: int = 3,
         depthwise_out_channels: int = 12,
+        kernel_size: int = 5,
         *,
         rngs: nnx.Rngs,
     ):
@@ -55,18 +56,20 @@ class SimpleEmbeddingModel(nnx.Module):
             in_channels: Number of input channels (3 for RGB, 1 for grayscale)
             depthwise_out_channels: Number of output channels from depthwise conv
                 (default 12 = 4 filters per input channel for RGB)
+            kernel_size: Size of depthwise convolution kernel (default 5 for larger receptive field)
             rngs: NNX RNGs for parameter initialization
         """
         self.embed_dim = embed_dim
         self.in_channels = in_channels
         self.depthwise_out_channels = depthwise_out_channels
+        self.kernel_size = kernel_size
 
-        # 3×3 depthwise convolution
+        # 5×5 depthwise convolution (larger receptive field)
         # Each input channel gets depthwise_out_channels / in_channels filters
         self.depthwise_conv = nnx.Conv(
             in_features=in_channels,
             out_features=depthwise_out_channels,
-            kernel_size=(3, 3),
+            kernel_size=(kernel_size, kernel_size),
             padding="VALID",  # No padding - valid convolution only
             feature_group_count=in_channels,  # Depthwise: one filter set per input channel
             rngs=rngs,
@@ -88,7 +91,7 @@ class SimpleEmbeddingModel(nnx.Module):
             x: Input tensor of shape (B, H, W, in_channels)
 
         Returns:
-            Embeddings of shape (B, H-2, W-2, embed_dim)
+            Embeddings of shape (B, H-2, W-2, embed_dim), L2-normalized to unit norm
         """
         # Depthwise convolution + ReLU
         x = self.depthwise_conv(x)
@@ -96,6 +99,12 @@ class SimpleEmbeddingModel(nnx.Module):
 
         # Pointwise convolution
         x = self.pointwise_conv(x)
+        
+        # L2 normalize embeddings to unit norm (per-pixel)
+        # This ensures self-attention peak is at self (q·q = ||q||² = 1 for all pixels)
+        # Without this, high-norm embeddings dominate attention regardless of location
+        norm = jnp.linalg.norm(x, axis=-1, keepdims=True)
+        x = x / (norm + 1e-8)
 
         return x
 
@@ -106,7 +115,6 @@ class SimpleEmbeddingModel(nnx.Module):
         window_indices: Tuple[int, int],
         window_size: int = 16,
         pixel_indices: Optional[jnp.ndarray] = None,
-        spatial_scale: float = 10.0,
     ) -> AttentionMaps:
         """Compute attention maps for visualization (not used in training loss).
 
@@ -121,7 +129,6 @@ class SimpleEmbeddingModel(nnx.Module):
             window_size: Attention window size (default 16)
             pixel_indices: List of pixel indices within window to show attention maps for.
                           If None, picks 4 random pixels using a deterministic seed.
-            spatial_scale: Scale factor for spatial penalty in self-attention
 
         Returns:
             AttentionMaps dataclass containing all visualization data
@@ -187,10 +194,102 @@ class SimpleEmbeddingModel(nnx.Module):
         # Ensure pixel_indices is a jnp array
         pixel_indices = jnp.asarray(pixel_indices)
 
+        # Compute self-attention logits (no masking, no penalty - embeddings are normalized)
+        self_logits = flat_emb1 @ flat_emb1.T  # (256, 256)
+
+        # Compute self-attention weights
+        self_attn_weights = jax.nn.softmax(self_logits, axis=-1)  # (256, 256)
+
+        # Compute cross-attention logits
+        cross_logits = flat_emb1 @ flat_emb2.T  # (256, 256)
+        cross_attn_weights = jax.nn.softmax(cross_logits, axis=-1)  # (256, 256)
+
+        # Extract attention maps for selected pixels
+        self_attn_maps = self_attn_weights[pixel_indices].reshape(
+            -1, window_size, window_size
+        )  # (N_sel, 16, 16)
+        cross_attn_maps = cross_attn_weights[pixel_indices].reshape(
+            -1, window_size, window_size
+        )
+
+        # Compute per-pixel entropy maps
+        self_entropy = _compute_entropy(self_attn_weights).reshape(
+            window_size, window_size
+        )  # (16, 16)
+        cross_entropy = _compute_entropy(cross_attn_weights).reshape(
+            window_size, window_size
+        )
+
+        # Compute pixel positions (y, x) for each selected index
+        pixel_y = pixel_indices // window_size
+        pixel_x = pixel_indices % window_size
+        pixel_positions = jnp.stack([pixel_y, pixel_x], axis=-1)  # (N_sel, 2)
+
+        return AttentionMaps(
+            embeddings1=emb1,
+            embeddings2=emb2,
+            self_attention=self_attn_maps,
+            cross_attention=cross_attn_maps,
+            self_entropy=self_entropy,
+            cross_entropy=cross_entropy,
+            window_crop=window_crop,
+            pixel_positions=pixel_positions,
+        )
+
+        # Compute embeddings
+        emb1 = self(img1)[0]  # Remove batch dimension: (H-2, W-2, 16)
+        emb2 = self(img2)[0]
+
+        # Validate window indices
+        H_emb, W_emb, _ = emb1.shape
+        num_windows_h = H_emb // window_size
+        num_windows_w = W_emb // window_size
+        row, col = window_indices
+
+        if row < 0 or row >= num_windows_h or col < 0 or col >= num_windows_w:
+            raise ValueError(
+                f"Window indices ({row}, {col}) out of bounds. "
+                f"Valid range: row [0, {num_windows_h}), col [0, {num_windows_w})"
+            )
+
+        # Extract window from embeddings
+        emb_h_start = row * window_size
+        emb_h_end = emb_h_start + window_size
+        emb_w_start = col * window_size
+        emb_w_end = emb_w_start + window_size
+
+        window_emb1 = emb1[
+            emb_h_start:emb_h_end, emb_w_start:emb_w_end, :
+        ]  # (16, 16, 16)
+        window_emb2 = emb2[emb_h_start:emb_h_end, emb_w_start:emb_w_end, :]
+
+        # Extract image crop for visualization
+        # Account for 2-pixel border from valid convolutions
+        img_h_start = emb_h_start
+        img_h_end = img_h_start + window_size
+        img_w_start = emb_w_start
+        img_w_end = img_w_start + window_size
+        window_crop = img1[
+            0, img_h_start:img_h_end, img_w_start:img_w_end, :
+        ]  # (16, 16, 3)
+
+        # Flatten windows for attention computation
+        flat_emb1 = window_emb1.reshape(window_size * window_size, -1)  # (256, 16)
+        flat_emb2 = window_emb2.reshape(window_size * window_size, -1)
+
+        # Select pixel indices
+        N = window_size * window_size
+        if pixel_indices is None:
+            # Use deterministic random selection based on window position
+            seed = row * 1000 + col
+            key = jax.random.PRNGKey(seed)
+            pixel_indices = jax.random.choice(key, N, shape=(4,), replace=False)
+
+        # Ensure pixel_indices is a jnp array
+        pixel_indices = jnp.asarray(pixel_indices)
+
         # Compute self-attention logits
         self_logits = flat_emb1 @ flat_emb1.T  # (256, 256)
-        mask = jnp.eye(N, dtype=jnp.float32)
-        self_logits = self_logits - mask * 1e9  # Mask self-attention
         spatial_matrix = _spatial_logits_matrix(window_size, spatial_scale)
         self_logits = self_logits + spatial_matrix
 
@@ -273,23 +372,6 @@ def _compute_entropy(probabilities: jnp.ndarray) -> jnp.ndarray:
     """
     eps = 1e-10
     return -jnp.sum(probabilities * jnp.log(probabilities + eps), axis=-1)
-
-
-def _spatial_logits_matrix(window_size: int, scale: float = 10.0) -> jnp.ndarray:
-    """Create spatial penalty matrix: -scale * distance² for all position pairs.
-
-    Returns:
-        (N, N) matrix where N = window_size²
-    """
-    coords = jnp.linspace(0, 1, window_size, dtype=jnp.float32)
-    y, x = jnp.meshgrid(coords, coords, indexing="ij")
-    positions = jnp.stack([x.ravel(), y.ravel()], axis=-1)
-
-    pos_norm_sq = jnp.sum(jnp.square(positions), axis=-1, keepdims=True)
-    cross_term = positions @ positions.T
-    dist_sq = jnp.maximum(pos_norm_sq + pos_norm_sq.T - 2 * cross_term, 0.0)
-
-    return -scale * dist_sq
 
 
 def count_parameters(model: nnx.Module) -> int:

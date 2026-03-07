@@ -26,6 +26,7 @@ from barevision.embeddings.settings import (
     Settings,
     DatasetSettings,
     TrainingSettings,
+    LossSettings,
     create_smoke_test_settings,
 )
 from barevision.utils.logging import JaxLogger
@@ -293,7 +294,14 @@ def train(settings: Settings):
 
             # Training step
             state, opt_state, loss, self_loss, cross_loss = train_step(
-                graphdef, state, tx, opt_state, img1, img2
+                graphdef, 
+                state, 
+                tx, 
+                opt_state, 
+                img1, 
+                img2,
+                alpha=settings.loss.self_entropy_weight,
+                beta=settings.loss.cross_entropy_weight,
             )
             epoch_losses.append(loss)
             global_step += 1

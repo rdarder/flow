@@ -1,8 +1,10 @@
 """Loss functions for self-supervised embedding training.
 
-Implements entropy-based objectives for learning sharp attention distributions:
-- Self-attention entropy: Maximize after spatial penalty (discourage distant peaks)
-- Cross-attention entropy: Minimize (encourage 1-2 sharp cross-frame matches)
+Simple entropy minimization for both self and cross attention:
+- Self-attention: minimize entropy → sharp peak at self (natural advantage: q·q = ||q||²)
+  This encourages UNIQUE embeddings (no other pixel competes with self)
+- Cross-attention: minimize entropy → sharp peak at match location
+  This encourages CONFIDENT matching
 
 Design:
 - Core functions: Pure math on (B, H, W, D) batches - no splitting, no vmap
@@ -28,37 +30,23 @@ def _compute_entropy(probabilities: jnp.ndarray) -> jnp.ndarray:
     return -jnp.sum(probabilities * jnp.log(probabilities + eps), axis=-1)
 
 
-def _spatial_logits_matrix(window_size: int, scale: float = 10.0) -> jnp.ndarray:
-    """Create spatial penalty matrix: -scale * distance² for all position pairs.
-
-    Returns:
-        (N, N) matrix where N = window_size²
-    """
-    coords = jnp.linspace(0, 1, window_size, dtype=jnp.float32)
-    y, x = jnp.meshgrid(coords, coords, indexing="ij")
-    positions = jnp.stack([x.ravel(), y.ravel()], axis=-1)
-
-    pos_norm_sq = jnp.sum(jnp.square(positions), axis=-1, keepdims=True)
-    cross_term = positions @ positions.T
-    dist_sq = jnp.maximum(pos_norm_sq + pos_norm_sq.T - 2 * cross_term, 0.0)
-
-    return -scale * dist_sq
-
-
 def self_attention_entropy_loss_core(
-    windows: jnp.ndarray, spatial_scale: float = 10.0
+    windows: jnp.ndarray,
 ) -> jnp.ndarray:
     """Compute self-attention entropy loss on a batch of windows.
 
     Pure math - no splitting, no dimension rearranging. Just the loss computation.
-    Returns negative entropy so minimizing loss = maximizing entropy.
+    Returns POSITIVE entropy so minimizing loss = minimizing entropy.
+    
+    No masking, no penalties. Self naturally has highest attention (q·q = ||q||²).
+    Low entropy means: "only self should dominate, no other pixel competes"
+    This encourages unique embeddings.
 
     Args:
         windows: (B, H, W, D) batch of windows (already split and flattened)
-        spatial_scale: Scale factor for spatial penalty
 
     Returns:
-        (B, H, W) per-pixel loss (negative entropy)
+        (B, H, W) per-pixel loss (positive entropy)
     """
     B, H, W, D = windows.shape
     N = H * W
@@ -66,24 +54,16 @@ def self_attention_entropy_loss_core(
     # Flatten spatial dimensions
     flat_windows = windows.reshape(B, N, D)
 
-    # Compute attention logits: dot products
+    # Compute attention logits: dot products (NO masking, NO penalty)
     logits = flat_windows @ flat_windows.transpose(0, 2, 1)  # (B, N, N)
-
-    # Mask self-attention
-    mask = jnp.eye(N, dtype=jnp.float32)
-    logits = logits - mask * 1e9
-
-    # Add spatial penalty
-    spatial_matrix = _spatial_logits_matrix(H, spatial_scale)
-    logits = logits + spatial_matrix
 
     # Softmax and entropy
     attn_weights = jax.nn.softmax(logits, axis=-1)
     entropy = _compute_entropy(attn_weights)
 
-    # Return NEGATIVE entropy (maximize entropy = minimize negative entropy)
+    # Return POSITIVE entropy (minimize entropy = encourage sharp/peaked attention)
     # Reshape back to spatial grid: (B, H, W)
-    return -entropy.reshape(B, H, W)
+    return entropy.reshape(B, H, W)
 
 
 def cross_attention_entropy_loss_core(
@@ -124,7 +104,6 @@ def combined_loss(
     window_size: int = 16,
     alpha: float = 1.0,
     beta: float = 1.0,
-    spatial_scale: float = 10.0,
 ) -> jnp.ndarray:
     """Compute combined self + cross attention loss.
 
@@ -139,7 +118,6 @@ def combined_loss(
         window_size: Size of attention windows (default 16)
         alpha: Weight for self-attention loss (default 1.0)
         beta: Weight for cross-attention loss (default 1.0)
-        spatial_scale: Scale factor for spatial penalty (default 10.0)
 
     Returns:
         (B, H, W) combined per-pixel loss
@@ -171,7 +149,7 @@ def combined_loss(
     flat_windows2 = windows2.reshape(B * num_windows, window_size, window_size, D)
 
     # Call core loss functions (pure math)
-    self_loss = self_attention_entropy_loss_core(flat_windows1, spatial_scale)
+    self_loss = self_attention_entropy_loss_core(flat_windows1)
     cross_loss = cross_attention_entropy_loss_core(flat_windows1, flat_windows2)
 
     # Combine with weights

@@ -16,9 +16,9 @@ import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 
-from barevision.utils.grid import WindowGrid
-from barevision.embeddings.model import SimpleEmbeddingModel, AttentionMaps
+from barevision.embeddings.model import AttentionMaps, SimpleEmbeddingModel
 from barevision.embeddings.settings import Settings
+from barevision.utils.grid import WindowGrid
 from barevision.utils.logging import JaxLogger
 
 # Set non-interactive backend for headless environments
@@ -617,8 +617,8 @@ def log_visualizations(
 
     # Get image dimensions
     H, W = img1.shape[1:3]
-    H_emb = H - 2  # Account for valid convolutions
-    W_emb = W - 2
+    H_emb = H - 4  # Account for valid convolutions
+    W_emb = W - 4
 
     # Calculate number of windows
     num_windows_h = H_emb // window_size
@@ -662,10 +662,8 @@ def log_visualizations(
     cross_entropy_np = np.array(attention_data.cross_entropy)  # (16, 16)
 
     # Compute full-frame loss maps for ALL windows (not just the selected one)
-    from barevision.embeddings.loss import (
-        self_attention_entropy_loss_core,
-        cross_attention_entropy_loss_core,
-    )
+    from barevision.embeddings.loss import (cross_attention_entropy_loss_core,
+                                            self_attention_entropy_loss_core)
     from barevision.utils.grid import WindowGrid
     
     D = attention_data.embeddings1.shape[-1]
@@ -741,14 +739,8 @@ def log_visualizations(
     flat_window_emb1 = window_emb1.reshape(-1, D)
     similarity_matrix = np.array(flat_window_emb1 @ flat_window_emb1.T)  # (256, 256)
 
-    # Compute full self-attention matrix for visualization
-    from barevision.embeddings.model import _spatial_logits_matrix
 
     self_logits = flat_window_emb1 @ flat_window_emb1.T
-    mask = np.eye(256, dtype=np.float32)
-    self_logits = self_logits - mask * 1e9
-    spatial_matrix = _spatial_logits_matrix(window_size)
-    self_logits = self_logits + np.array(spatial_matrix)
 
     # Softmax to get attention weights (memory-efficient)
     self_logits_max = np.max(self_logits, axis=-1, keepdims=True)
