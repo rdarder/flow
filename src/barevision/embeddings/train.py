@@ -25,24 +25,20 @@ from barevision.embeddings.visualization import log_visualizations
 from barevision.utils.logging import JaxLogger
 
 
-def train_step(graphdef, state, tx, opt_state, img1, img2):
+def train_step(model, optimizer, img1, img2):
     """Execute single training step with gradient update."""
-    def loss_fn(state):
-        model = nnx.merge(graphdef, state)
+    def loss_fn(model):
         emb1 = model(img1)
         emb2 = model(img2)
         combined, self_loss, cross_loss = compute_embedding_losses(emb1, emb2)
-        return combined.mean(), self_loss.mean(), cross_loss.mean()
+        return combined.mean(), (self_loss.mean(), cross_loss.mean())
 
-    combined, self_loss, cross_loss = loss_fn(state)
-    grads = nnx.grad(lambda s: loss_fn(s)[0])(state)
-    updates, opt_state = tx.update(grads, opt_state, state)
-    state = optax.apply_updates(state, updates)
-
-    return state, opt_state, float(combined), float(self_loss), float(cross_loss)
+    (loss, (self_loss, cross_loss)), grads = nnx.value_and_grad(loss_fn, has_aux=True)(model)
+    optimizer.update(model, grads)
+    return loss, self_loss, cross_loss
 
 
-def _run_epoch(epoch, graphdef, state, tx, opt_state, logger, dataset_settings, training_settings, logging_settings):
+def _run_epoch(epoch, model, optimizer, logger, dataset_settings, training_settings, logging_settings):
     """Run single epoch and return average loss."""
     loader = create_dataloader(dataset_settings, split="train")
 
@@ -52,45 +48,38 @@ def _run_epoch(epoch, graphdef, state, tx, opt_state, logger, dataset_settings, 
     for step, (img1, img2, metadata) in enumerate(loader):
         global_step = step
 
-        state, opt_state, loss, self_loss, cross_loss = train_step(
-            graphdef, state, tx, opt_state, img1, img2
-        )
-        epoch_losses.append(loss)
+        loss, self_loss, cross_loss = train_step(model, optimizer, img1, img2)
+        epoch_losses.append(float(loss))
 
-        # Log metrics
         if global_step % logging_settings.log_every_steps == 0:
-            logger.log_scalar("Loss/train_step", loss, global_step)
-            logger.log_scalar("Loss/self_entropy", self_loss, global_step)
-            logger.log_scalar("Loss/cross_entropy", cross_loss, global_step)
+            logger.log_scalar("Loss/train_step", float(loss), global_step)
+            logger.log_scalar("Loss/self_entropy", float(self_loss), global_step)
+            logger.log_scalar("Loss/cross_entropy", float(cross_loss), global_step)
 
-            _log_diagnostics(logger, graphdef, state, img1, global_step, logging_settings)
+            _log_diagnostics(logger, model, img1, global_step)
 
             elapsed = time.time() - epoch_start
             steps_per_sec = (step + 1) / elapsed
-            print(f"Epoch {epoch} | Step {global_step} | Loss: {loss:.4f} | {steps_per_sec:.1f} steps/sec")
+            print(f"Epoch {epoch} | Step {global_step} | Loss: {float(loss):.4f} | {steps_per_sec:.1f} steps/sec")
 
-        # Log visualizations (independent schedule)
         if logging_settings.log_visualizations_every_steps > 0 and global_step % logging_settings.log_visualizations_every_steps == 0:
-            _log_visualizations(logger, graphdef, state, img1, global_step)
+            _log_visualizations(logger, model, img1, global_step)
 
     return sum(epoch_losses) / len(epoch_losses)
 
 
-def _log_diagnostics(logger, graphdef, state, img1, step, logging_settings):
+def _log_diagnostics(logger, model, img1, step):
     """Log gradient and embedding statistics."""
-    temp_model = nnx.merge(graphdef, state)
+    log_gradient_statistics(logger, None, model, step)
 
-    log_gradient_statistics(logger, None, temp_model, step)
-
-    embeddings = temp_model(img1)
+    embeddings = model(img1)
     log_embedding_statistics(logger, embeddings, step)
     log_attention_statistics(logger, embeddings, step)
 
 
-def _log_visualizations(logger, graphdef, state, img1, step):
+def _log_visualizations(logger, model, img1, step):
     """Generate and log visualization figures."""
-    temp_model = nnx.merge(graphdef, state)
-    log_visualizations(logger, temp_model, img1[0:1], img1[0:1], {}, step)
+    log_visualizations(logger, model, img1[0:1], img1[0:1], {}, step)
 
 
 def train(settings: Settings):
@@ -111,16 +100,15 @@ def train(settings: Settings):
         rngs=nnx.Rngs(0),
     )
 
-    graphdef, state = nnx.split(model)
-    tx = optax.adam(settings.training.learning_rate)
-    opt_state = tx.init(state)
+    optimizer = nnx.Optimizer(model, optax.adam(settings.training.learning_rate), wrt=nnx.Param)
 
     print(f"Model parameters: {count_parameters(model)}\n")
 
     for epoch in range(settings.training.epochs):
         avg_loss = _run_epoch(
             epoch,
-            graphdef, state, tx, opt_state,
+            model,
+            optimizer,
             logger,
             settings.dataset,
             settings.training,
@@ -134,7 +122,7 @@ def train(settings: Settings):
     print("TRAINING COMPLETE")
     print("=" * 60)
 
-    return graphdef, state
+    return model
 
 
 def _print_header(settings):
