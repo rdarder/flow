@@ -340,7 +340,9 @@ def create_dataloader(
         img_size=dataset_settings.img_size,
     )
 
-    max_samples = dataset_settings.max_samples if dataset_settings.max_samples > 0 else None
+    max_samples = (
+        dataset_settings.max_samples if dataset_settings.max_samples > 0 else None
+    )
 
     # Shuffle and/or sample indices
     indices = _shuffle_indices(

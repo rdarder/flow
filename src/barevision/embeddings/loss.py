@@ -174,7 +174,7 @@ def compute_embedding_losses(
     window_size: int = 16,
     alpha: float = 1.0,
     beta: float = 0.1,
-) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+) -> tuple[jnp.ndarray, dict]:
     """Compute combined self and cross attention losses.
 
     Handles window splitting and returns all three loss components.
@@ -223,12 +223,19 @@ def compute_embedding_losses(
     # Reshape back to spatial grid: (B * num_windows, window_size, window_size) -> (B, H, W)
     def reshape_to_grid(loss_flat):
         loss = loss_flat.reshape(B, num_windows, window_size, window_size)
-        loss = loss.reshape(B, H // window_size, W // window_size, window_size, window_size)
+        loss = loss.reshape(
+            B, H // window_size, W // window_size, window_size, window_size
+        )
         loss = loss.transpose(0, 1, 3, 2, 4)
         return loss.reshape(B, H, W)
 
-    self_loss = reshape_to_grid(self_loss_flat)
-    cross_loss = reshape_to_grid(cross_loss_flat)
+    self_loss = reshape_to_grid(self_loss_flat).mean()
+    cross_loss = reshape_to_grid(cross_loss_flat).mean()
     combined = alpha * self_loss + beta * cross_loss
 
-    return combined, self_loss, cross_loss
+    aux = dict(
+        self_loss=self_loss,
+        cross_loss=cross_loss,
+    )
+
+    return combined, aux

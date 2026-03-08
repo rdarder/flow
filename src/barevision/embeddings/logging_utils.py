@@ -254,3 +254,22 @@ def log_progress(
     log_metrics(logger, loss, aux, step)
     log_diagnostics(logger, model, img1, step)
     print(format_progress_line(epoch, step, float(loss), time.time() - epoch_start))
+
+
+def print_footer():
+    print("=" * 60)
+    print("TRAINING COMPLETE")
+    print("=" * 60)
+
+
+def print_header(settings):
+    """Print training configuration header."""
+    print("=" * 60)
+    print("EMBEDDING TRAINING")
+    print("=" * 60)
+    print()
+    print(f"Epochs: {settings.training.epochs}")
+    print(f"Batch size: {settings.dataset.batch_size}")
+    if settings.dataset.max_samples > 0:
+        print(f"Max samples per epoch: {settings.dataset.max_samples}")
+    print()

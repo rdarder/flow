@@ -8,7 +8,7 @@ import tyro
 from flax import nnx
 
 from barevision.embeddings.loss import compute_embedding_losses
-from barevision.embeddings.logging_utils import log_progress
+from barevision.embeddings.logging_utils import log_progress, print_footer, print_header
 from barevision.embeddings.model import SimpleEmbeddingModel, count_parameters
 from barevision.embeddings.settings import Settings, create_smoke_test_settings
 from barevision.embeddings.video_dataset import create_dataloader
@@ -21,23 +21,17 @@ def train_step(model, optimizer, img1, img2, logging: bool = False):
     """Execute single training step with gradient update."""
 
     def loss_fn(model):
-        emb1 = model(img1)
-        emb2 = model(img2)
-        combined, self_loss, cross_loss = compute_embedding_losses(emb1, emb2)
-        return combined.mean(), (self_loss.mean(), cross_loss.mean())
+        return compute_embedding_losses(model(img1), model(img2))
 
-    (loss, (self_loss, cross_loss)), grads = nnx.value_and_grad(loss_fn, has_aux=True)(
-        model
-    )
-    aux = {}
-    if logging:
-        aux["self_loss"] = self_loss
-        aux["cross_loss"] = cross_loss
+    (loss, aux), grads = nnx.value_and_grad(loss_fn, has_aux=True)(model)
+
+    if not logging:
+        aux = {}  # drop aux so jit can trace it as not being used.
     optimizer.update(model, grads)
     return loss, aux
 
 
-def _run_epoch(
+def run_epoch(
     epoch,
     model,
     optimizer,
@@ -45,11 +39,8 @@ def _run_epoch(
     dataset_settings,
     logging_settings,
 ):
-    """Run single epoch and return average loss."""
     loader = create_dataloader(dataset_settings, split="train")
-
     epoch_start = time.time()
-    epoch_losses = []
 
     for step, (img1, img2, metadata) in enumerate(loader):
         global_step = step
@@ -61,7 +52,6 @@ def _run_epoch(
             img2,
             logging_settings.should_log_something(global_step),
         )
-        epoch_losses.append(float(loss))
 
         if global_step % logging_settings.log_every_steps == 0:
             log_progress(
@@ -76,9 +66,7 @@ def _run_epoch(
             )
 
         if global_step % logging_settings.log_visualizations_every_steps == 0:
-            log_visualizations(logger, model, img1[0:1], img1[0:1], {}, global_step)
-
-    return sum(epoch_losses) / len(epoch_losses)
+            log_visualizations(logger, model, img1[0:1], img2[0:1], {}, global_step)
 
 
 def train(settings: Settings):
@@ -86,7 +74,7 @@ def train(settings: Settings):
     if settings.smoke_test:
         settings = create_smoke_test_settings()
 
-    _print_header(settings)
+    print_header(settings)
 
     logger = JaxLogger(
         log_dir=settings.logging.log_dir,
@@ -106,7 +94,7 @@ def train(settings: Settings):
     print(f"Model parameters: {count_parameters(model)}\n")
 
     for epoch in range(settings.training.epochs):
-        avg_loss = _run_epoch(
+        run_epoch(
             epoch,
             model,
             optimizer,
@@ -114,28 +102,10 @@ def train(settings: Settings):
             settings.dataset,
             settings.logging,
         )
-        print(f"Epoch {epoch} complete | Avg loss: {avg_loss:.4f}\n")
 
     logger.close()
-
-    print("=" * 60)
-    print("TRAINING COMPLETE")
-    print("=" * 60)
-
+    print_footer()
     return model
-
-
-def _print_header(settings):
-    """Print training configuration header."""
-    print("=" * 60)
-    print("EMBEDDING TRAINING")
-    print("=" * 60)
-    print()
-    print(f"Epochs: {settings.training.epochs}")
-    print(f"Batch size: {settings.dataset.batch_size}")
-    if settings.dataset.max_samples > 0:
-        print(f"Max samples per epoch: {settings.dataset.max_samples}")
-    print()
 
 
 def main():

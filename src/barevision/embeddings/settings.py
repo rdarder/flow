@@ -73,7 +73,7 @@ class LoggingSettings:
     def should_log_something(self, step: int):
         return (
             step % self.log_visualizations_every_steps == 0
-            or step == self.log_every_steps
+            or step % self.log_every_steps == 0
         )
 
 
