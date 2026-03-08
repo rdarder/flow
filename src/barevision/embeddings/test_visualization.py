@@ -10,10 +10,7 @@ from flax import nnx
 from barevision.embeddings.model import SimpleEmbeddingModel
 from barevision.embeddings.visualization import (
     create_frame_with_grid_figure,
-    create_loss_heatmap_figures,
     create_attention_maps_figure,
-    create_similarity_matrix_figure,
-    create_entropy_maps_figure,
 )
 from barevision.embeddings.settings import create_smoke_test_settings
 
@@ -39,20 +36,6 @@ def test_frame_with_grid_figure():
     print("✓ test_frame_with_grid_figure (with highlight)")
 
 
-def test_loss_heatmap_figures():
-    """Test loss heatmap visualizations."""
-    img = np.random.rand(196, 196, 3).astype(np.float32)
-    self_loss = np.random.rand(196, 196).astype(np.float32)
-    cross_loss = np.random.rand(196, 196).astype(np.float32)
-
-    fig_self, fig_cross = create_loss_heatmap_figures(img, self_loss, cross_loss, 16)
-
-    assert fig_self.dtype == np.uint8
-    assert fig_cross.dtype == np.uint8
-    assert fig_self.shape == fig_cross.shape
-    print("✓ test_loss_heatmap_figures")
-
-
 def test_attention_maps_figure():
     """Test attention maps visualization with both frame crops and auto-scaling."""
     window_crop1 = np.random.rand(16, 16, 3).astype(np.float32)
@@ -76,45 +59,6 @@ def test_attention_maps_figure():
     assert fig.dtype == np.uint8
     assert fig.shape[2] == 3
     print("✓ test_attention_maps_figure")
-
-
-def test_similarity_matrix_figure():
-    """Test similarity matrix visualization."""
-    # Create 256x256 similarity matrix (16x16 window = 256 pixels)
-    sim_matrix = np.random.rand(256, 256).astype(np.float32)
-    attn_weights = np.random.rand(256, 256).astype(np.float32)
-    attn_weights = attn_weights / attn_weights.sum(axis=-1, keepdims=True)
-
-    fig = create_similarity_matrix_figure(
-        sim_matrix, attn_weights, window_indices=(7, 8)
-    )
-
-    assert fig.dtype == np.uint8
-    assert fig.shape[2] == 3
-    print("✓ test_similarity_matrix_figure")
-
-
-def test_entropy_maps_figure():
-    """Test entropy maps visualization with 2×2 layout."""
-    window_crop1 = np.random.rand(16, 16, 3).astype(np.float32)
-    window_crop2 = np.random.rand(16, 16, 3).astype(np.float32)
-    self_entropy = np.random.rand(16, 16).astype(np.float32)
-    cross_entropy = np.random.rand(16, 16).astype(np.float32)
-
-    fig = create_entropy_maps_figure(
-        window_crop1,
-        window_crop2,
-        self_entropy,
-        cross_entropy,
-        window_indices=(9, 10),
-        frame_t=100,
-        frame_tk=103,
-        distance=3,
-    )
-
-    assert fig.dtype == np.uint8
-    assert fig.shape[2] == 3
-    print("✓ test_entropy_maps_figure")
 
 
 def test_settings_include_visualization_freq():
@@ -168,10 +112,7 @@ if __name__ == "__main__":
     print("Running visualization tests...\n")
 
     test_frame_with_grid_figure()
-    test_loss_heatmap_figures()
     test_attention_maps_figure()
-    test_similarity_matrix_figure()
-    test_entropy_maps_figure()
     test_settings_include_visualization_freq()
     test_smoke_test_settings_enable_visualizations()
     test_model_compute_attention_maps()

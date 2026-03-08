@@ -236,6 +236,7 @@ class SimpleEmbeddingModel(nnx.Module):
             pixel_positions=pixel_positions,
         )
 
+
 @dataclass
 class AttentionMaps:
     """Container for attention map data used in visualization.
