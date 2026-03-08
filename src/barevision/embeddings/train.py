@@ -6,7 +6,7 @@ Uses tyro for CLI configuration.
 Run:
     python -m barevision.embeddings.train
     python -m barevision.embeddings.train --training.epochs 5 --dataset.batch-size 8
-    python -m barevision.embeddings.train --training.smoke-test
+    python -m barevision.embeddings.train --smoke-test
 """
 
 import random
@@ -20,17 +20,29 @@ import tyro
 from flax import nnx
 
 from barevision.embeddings.checkpoint_manager import create_checkpoint_manager
-from barevision.embeddings.logging_utils import (log_attention_statistics,
-                                                 log_embedding_statistics,
-                                                 log_gradient_statistics)
+from barevision.embeddings.logging_utils import (
+    log_attention_statistics,
+    log_embedding_statistics,
+    log_gradient_statistics,
+)
 from barevision.embeddings.loss import combined_loss
 from barevision.embeddings.model import SimpleEmbeddingModel
-from barevision.embeddings.settings import (DatasetSettings, LossSettings,
-                                            Settings, TrainingSettings,
-                                            create_smoke_test_settings)
+from barevision.embeddings.settings import (
+    DatasetSettings,
+    CheckpointSettings,
+    LoggingSettings,
+    Settings,
+    TrainingSettings,
+    create_smoke_test_settings,
+)
 from barevision.embeddings.video_dataset import VideoFrameDataset
 from barevision.embeddings.visualization import log_visualizations
 from barevision.utils.logging import JaxLogger
+
+# Loss weights - hardcoded for simplicity
+# Will be baked into the model configuration in the future
+ALPHA = 1.0  # Self-attention entropy weight
+BETA = 0.1  # Cross-attention entropy weight
 
 
 def create_dataloader(
@@ -40,14 +52,8 @@ def create_dataloader(
     max_frames: int | None = None,
     shuffle: bool = True,
     random_seed: int | None = None,
-    overfit_video: str | None = None,
-    overfit_repeat: int = 100,
 ) -> Iterator[tuple[jnp.ndarray, jnp.ndarray, list[dict]]]:
     """Simple data loader that yields batches.
-
-    Note: Currently uses single-process loading. For multiprocessing,
-    integrate with PyTorch DataLoader or equivalent.
-    See dataset.num_workers setting for configuration.
 
     Args:
         split: 'train' or 'val'
@@ -57,8 +63,6 @@ def create_dataloader(
                    If used with shuffle=True, randomly samples this many frames.
         shuffle: Whether to shuffle the dataset (default True for train)
         random_seed: Random seed for shuffling (for reproducibility)
-        overfit_video: Name of single video to overfit on (None = normal mode)
-        overfit_repeat: How many times to repeat overfit video (default 100)
 
     Yields:
         Tuple of (img1_batch, img2_batch, metadata_batch) where:
@@ -70,8 +74,6 @@ def create_dataloader(
         split=split,
         max_frame_distance=5,
         img_size=img_size,
-        overfit_video=overfit_video,
-        overfit_repeat=overfit_repeat,
     )
 
     # Get all indices
@@ -118,29 +120,29 @@ def create_dataloader(
 
 def create_train_state(model, learning_rate: float):
     """Create training state with optimizer.
-    
+
     Uses NNX split/merge pattern for proper gradient updates.
-    
+
     Args:
         model: NNX model
         learning_rate: Learning rate for Adam optimizer
-        
+
     Returns:
         Tuple of (graphdef, state, tx, opt_state)
     """
     # Split model into graphdef and state
     graphdef, state = nnx.split(model)
-    
+
     # Create optimizer
     tx = optax.adam(learning_rate)
     opt_state = tx.init(state)
-    
+
     return graphdef, state, tx, opt_state
 
 
-def train_step(graphdef, state, tx, opt_state, img1, img2, alpha=1.0, beta=1.0):
+def train_step(graphdef, state, tx, opt_state, img1, img2):
     """Single training step using split/merge pattern.
-    
+
     Args:
         graphdef: Model graph definition
         state: Model state
@@ -148,9 +150,7 @@ def train_step(graphdef, state, tx, opt_state, img1, img2, alpha=1.0, beta=1.0):
         opt_state: Optimizer state
         img1: Batch of frame 1 images (B, H, W, 3)
         img2: Batch of frame 2 images (B, H, W, 3)
-        alpha: Weight for self-attention loss
-        beta: Weight for cross-attention loss
-        
+
     Returns:
         Tuple of (new_state, new_opt_state, loss, self_loss_mean, cross_loss_mean)
     """
@@ -163,24 +163,25 @@ def train_step(graphdef, state, tx, opt_state, img1, img2, alpha=1.0, beta=1.0):
         # Compute losses separately for logging
         from barevision.embeddings.loss import (
             cross_attention_entropy_loss_core,
-            self_attention_entropy_loss_core)
+            self_attention_entropy_loss_core,
+        )
         from barevision.utils.grid import WindowGrid
-        
+
         window_size = 16
         grid = WindowGrid(window_size=window_size)
         windows1 = grid.split(emb1)
         windows2 = grid.split(emb2)
-        
+
         B, num_windows, wh, ww, D = windows1.shape
         flat_windows1 = windows1.reshape(B * num_windows, wh, ww, D)
         flat_windows2 = windows2.reshape(B * num_windows, wh, ww, D)
-        
+
         self_loss = self_attention_entropy_loss_core(flat_windows1)
         cross_loss = cross_attention_entropy_loss_core(flat_windows1, flat_windows2)
-        
-        # Combined loss
-        combined = alpha * self_loss + beta * cross_loss
-        
+
+        # Combined loss with hardcoded weights
+        combined = ALPHA * self_loss + BETA * cross_loss
+
         return combined.mean(), self_loss.mean(), cross_loss.mean()
 
     # Compute gradients
@@ -191,7 +192,13 @@ def train_step(graphdef, state, tx, opt_state, img1, img2, alpha=1.0, beta=1.0):
     updates, opt_state = tx.update(grads, opt_state, state)
     state = optax.apply_updates(state, updates)
 
-    return state, opt_state, float(loss_value), float(self_loss_mean), float(cross_loss_mean)
+    return (
+        state,
+        opt_state,
+        float(loss_value),
+        float(self_loss_mean),
+        float(cross_loss_mean),
+    )
 
 
 def train(settings: Settings):
@@ -200,7 +207,7 @@ def train(settings: Settings):
     Args:
         settings: Training configuration
     """
-    if settings.training.smoke_test:
+    if settings.smoke_test:
         settings = create_smoke_test_settings()
 
     print("=" * 60)
@@ -238,17 +245,17 @@ def train(settings: Settings):
 
     # Initialize checkpoint manager
     checkpoint_manager = create_checkpoint_manager(
-        checkpoint_dir=settings.training.checkpoint_dir,
-        save_interval_steps=settings.training.checkpoint_freq,
-        max_to_keep=settings.training.keep_last_n_checkpoints,
-        enabled=settings.training.checkpoint_freq > 0,
+        checkpoint_dir=settings.checkpoint.checkpoint_dir,
+        save_interval_steps=settings.checkpoint.checkpoint_freq,
+        max_to_keep=settings.checkpoint.keep_last_n_checkpoints,
+        enabled=settings.checkpoint.checkpoint_freq > 0,
     )
 
-    # Handle resume (simplified - just load state for now)
+    # Handle resume
     start_epoch = 0
     global_step = 0
 
-    if settings.training.resume:
+    if settings.checkpoint.resume:
         latest_step = checkpoint_manager.latest_step()
         if latest_step is not None:
             print(f"Resuming from checkpoint at step {latest_step}")
@@ -282,8 +289,6 @@ def train(settings: Settings):
                 if settings.training.steps_per_epoch > 0
                 else None
             ),
-            overfit_video=settings.dataset.overfit_video,
-            overfit_repeat=settings.dataset.overfit_repeat,
         )
 
         for step, (img1, img2, metadata) in enumerate(loader):
@@ -295,14 +300,12 @@ def train(settings: Settings):
 
             # Training step
             state, opt_state, loss, self_loss, cross_loss = train_step(
-                graphdef, 
-                state, 
-                tx, 
-                opt_state, 
-                img1, 
+                graphdef,
+                state,
+                tx,
+                opt_state,
+                img1,
                 img2,
-                alpha=settings.loss.self_entropy_weight,
-                beta=settings.loss.cross_entropy_weight,
             )
             epoch_losses.append(loss)
             global_step += 1
@@ -321,15 +324,17 @@ def train(settings: Settings):
                     epoch=epoch,
                 )
 
-            # Log gradient statistics periodically (every 10 steps)
-            if global_step % 10 == 0:
+            # Log gradient statistics periodically
+            if global_step % settings.logging.log_every_steps == 0:
                 # Create temporary model for gradient logging
                 temp_model = nnx.merge(graphdef, state)
                 log_gradient_statistics(logger, None, temp_model, global_step)
-            
+
             # Log embedding and attention statistics periodically
-            if settings.logging.log_statistics_every_steps > 0 and \
-               global_step % settings.logging.log_statistics_every_steps == 0:
+            if (
+                settings.logging.log_every_steps > 0
+                and global_step % settings.logging.log_every_steps == 0
+            ):
                 # Get a sample for statistics
                 stats_loader = create_dataloader(
                     split="train",
@@ -338,13 +343,11 @@ def train(settings: Settings):
                     max_frames=1,
                     shuffle=True,
                     random_seed=global_step,
-                    overfit_video=settings.dataset.overfit_video,
-                    overfit_repeat=settings.dataset.overfit_repeat,
                 )
                 stats_img1, _, _ = next(stats_loader)
                 temp_model = nnx.merge(graphdef, state)
                 embeddings = temp_model(stats_img1)
-                
+
                 log_embedding_statistics(logger, embeddings, global_step)
                 log_attention_statistics(logger, embeddings, global_step)
 
@@ -362,22 +365,20 @@ def train(settings: Settings):
                     max_frames=1,
                     shuffle=True,
                     random_seed=global_step,
-                    overfit_video=settings.dataset.overfit_video,
-                    overfit_repeat=settings.dataset.overfit_repeat,
                 )
                 viz_img1, viz_img2, viz_metadata = next(viz_loader)
                 # Create temporary model for visualization
                 temp_model = nnx.merge(graphdef, state)
                 log_visualizations(
-                    logger, temp_model, viz_img1, viz_img2, viz_metadata[0], global_step, settings
+                    logger, temp_model, viz_img1, viz_img2, viz_metadata[0], global_step
                 )
 
-            # Log every few steps to console
-            if step % 10 == 0:
+            # Log every N steps to console (controlled by log_every_steps)
+            if global_step % settings.logging.log_every_steps == 0:
                 elapsed = time.time() - epoch_start
-                steps_per_sec = (step + 1) / elapsed
+                steps_per_sec = global_step / elapsed
                 print(
-                    f"Epoch {epoch} | Step {step} | "
+                    f"Epoch {epoch} | Step {global_step} | "
                     f"Loss: {loss:.4f} (self={self_loss:.4f}, cross={cross_loss:.4f}) | "
                     f"{steps_per_sec:.1f} steps/sec"
                 )
@@ -394,8 +395,6 @@ def train(settings: Settings):
             batch_size=1,
             img_size=settings.dataset.img_size,
             max_frames=1,
-            overfit_video=settings.dataset.overfit_video,
-            overfit_repeat=settings.dataset.overfit_repeat,
         )
         sample_img1, sample_img2, _ = next(sample_loader)
         # Create temporary model for statistics

@@ -128,25 +128,25 @@ def log_gradient_statistics(
         # Get optimizer state which contains gradients
         opt_state = nnx.state(optimizer)
         model_state = nnx.state(model, nnx.Param)
-        
+
         grad_stats = {}
         param_stats = {}
-        
+
         # Iterate through model parameters to find corresponding gradients
         for module_path, module_state in model_state.items():
-            module_name = str(module_path).replace('/', '.')
-            
+            module_name = str(module_path).replace("/", ".")
+
             for param_name, param_value in module_state.items():
                 param_array = np.array(param_value)
                 param_key = f"{module_name}.{param_name}"
-                
+
                 # Log parameter statistics
                 param_stats[param_key] = {
-                    'mean': float(np.mean(param_array)),
-                    'std': float(np.std(param_array)),
-                    'abs_max': float(np.max(np.abs(param_array))),
+                    "mean": float(np.mean(param_array)),
+                    "std": float(np.std(param_array)),
+                    "abs_max": float(np.max(np.abs(param_array))),
                 }
-                
+
                 # Try to find corresponding gradient in optimizer state
                 try:
                     # Gradient might be in opt_state[module_path][param_name] or nested
@@ -154,43 +154,47 @@ def log_gradient_statistics(
                         opt_module = opt_state[module_path]
                         if param_name in opt_module:
                             grad_value = opt_module[param_name]
-                            if hasattr(grad_value, 'value'):
+                            if hasattr(grad_value, "value"):
                                 grad_array = np.array(grad_value.value)
                             else:
                                 grad_array = np.array(grad_value)
-                            
+
                             if np.issubdtype(grad_array.dtype, np.number):
                                 grad_norm = float(np.linalg.norm(grad_array))
                                 grad_mean = float(np.mean(np.abs(grad_array)))
-                                
+
                                 grad_stats[param_key] = {
-                                    'norm': grad_norm,
-                                    'mean_abs': grad_mean,
-                                    'ratio': grad_norm / (param_stats[param_key]['abs_max'] + 1e-10),
+                                    "norm": grad_norm,
+                                    "mean_abs": grad_mean,
+                                    "ratio": grad_norm
+                                    / (param_stats[param_key]["abs_max"] + 1e-10),
                                 }
                 except (KeyError, AttributeError, TypeError):
                     # Gradient not found or not accessible
                     pass
-        
+
         # Log per-layer gradient statistics
         for param_key, stats in grad_stats.items():
-            logger.log_scalar(f"{prefix}/norm/{param_key}", stats['norm'], step)
-            logger.log_scalar(f"{prefix}/mean_abs/{param_key}", stats['mean_abs'], step)
-            logger.log_scalar(f"{prefix}/param_ratio/{param_key}", stats['ratio'], step)
-        
+            logger.log_scalar(f"{prefix}/norm/{param_key}", stats["norm"], step)
+            logger.log_scalar(f"{prefix}/mean_abs/{param_key}", stats["mean_abs"], step)
+            logger.log_scalar(f"{prefix}/param_ratio/{param_key}", stats["ratio"], step)
+
         # Log parameter statistics
         for param_key, stats in param_stats.items():
-            logger.log_scalar(f"{prefix}/param_mean/{param_key}", stats['mean'], step)
-            logger.log_scalar(f"{prefix}/param_std/{param_key}", stats['std'], step)
-        
+            logger.log_scalar(f"{prefix}/param_mean/{param_key}", stats["mean"], step)
+            logger.log_scalar(f"{prefix}/param_std/{param_key}", stats["std"], step)
+
         # Log overall summary
         if grad_stats:
-            all_norms = [s['norm'] for s in grad_stats.values()]
-            logger.log_scalar(f"{prefix}/total_norm", float(np.linalg.norm(all_norms)), step)
+            all_norms = [s["norm"] for s in grad_stats.values()]
+            logger.log_scalar(
+                f"{prefix}/total_norm", float(np.linalg.norm(all_norms)), step
+            )
             logger.log_scalar(f"{prefix}/max_norm", float(np.max(all_norms)), step)
             logger.log_scalar(f"{prefix}/min_norm", float(np.min(all_norms)), step)
-            
+
     except Exception as e:
         import traceback
+
         print(f"Warning: Could not log gradient statistics: {e}")
         traceback.print_exc()

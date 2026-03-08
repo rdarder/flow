@@ -17,7 +17,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from barevision.embeddings.model import AttentionMaps, SimpleEmbeddingModel
-from barevision.embeddings.settings import Settings
 from barevision.utils.grid import WindowGrid
 from barevision.utils.logging import JaxLogger
 
@@ -141,7 +140,7 @@ def create_frame_with_grid_figure(
     highlighted_window: Optional[Tuple[int, int]] = None,
 ) -> np.ndarray:
     """Display both frames with 16x16 grid overlay and highlighted window.
-    
+
     Shows frame 1 and frame 2 side by side with grid overlays and frame info.
 
     Args:
@@ -157,16 +156,16 @@ def create_frame_with_grid_figure(
     H, W = img1.shape[:2]
     num_windows_h = H // window_size
     num_windows_w = W // window_size
-    
+
     # Create figure with 2 subplots side by side
     fig, axes = plt.subplots(1, 2, figsize=(20, 10), dpi=FIGURE_DPI)
-    
+
     # Extract frame info from metadata
     video_name = metadata.get("video_name", "unknown")
     frame_t = metadata.get("frame_t", 0)
     frame_tk = metadata.get("frame_tk", 0)
     distance = metadata.get("distance", 0)
-    
+
     # Frame 1 (left)
     axes[0].imshow(img1)
     _add_grid_overlay(axes[0], window_size, H, W, highlighted_window)
@@ -176,7 +175,7 @@ def create_frame_with_grid_figure(
         title1 += f" | Window ({row}, {col})"
     axes[0].set_title(title1, fontsize=14, fontweight="bold")
     axes[0].axis("off")
-    
+
     # Frame 2 (right)
     axes[1].imshow(img2)
     _add_grid_overlay(axes[1], window_size, H, W, highlighted_window)
@@ -185,7 +184,7 @@ def create_frame_with_grid_figure(
         title2 += f" | Window ({row}, {col})"
     axes[1].set_title(title2, fontsize=14, fontweight="bold")
     axes[1].axis("off")
-    
+
     plt.tight_layout()
     return _figure_to_array(fig)
 
@@ -317,7 +316,7 @@ def create_attention_maps_figure(
     # Columns 1..n: Attention maps for each pixel
     n_cols = n_pixels + 1
     fig, axes = plt.subplots(2, n_cols, figsize=ATTENTION_MAPS_SIZE, dpi=FIGURE_DPI)
-    
+
     # Build title with window coordinates if provided
     if window_indices is not None:
         row, col = window_indices
@@ -334,19 +333,23 @@ def create_attention_maps_figure(
     # Column 0: Show BOTH frame crops stacked vertically
     # Row 0, Col 0: Frame 1 crop
     axes[0, 0].imshow(window_crop)
-    axes[0, 0].set_title(f"Frame {frame_t}{title_suffix}", fontsize=12, fontweight="bold")
+    axes[0, 0].set_title(
+        f"Frame {frame_t}{title_suffix}", fontsize=12, fontweight="bold"
+    )
     axes[0, 0].axis("off")
-    
+
     # Row 1, Col 0: Frame 2 crop
     axes[1, 0].imshow(window_crop2)
-    axes[1, 0].set_title(f"Frame {frame_tk} (t+{distance})", fontsize=12, fontweight="bold")
+    axes[1, 0].set_title(
+        f"Frame {frame_tk} (t+{distance})", fontsize=12, fontweight="bold"
+    )
     axes[1, 0].axis("off")
 
     # Mark pixel positions on BOTH crops
     for i, (y, x) in enumerate(pixel_positions):
         colors = ["red", "blue", "green", "orange"]
         color = colors[i % len(colors)]
-        
+
         # Mark on Frame 1 (row 0)
         axes[0, 0].scatter(
             [x + 0.5],
@@ -372,12 +375,12 @@ def create_attention_maps_figure(
     all_attn_values = np.concatenate([self_attn_maps.ravel(), cross_attn_maps.ravel()])
     attn_min = float(all_attn_values.min())
     attn_max = float(all_attn_values.max())
-    
+
     # Apply minimum scale floor to avoid over-amplifying noise
     SCALE_FLOOR = 0.01
     if attn_max - attn_min < SCALE_FLOOR:
         attn_max = attn_min + SCALE_FLOOR
-    
+
     # For better spatial pattern visibility, use percentile-based scaling
     # This enhances contrast by ignoring extreme outliers
     p5 = float(np.percentile(all_attn_values, 5))
@@ -450,7 +453,7 @@ def create_similarity_matrix_figure(
         256,
         256,
     ), f"Expected (256, 256), got {attention_weights.shape}"
-    
+
     # Build title suffix with window coordinates
     if window_indices is not None:
         row, col = window_indices
@@ -509,7 +512,7 @@ def create_entropy_maps_figure(
     distance: int = 0,
 ) -> np.ndarray:
     """Create figure showing per-pixel entropy maps with frame crops.
-    
+
     Layout: 2×2 grid showing both frames and their entropy maps.
     This shows the entropy at EVERY pixel position (not specific query pixels).
 
@@ -533,13 +536,15 @@ def create_entropy_maps_figure(
         title_suffix = f" | Window ({row}, {col})"
     else:
         title_suffix = ""
-    
+
     # Create 2×2 layout
     fig, axes = plt.subplots(2, 2, figsize=(16, 16), dpi=FIGURE_DPI)
 
     # Top-Left: Frame 1 crop
     axes[0, 0].imshow(window_crop1)
-    axes[0, 0].set_title(f"Frame {frame_t}{title_suffix}", fontsize=12, fontweight="bold")
+    axes[0, 0].set_title(
+        f"Frame {frame_t}{title_suffix}", fontsize=12, fontweight="bold"
+    )
     axes[0, 0].axis("off")
 
     # Top-Right: Self-entropy heatmap
@@ -560,7 +565,9 @@ def create_entropy_maps_figure(
 
     # Bottom-Left: Frame 2 crop
     axes[1, 0].imshow(window_crop2)
-    axes[1, 0].set_title(f"Frame {frame_tk} (t+{distance})", fontsize=12, fontweight="bold")
+    axes[1, 0].set_title(
+        f"Frame {frame_tk} (t+{distance})", fontsize=12, fontweight="bold"
+    )
     axes[1, 0].axis("off")
 
     # Bottom-Right: Cross-entropy heatmap
@@ -590,7 +597,6 @@ def log_visualizations(
     img2: jnp.ndarray,
     metadata: dict,
     step: int,
-    settings: Settings,
 ):
     """Generate and log all visualization figures.
 
@@ -609,7 +615,6 @@ def log_visualizations(
         img2: Frame 2 (1, H, W, 3)
         metadata: dict with video_name, frame_t, frame_tk, distance
         step: Global step for logging
-        settings: Settings object (for window_size, etc.)
     """
     import gc
 
@@ -641,20 +646,20 @@ def log_visualizations(
     # Convert JAX arrays to numpy for visualization
     img1_np = np.array(img1[0])  # (H, W, 3)
     img2_np = np.array(img2[0])  # (H, W, 3)
-    
+
     # Extract window crop from BOTH frames
     emb_h_start = window_row * window_size
     emb_w_start = window_col * window_size
-    
+
     # Account for 2-pixel border from valid convolutions
     img_h_start = emb_h_start
     img_h_end = img_h_start + window_size
     img_w_start = emb_w_start
     img_w_end = img_w_start + window_size
-    
+
     window_crop1_np = np.array(img1[0, img_h_start:img_h_end, img_w_start:img_w_end, :])
     window_crop2_np = np.array(img2[0, img_h_start:img_h_end, img_w_start:img_w_end, :])
-    
+
     self_attn_np = np.array(attention_data.self_attention)  # (N, 16, 16)
     cross_attn_np = np.array(attention_data.cross_attention)  # (N, 16, 16)
     pixel_positions_np = np.array(attention_data.pixel_positions)  # (N, 2)
@@ -662,37 +667,41 @@ def log_visualizations(
     cross_entropy_np = np.array(attention_data.cross_entropy)  # (16, 16)
 
     # Compute full-frame loss maps for ALL windows (not just the selected one)
-    from barevision.embeddings.loss import (cross_attention_entropy_loss_core,
-                                            self_attention_entropy_loss_core)
+    from barevision.embeddings.loss import (
+        cross_attention_entropy_loss_core,
+        self_attention_entropy_loss_core,
+    )
     from barevision.utils.grid import WindowGrid
-    
+
     D = attention_data.embeddings1.shape[-1]
     emb1 = attention_data.embeddings1[None, ...]  # Add batch dim for splitting
     emb2 = attention_data.embeddings2[None, ...]
-    
+
     # Split into windows
     grid = WindowGrid(window_size=window_size)
     windows1 = grid.split(emb1)  # (B, num_windows, 16, 16, D)
     windows2 = grid.split(emb2)
-    
+
     B, num_windows, wh, ww, D = windows1.shape
     flat_windows1 = windows1.reshape(B * num_windows, wh, ww, D)
     flat_windows2 = windows2.reshape(B * num_windows, wh, ww, D)
-    
+
     # Compute losses for all windows
-    self_loss_flat = self_attention_entropy_loss_core(flat_windows1)  # (B*num_windows, 16, 16)
+    self_loss_flat = self_attention_entropy_loss_core(
+        flat_windows1
+    )  # (B*num_windows, 16, 16)
     cross_loss_flat = cross_attention_entropy_loss_core(flat_windows1, flat_windows2)
-    
+
     # Reshape back to full grid: (B, num_windows, 16, 16) -> (B, num_h, num_w, 16, 16) -> (B, H, W)
     num_h = H_emb // window_size
     num_w = W_emb // window_size
-    
+
     self_loss_flat = self_loss_flat.reshape(B, num_h, num_w, window_size, window_size)
     self_loss_flat = self_loss_flat.transpose(0, 1, 3, 2, 4).reshape(B, H_emb, W_emb)
-    
+
     cross_loss_flat = cross_loss_flat.reshape(B, num_h, num_w, window_size, window_size)
     cross_loss_flat = cross_loss_flat.transpose(0, 1, 3, 2, 4).reshape(B, H_emb, W_emb)
-    
+
     # Remove batch dim and pad to match image dimensions
     # Embeddings are (H-4, W-4) due to 5×5 valid conv
     # Image is (H, W), so pad by 2 on each side to match
@@ -700,11 +709,21 @@ def log_visualizations(
     H_img, W_img = img1_np.shape[:2]
     pad_h = H_img - H_emb
     pad_w = W_img - W_emb
-    assert pad_h % 2 == 0 and pad_w % 2 == 0, f"Padding must be even, got {pad_h}x{pad_w}"
-    
-    self_loss_display = np.pad(np.array(self_loss_flat[0]), ((pad_h//2, pad_h//2), (pad_w//2, pad_w//2)), mode='edge')
-    cross_loss_display = np.pad(np.array(cross_loss_flat[0]), ((pad_h//2, pad_h//2), (pad_w//2, pad_w//2)), mode='edge')
-    
+    assert (
+        pad_h % 2 == 0 and pad_w % 2 == 0
+    ), f"Padding must be even, got {pad_h}x{pad_w}"
+
+    self_loss_display = np.pad(
+        np.array(self_loss_flat[0]),
+        ((pad_h // 2, pad_h // 2), (pad_w // 2, pad_w // 2)),
+        mode="edge",
+    )
+    cross_loss_display = np.pad(
+        np.array(cross_loss_flat[0]),
+        ((pad_h // 2, pad_h // 2), (pad_w // 2, pad_w // 2)),
+        mode="edge",
+    )
+
     # Extract the selected window embeddings for detailed visualizations
     emb_h_start = window_row * window_size
     emb_w_start = window_col * window_size
@@ -750,7 +769,6 @@ def log_visualizations(
     flat_window_emb1 = window_emb1.reshape(-1, D)
     similarity_matrix = np.array(flat_window_emb1 @ flat_window_emb1.T)  # (256, 256)
 
-
     self_logits = flat_window_emb1 @ flat_window_emb1.T
 
     # Softmax to get attention weights (memory-efficient)
@@ -760,11 +778,13 @@ def log_visualizations(
     self_attn_full = exp_logits / np.sum(exp_logits, axis=-1, keepdims=True)
 
     fig_sim = create_similarity_matrix_figure(
-        similarity_matrix, self_attn_full, window_size,
-        window_indices=(window_row, window_col)
+        similarity_matrix,
+        self_attn_full,
+        window_size,
+        window_indices=(window_row, window_col),
     )
     logger.log_figure("Similarity/Matrix", fig_sim, step)
-    
+
     # 5. Entropy maps (2×2 layout with both frame crops)
     fig_entropy = create_entropy_maps_figure(
         window_crop1_np,

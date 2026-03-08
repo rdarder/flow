@@ -15,14 +15,14 @@ from barevision.embeddings.visualization import (
     create_similarity_matrix_figure,
     create_entropy_maps_figure,
 )
-from barevision.embeddings.settings import TrainingSettings, create_smoke_test_settings
+from barevision.embeddings.settings import create_smoke_test_settings
 
 
 def test_frame_with_grid_figure():
     """Test frame with grid overlay visualization."""
     img1 = np.random.rand(196, 196, 3).astype(np.float32)
     img2 = np.random.rand(196, 196, 3).astype(np.float32)
-    metadata = {'video_name': 'test', 'frame_t': 10, 'frame_tk': 13, 'distance': 3}
+    metadata = {"video_name": "test", "frame_t": 10, "frame_tk": 13, "distance": 3}
 
     # Without highlighted window
     fig = create_frame_with_grid_figure(img1, img2, metadata, 16)
@@ -32,7 +32,9 @@ def test_frame_with_grid_figure():
     print("✓ test_frame_with_grid_figure (no highlight)")
 
     # With highlighted window
-    fig = create_frame_with_grid_figure(img1, img2, metadata, 16, highlighted_window=(5, 6))
+    fig = create_frame_with_grid_figure(
+        img1, img2, metadata, 16, highlighted_window=(5, 6)
+    )
     assert fig.dtype == np.uint8
     print("✓ test_frame_with_grid_figure (with highlight)")
 
@@ -83,7 +85,9 @@ def test_similarity_matrix_figure():
     attn_weights = np.random.rand(256, 256).astype(np.float32)
     attn_weights = attn_weights / attn_weights.sum(axis=-1, keepdims=True)
 
-    fig = create_similarity_matrix_figure(sim_matrix, attn_weights, window_indices=(7, 8))
+    fig = create_similarity_matrix_figure(
+        sim_matrix, attn_weights, window_indices=(7, 8)
+    )
 
     assert fig.dtype == np.uint8
     assert fig.shape[2] == 3
@@ -116,9 +120,9 @@ def test_entropy_maps_figure():
 def test_settings_include_visualization_freq():
     """Test that logging settings include visualization frequency parameter."""
     from barevision.embeddings.settings import LoggingSettings
-    
+
     logging_settings = LoggingSettings()
-    assert hasattr(logging_settings, 'log_visualizations_every_steps')
+    assert hasattr(logging_settings, "log_visualizations_every_steps")
     assert logging_settings.log_visualizations_every_steps == 20  # Default
     print("✓ test_settings_include_visualization_freq")
 

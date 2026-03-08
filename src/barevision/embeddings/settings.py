@@ -17,20 +17,15 @@ class DatasetSettings:
         img_size: Input image size as (height, width) tuple.
                   Must result in embeddings divisible by window_size (16).
                   Model uses 5×5 valid conv, so output is (H-4, W-4).
-                  Recommended: (200, 200) -> (196, 196) embeddings, not divisible
-                  Better: (196, 196) -> (192, 192) embeddings = 12x12 windows
+                  Recommended: (196, 196) -> (192, 192) embeddings = 12x12 windows
         max_frame_distance: Maximum temporal distance for frame pairs
         num_workers: Number of worker processes for data loading (0 = main process only)
-        overfit_video: Name of single video to overfit on (None = normal multi-video training)
-        overfit_repeat: How many times to repeat overfit video in dataset (default 100)
     """
 
     batch_size: int = 4
     img_size: Tuple[int, int] = (196, 196)
     max_frame_distance: int = 5
     num_workers: int = 4
-    overfit_video: Optional[str] = None
-    overfit_repeat: int = 100
 
     def __post_init__(self):
         if self.batch_size < 1:
@@ -46,92 +41,24 @@ class DatasetSettings:
 
 
 @dataclass
-class LoggingSettings:
-    """TensorBoard logging configuration.
+class CheckpointSettings:
+    """Checkpoint configuration.
 
     Attributes:
-        log_dir: Root directory for TensorBoard logs
-        run_name_prefix: Prefix for auto-generated run names
-        log_metrics_every_steps: Log scalar/histogram metrics every N steps
-        log_visualizations_every_steps: Generate and log visualization figures every N steps (0 to disable)
-        log_statistics_every_steps: Log embedding/attention statistics every N steps (0 to disable)
-    """
-
-    log_dir: str = "runs"
-    run_name_prefix: str = "embeddings"
-    log_metrics_every_steps: int = 10
-    log_visualizations_every_steps: int = 20
-    log_statistics_every_steps: int = 50
-
-    def __post_init__(self):
-        if not self.log_dir:
-            raise ValueError("log_dir cannot be empty")
-        if self.log_metrics_every_steps < 1:
-            raise ValueError(
-                f"log_metrics_every_steps must be >= 1, got {self.log_metrics_every_steps}"
-            )
-        if self.log_visualizations_every_steps < 0:
-            raise ValueError(
-                f"log_visualizations_every_steps must be >= 0, got {self.log_visualizations_every_steps}"
-            )
-        if self.log_statistics_every_steps < 0:
-            raise ValueError(
-                f"log_statistics_every_steps must be >= 0, got {self.log_statistics_every_steps}"
-            )
-
-
-@dataclass
-class LossSettings:
-    """Loss function weights.
-
-    Attributes:
-        self_entropy_weight: Weight for self-attention entropy loss (alpha)
-        cross_entropy_weight: Weight for cross-attention entropy loss (beta)
-    """
-
-    self_entropy_weight: float = 1.0
-    cross_entropy_weight: float = 0.1
-
-    def __post_init__(self):
-        if self.self_entropy_weight < 0:
-            raise ValueError(
-                f"self_entropy_weight must be >= 0, got {self.self_entropy_weight}"
-            )
-        if self.cross_entropy_weight < 0:
-            raise ValueError(
-                f"cross_entropy_weight must be >= 0, got {self.cross_entropy_weight}"
-            )
-
-
-@dataclass
-class TrainingSettings:
-    """Training hyperparameters.
-
-    Attributes:
-        epochs: Number of training epochs
-        steps_per_epoch: Steps per epoch (-1 for full dataset)
-        learning_rate: Optimizer learning rate
-        smoke_test: Run minimal smoke test (overrides epochs=1, steps_per_epoch=10, batch_size=2)
-        checkpoint_freq: Save checkpoint every N steps (0 to disable)
         checkpoint_dir: Directory to save checkpoints
+        checkpoint_freq: Save checkpoint every N steps (0 to disable)
         keep_last_n_checkpoints: Number of recent checkpoints to keep (0 to keep all)
         resume: Whether to resume from latest checkpoint in checkpoint_dir
     """
 
-    epochs: int = 1
-    steps_per_epoch: int = -1
-    learning_rate: float = 1e-4
-    smoke_test: bool = False
-    checkpoint_freq: int = 50
     checkpoint_dir: str = "checkpoints/embeddings"
+    checkpoint_freq: int = 50
     keep_last_n_checkpoints: int = 3
     resume: bool = False
 
     def __post_init__(self):
-        if self.epochs < 1:
-            raise ValueError(f"epochs must be >= 1, got {self.epochs}")
-        if self.learning_rate <= 0:
-            raise ValueError(f"learning_rate must be > 0, got {self.learning_rate}")
+        if not self.checkpoint_dir:
+            raise ValueError("checkpoint_dir cannot be empty")
         if self.checkpoint_freq < 0:
             raise ValueError(
                 f"checkpoint_freq must be >= 0, got {self.checkpoint_freq}"
@@ -143,17 +70,71 @@ class TrainingSettings:
 
 
 @dataclass
+class LoggingSettings:
+    """TensorBoard logging configuration.
+
+    Attributes:
+        log_dir: Root directory for TensorBoard logs
+        run_name_prefix: Prefix for auto-generated run names
+        log_every_steps: Log metrics, statistics, and console output every N steps
+        log_visualizations_every_steps: Generate and log visualization figures every N steps (0 to disable)
+    """
+
+    log_dir: str = "runs"
+    run_name_prefix: str = "embeddings"
+    log_every_steps: int = 10
+    log_visualizations_every_steps: int = 20
+
+    def __post_init__(self):
+        if not self.log_dir:
+            raise ValueError("log_dir cannot be empty")
+        if self.log_every_steps < 1:
+            raise ValueError(
+                f"log_every_steps must be >= 1, got {self.log_every_steps}"
+            )
+        if self.log_visualizations_every_steps < 0:
+            raise ValueError(
+                f"log_visualizations_every_steps must be >= 0, got {self.log_visualizations_every_steps}"
+            )
+
+
+@dataclass
+class TrainingSettings:
+    """Training hyperparameters.
+
+    Attributes:
+        epochs: Number of training epochs
+        steps_per_epoch: Steps per epoch (-1 for full dataset)
+        learning_rate: Optimizer learning rate
+    """
+
+    epochs: int = 1
+    steps_per_epoch: int = -1
+    learning_rate: float = 1e-4
+
+    def __post_init__(self):
+        if self.epochs < 1:
+            raise ValueError(f"epochs must be >= 1, got {self.epochs}")
+        if self.learning_rate <= 0:
+            raise ValueError(f"learning_rate must be > 0, got {self.learning_rate}")
+
+
+@dataclass
 class Settings:
     """Complete experiment configuration.
 
     Passed as single parameter to training functions.
     Uses tyro for CLI parsing with nested dataclass support.
+
+    Attributes:
+        smoke_test: Run minimal smoke test (overrides other settings for quick validation)
     """
 
     dataset: DatasetSettings
     training: TrainingSettings
     logging: LoggingSettings
-    loss: LossSettings = field(default_factory=LossSettings)
+    checkpoint: CheckpointSettings = field(default_factory=CheckpointSettings)
+    smoke_test: bool = False
 
 
 def create_smoke_test_settings() -> Settings:
@@ -169,6 +150,8 @@ def create_smoke_test_settings() -> Settings:
             epochs=1,
             steps_per_epoch=2,  # Only 2 steps for speed
             learning_rate=1e-4,
+        ),
+        checkpoint=CheckpointSettings(
             checkpoint_freq=1,  # Save every step for testing
             checkpoint_dir="test_checkpoints/embeddings",
             keep_last_n_checkpoints=2,
@@ -176,7 +159,8 @@ def create_smoke_test_settings() -> Settings:
         logging=LoggingSettings(
             log_dir="runs",
             run_name_prefix="smoke_test",
-            log_metrics_every_steps=1,  # Log metrics every step in smoke test
+            log_every_steps=1,  # Log everything every step in smoke test
             log_visualizations_every_steps=1,  # Log visualizations every step in smoke test
         ),
+        smoke_test=False,  # Already applied by caller
     )

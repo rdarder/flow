@@ -176,7 +176,7 @@ class OrbaxCheckpointManager(AbstractCheckpointManager):
             state = nnx.state(kwargs["model"])
         if "optimizer" in kwargs:
             opt_state = kwargs["optimizer"].opt_state
-        
+
         # Prepare checkpoint data
         checkpoint = {
             "model": state,
@@ -216,10 +216,17 @@ class OrbaxCheckpointManager(AbstractCheckpointManager):
         Returns:
             Tuple of (epoch, global_step) or just state dict if using new API
         """
-        # Support old API
+        # Support old API: accept model and optimizer as keyword arguments
+        model = None
+        optimizer = None
+
         if "model" in kwargs and state is None:
-            state = nnx.state(kwargs["model"])
-        
+            model = kwargs["model"]
+            state = nnx.state(model)
+
+        if "optimizer" in kwargs and opt_state is None:
+            optimizer = kwargs["optimizer"]
+
         if step is None:
             step = self._manager.latest_step()
 
@@ -233,13 +240,15 @@ class OrbaxCheckpointManager(AbstractCheckpointManager):
         model_state_dict = self._fix_state_keys(checkpoint["model"])
 
         # Restore model state
-        current_state = nnx.state(model)
-        self._update_state_from_dict(current_state, model_state_dict)
-        nnx.update(model, current_state)
+        if model is not None:
+            current_state = nnx.state(model)
+            self._update_state_from_dict(current_state, model_state_dict)
+            nnx.update(model, current_state)
 
         # Restore optimizer state
-        optimizer.opt_state = checkpoint["optimizer_state"]
-        optimizer.step = checkpoint["optimizer_step"]
+        if optimizer is not None:
+            optimizer.opt_state = checkpoint["optimizer_state"]
+            optimizer.step = checkpoint["optimizer_step"]
 
         epoch = int(checkpoint.get("epoch", 0))
         global_step = step
