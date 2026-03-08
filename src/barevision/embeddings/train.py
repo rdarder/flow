@@ -57,22 +57,27 @@ def _run_epoch(epoch, graphdef, state, tx, opt_state, logger, dataset_settings, 
         )
         epoch_losses.append(loss)
 
-        logger.log_scalar("Loss/train_step", loss, global_step)
-        logger.log_scalar("Loss/self_entropy", self_loss, global_step)
-        logger.log_scalar("Loss/cross_entropy", cross_loss, global_step)
-
+        # Log metrics
         if global_step % logging_settings.log_every_steps == 0:
-            _log_diagnostics(logger, graphdef, state, img1, metadata[0] if metadata else {}, global_step, logging_settings)
+            logger.log_scalar("Loss/train_step", loss, global_step)
+            logger.log_scalar("Loss/self_entropy", self_loss, global_step)
+            logger.log_scalar("Loss/cross_entropy", cross_loss, global_step)
+
+            _log_diagnostics(logger, graphdef, state, img1, global_step, logging_settings)
 
             elapsed = time.time() - epoch_start
             steps_per_sec = (step + 1) / elapsed
             print(f"Epoch {epoch} | Step {global_step} | Loss: {loss:.4f} | {steps_per_sec:.1f} steps/sec")
 
+        # Log visualizations (independent schedule)
+        if logging_settings.log_visualizations_every_steps > 0 and global_step % logging_settings.log_visualizations_every_steps == 0:
+            _log_visualizations(logger, graphdef, state, img1, global_step)
+
     return sum(epoch_losses) / len(epoch_losses)
 
 
-def _log_diagnostics(logger, graphdef, state, img1, metadata, step, logging_settings):
-    """Log gradient statistics, embeddings, and visualizations."""
+def _log_diagnostics(logger, graphdef, state, img1, step, logging_settings):
+    """Log gradient and embedding statistics."""
     temp_model = nnx.merge(graphdef, state)
 
     log_gradient_statistics(logger, None, temp_model, step)
@@ -81,8 +86,11 @@ def _log_diagnostics(logger, graphdef, state, img1, metadata, step, logging_sett
     log_embedding_statistics(logger, embeddings, step)
     log_attention_statistics(logger, embeddings, step)
 
-    if logging_settings.log_visualizations_every_steps > 0 and step % logging_settings.log_visualizations_every_steps == 0:
-        log_visualizations(logger, temp_model, img1[0:1], img1[0:1], metadata, step)
+
+def _log_visualizations(logger, graphdef, state, img1, step):
+    """Generate and log visualization figures."""
+    temp_model = nnx.merge(graphdef, state)
+    log_visualizations(logger, temp_model, img1[0:1], img1[0:1], {}, step)
 
 
 def train(settings: Settings):
