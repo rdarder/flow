@@ -15,6 +15,8 @@ import jax.numpy as jnp
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.axes import Axes
+from matplotlib.patches import Rectangle
 
 from barevision.embeddings.model import AttentionMaps, SimpleEmbeddingModel
 from barevision.utils.grid import WindowGrid
@@ -41,7 +43,7 @@ SIMILARITY_MATRIX_SIZE = (16, 8)  # 256x256 matrices
 # =============================================================================
 
 
-def _figure_to_array(fig: matplotlib.figure.Figure) -> np.ndarray:
+def _figure_to_array(fig: "matplotlib.figure.Figure") -> np.ndarray:
     """Convert matplotlib figure to RGB numpy array for TensorBoard.
 
     Args:
@@ -66,11 +68,11 @@ def _figure_to_array(fig: matplotlib.figure.Figure) -> np.ndarray:
 
 
 def _add_grid_overlay(
-    ax: plt.Axes,
+    ax: Axes,
     window_size: int,
     H: int,
     W: int,
-    highlighted_window: Optional[Tuple[int, int]] = None,
+    highlighted_window: tuple[int, int] | None = None,
 ):
     """Add 16x16 grid overlay to an axis showing an image.
 
@@ -93,7 +95,7 @@ def _add_grid_overlay(
         y0 = row * window_size
         x0 = col * window_size
 
-        rect = plt.Rectangle(
+        rect = Rectangle(
             (x0, y0),
             window_size,
             window_size,
@@ -170,8 +172,8 @@ def create_frame_with_grid_figure(
     axes[0].imshow(img1)
     _add_grid_overlay(axes[0], window_size, H, W, highlighted_window)
     title1 = f"Frame {frame_t} | Video: {video_name}"
+    row, col = highlighted_window if highlighted_window else (None, None)
     if highlighted_window is not None:
-        row, col = highlighted_window
         title1 += f" | Window ({row}, {col})"
     axes[0].set_title(title1, fontsize=14, fontweight="bold")
     axes[0].axis("off")
@@ -345,9 +347,11 @@ def create_attention_maps_figure(
     )
     axes[1, 0].axis("off")
 
+    # Define colors for pixel markers
+    colors = ["red", "blue", "green", "orange"]
+    
     # Mark pixel positions on BOTH crops
     for i, (y, x) in enumerate(pixel_positions):
-        colors = ["red", "blue", "green", "orange"]
         color = colors[i % len(colors)]
 
         # Mark on Frame 1 (row 0)

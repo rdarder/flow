@@ -11,7 +11,7 @@ Run:
 
 import random
 import time
-from typing import Iterator, List, Tuple
+from typing import Iterator, List
 
 import jax
 import jax.numpy as jnp
@@ -25,18 +25,18 @@ from barevision.embeddings.logging_utils import (
     log_embedding_statistics,
     log_gradient_statistics,
 )
-from barevision.embeddings.loss import combined_loss
+from barevision.embeddings.loss import (
+    cross_attention_entropy_loss_core,
+    self_attention_entropy_loss_core,
+)
 from barevision.embeddings.model import SimpleEmbeddingModel
 from barevision.embeddings.settings import (
-    DatasetSettings,
-    CheckpointSettings,
-    LoggingSettings,
     Settings,
-    TrainingSettings,
     create_smoke_test_settings,
 )
 from barevision.embeddings.video_dataset import VideoFrameDataset
 from barevision.embeddings.visualization import log_visualizations
+from barevision.utils.grid import WindowGrid
 from barevision.utils.logging import JaxLogger
 
 # Loss weights - hardcoded for simplicity
@@ -159,13 +159,6 @@ def train_step(graphdef, state, tx, opt_state, img1, img2):
         model = nnx.merge(graphdef, state)
         emb1 = model(img1)
         emb2 = model(img2)
-
-        # Compute losses separately for logging
-        from barevision.embeddings.loss import (
-            cross_attention_entropy_loss_core,
-            self_attention_entropy_loss_core,
-        )
-        from barevision.utils.grid import WindowGrid
 
         window_size = 16
         grid = WindowGrid(window_size=window_size)
