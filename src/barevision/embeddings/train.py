@@ -19,7 +19,6 @@ import optax
 import tyro
 from flax import nnx
 
-from barevision.embeddings.checkpoint_manager import create_checkpoint_manager
 from barevision.embeddings.logging_utils import (
     log_attention_statistics,
     log_embedding_statistics,
@@ -160,6 +159,7 @@ def train_step(graphdef, state, tx, opt_state, img1, img2):
         emb1 = model(img1)
         emb2 = model(img2)
 
+        # Compute losses separately for logging
         window_size = 16
         grid = WindowGrid(window_size=window_size)
         windows1 = grid.split(emb1)
@@ -236,30 +236,6 @@ def train(settings: Settings):
     print(f"Model parameters: {param_count}")
     print()
 
-    # Initialize checkpoint manager
-    checkpoint_manager = create_checkpoint_manager(
-        checkpoint_dir=settings.checkpoint.checkpoint_dir,
-        save_interval_steps=settings.checkpoint.checkpoint_freq,
-        max_to_keep=settings.checkpoint.keep_last_n_checkpoints,
-        enabled=settings.checkpoint.checkpoint_freq > 0,
-    )
-
-    # Handle resume
-    start_epoch = 0
-    global_step = 0
-
-    if settings.checkpoint.resume:
-        latest_step = checkpoint_manager.latest_step()
-        if latest_step is not None:
-            print(f"Resuming from checkpoint at step {latest_step}")
-            start_epoch, global_step, state = checkpoint_manager.restore(
-                state=state,
-            )
-            print(f"Resumed at epoch {start_epoch}, step {global_step}")
-        else:
-            print("Warning: No checkpoint found to resume from")
-            print("Starting fresh training...")
-
     # Training loop
     print(
         f"Training for {settings.training.epochs} epochs with batch_size={settings.dataset.batch_size}"
@@ -268,7 +244,7 @@ def train(settings: Settings):
         print(f"Steps per epoch: {settings.training.steps_per_epoch}")
     print()
 
-    for epoch in range(start_epoch, settings.training.epochs):
+    for epoch in range(settings.training.epochs):
         epoch_start = time.time()
         epoch_losses = []
 
@@ -301,21 +277,12 @@ def train(settings: Settings):
                 img2,
             )
             epoch_losses.append(loss)
-            global_step += 1
 
             # Log loss components to TensorBoard
+            global_step = epoch * settings.training.steps_per_epoch + step
             logger.log_scalar("Loss/train_step", loss, global_step)
             logger.log_scalar("Loss/self_entropy", self_loss, global_step)
             logger.log_scalar("Loss/cross_entropy", cross_loss, global_step)
-
-            # Save checkpoint if needed
-            if checkpoint_manager.should_save(global_step):
-                checkpoint_manager.save(
-                    step=global_step,
-                    state=state,
-                    opt_state=opt_state,
-                    epoch=epoch,
-                )
 
             # Log gradient statistics periodically
             if global_step % settings.logging.log_every_steps == 0:
@@ -400,7 +367,6 @@ def train(settings: Settings):
         print(f"Epoch {epoch} complete | Avg loss: {avg_loss:.4f} | {epoch_time:.1f}s")
         print()
 
-    checkpoint_manager.close()
     logger.close()
 
     print("=" * 60)

@@ -4,8 +4,8 @@ Minimal settings using tyro for CLI parsing. Only includes parameters
 currently used by the training script.
 """
 
-from dataclasses import dataclass, field
-from typing import Optional, Tuple
+from dataclasses import dataclass
+from typing import Tuple
 
 
 @dataclass
@@ -38,35 +38,6 @@ class DatasetSettings:
             )
         if self.num_workers < 0:
             raise ValueError(f"num_workers must be >= 0, got {self.num_workers}")
-
-
-@dataclass
-class CheckpointSettings:
-    """Checkpoint configuration.
-
-    Attributes:
-        checkpoint_dir: Directory to save checkpoints
-        checkpoint_freq: Save checkpoint every N steps (0 to disable)
-        keep_last_n_checkpoints: Number of recent checkpoints to keep (0 to keep all)
-        resume: Whether to resume from latest checkpoint in checkpoint_dir
-    """
-
-    checkpoint_dir: str = "checkpoints/embeddings"
-    checkpoint_freq: int = 50
-    keep_last_n_checkpoints: int = 3
-    resume: bool = False
-
-    def __post_init__(self):
-        if not self.checkpoint_dir:
-            raise ValueError("checkpoint_dir cannot be empty")
-        if self.checkpoint_freq < 0:
-            raise ValueError(
-                f"checkpoint_freq must be >= 0, got {self.checkpoint_freq}"
-            )
-        if self.keep_last_n_checkpoints < 0:
-            raise ValueError(
-                f"keep_last_n_checkpoints must be >= 0, got {self.keep_last_n_checkpoints}"
-            )
 
 
 @dataclass
@@ -133,7 +104,6 @@ class Settings:
     dataset: DatasetSettings
     training: TrainingSettings
     logging: LoggingSettings
-    checkpoint: CheckpointSettings = field(default_factory=CheckpointSettings)
     smoke_test: bool = False
 
 
@@ -150,11 +120,6 @@ def create_smoke_test_settings() -> Settings:
             epochs=1,
             steps_per_epoch=2,  # Only 2 steps for speed
             learning_rate=1e-4,
-        ),
-        checkpoint=CheckpointSettings(
-            checkpoint_freq=1,  # Save every step for testing
-            checkpoint_dir="test_checkpoints/embeddings",
-            keep_last_n_checkpoints=2,
         ),
         logging=LoggingSettings(
             log_dir="runs",
