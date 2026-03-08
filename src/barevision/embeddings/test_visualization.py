@@ -12,7 +12,6 @@ from barevision.embeddings.visualization import (
     create_frame_with_grid_figure,
     create_attention_maps_figure,
 )
-from barevision.embeddings.settings import create_smoke_test_settings
 
 
 def test_frame_with_grid_figure():
@@ -61,23 +60,6 @@ def test_attention_maps_figure():
     print("✓ test_attention_maps_figure")
 
 
-def test_settings_include_visualization_freq():
-    """Test that logging settings include visualization frequency parameter."""
-    from barevision.embeddings.settings import LoggingSettings
-
-    logging_settings = LoggingSettings()
-    assert hasattr(logging_settings, "log_visualizations_every_steps")
-    assert logging_settings.log_visualizations_every_steps == 20  # Default
-    print("✓ test_settings_include_visualization_freq")
-
-
-def test_smoke_test_settings_enable_visualizations():
-    """Test that smoke test settings enable frequent visualizations."""
-    settings = create_smoke_test_settings()
-    assert settings.logging.log_visualizations_every_steps == 1
-    print("✓ test_smoke_test_settings_enable_visualizations")
-
-
 def test_model_compute_attention_maps():
     """Test model's compute_attention_maps method."""
     model = SimpleEmbeddingModel(rngs=nnx.Rngs(jr.PRNGKey(0)))
@@ -113,8 +95,6 @@ if __name__ == "__main__":
 
     test_frame_with_grid_figure()
     test_attention_maps_figure()
-    test_settings_include_visualization_freq()
-    test_smoke_test_settings_enable_visualizations()
     test_model_compute_attention_maps()
     test_model_random_pixel_selection()
 

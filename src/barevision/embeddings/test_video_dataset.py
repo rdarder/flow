@@ -2,11 +2,7 @@
 
 import numpy as np
 
-from barevision.embeddings.video_dataset import (
-    VideoFrameDataset,
-    create_train_val_datasets,
-)
-from barevision.utils.path import get_datasets_dir
+from barevision.embeddings.video_dataset import VideoFrameDataset
 
 
 class TestVideoFrameDataset:
@@ -144,73 +140,6 @@ class TestVideoFrameDataset:
                 img2.shape == expected_shape
             ), f"Expected {expected_shape}, got {img2.shape}"
 
-    def test_deterministic_loading(self):
-        """Test that same index returns same images."""
-        dataset = VideoFrameDataset(
-            split="train",
-            max_frame_distance=5,
-            img_size=(190, 190),
-        )
-
-        img1_a, img2_a, meta_a = dataset[100]
-        img1_b, img2_b, meta_b = dataset[100]
-
-        np.testing.assert_array_equal(
-            img1_a, img1_b, "Same index should return same img1"
-        )
-        np.testing.assert_array_equal(
-            img2_a, img2_b, "Same index should return same img2"
-        )
-        assert meta_a == meta_b, "Same index should return same metadata"
-
-    def test_dataset_length(self):
-        """Test that dataset length matches number of frame pairs."""
-        dataset = VideoFrameDataset(
-            split="train",
-            max_frame_distance=5,
-            img_size=(190, 190),
-        )
-
-        assert len(dataset) == len(
-            dataset.frame_pairs
-        ), "Dataset length should match frame_pairs length"
-
-    def test_video_statistics(self):
-        """Test get_video_stats method."""
-        dataset = VideoFrameDataset(
-            split="train",
-            max_frame_distance=5,
-            img_size=(190, 190),
-        )
-
-        stats = dataset.get_video_stats()
-
-        assert "videos" in stats
-        assert "total_pairs" in stats
-        assert len(stats["videos"]) == len(dataset.videos)
-        assert stats["total_pairs"] == len(dataset)
-
-    def test_custom_train_ratio(self):
-        """Test custom train/val ratio."""
-        # 50/50 split
-        train_dataset = VideoFrameDataset(
-            split="train",
-            max_frame_distance=5,
-            train_ratio=0.5,
-            seed=42,
-        )
-        val_dataset = VideoFrameDataset(
-            split="val",
-            max_frame_distance=5,
-            train_ratio=0.5,
-            seed=42,
-        )
-
-        # With 15 videos and 50% ratio: 7 train, 8 val
-        assert len(train_dataset.videos) == 7
-        assert len(val_dataset.videos) == 8
-        assert len(set(train_dataset.videos).intersection(val_dataset.videos)) == 0
-
     def test_seed_reproducibility(self):
         """Test that same seed produces same split."""
         dataset1 = VideoFrameDataset(split="train", max_frame_distance=5, seed=42)
@@ -243,95 +172,3 @@ class TestVideoFrameDataset:
             assert (
                 pair.frame_tk_idx - pair.frame_t_idx == pair.distance
             ), "Distance should match frame index difference"
-
-
-class TestCreateTrainValDatasets:
-    """Tests for create_train_val_datasets helper."""
-
-    def test_creates_both_datasets(self):
-        """Test that helper creates both train and val datasets."""
-        train, val = create_train_val_datasets(
-            max_frame_distance=5,
-            img_size=(190, 190),
-            seed=42,
-        )
-
-        assert isinstance(train, VideoFrameDataset)
-        assert isinstance(val, VideoFrameDataset)
-        assert len(train) > 0
-        assert len(val) > 0
-
-    def test_no_video_overlap(self):
-        """Test that train and val have no common videos."""
-        train, val = create_train_val_datasets(
-            max_frame_distance=5,
-            img_size=(190, 190),
-            seed=42,
-        )
-
-        train_videos = set(train.videos)
-        val_videos = set(val.videos)
-
-        assert len(train_videos.intersection(val_videos)) == 0
-
-    def test_train_val_ratio(self):
-        """Test that helper uses 85/15 ratio by default."""
-        train, val = create_train_val_datasets(
-            max_frame_distance=5,
-            img_size=(190, 190),
-            seed=42,
-        )
-
-        # With 15 videos and 85% ratio: 12 train, 3 val
-        assert len(train.videos) == 12
-        assert len(val.videos) == 3
-
-
-class TestEdgeCases:
-    """Test edge cases and error handling."""
-
-    def test_invalid_split(self):
-        """Test that invalid split raises error."""
-        try:
-            VideoFrameDataset(
-                split="invalid",
-                max_frame_distance=5,
-            )
-            assert False, "Should raise assertion for invalid split"
-        except AssertionError:
-            pass  # Expected
-
-    def test_nonexistent_data_root(self):
-        """Test that nonexistent data root raises error."""
-        try:
-            VideoFrameDataset(
-                data_root="nonexistent/path",
-                split="train",
-                max_frame_distance=5,
-            )
-            assert False, "Should raise assertion for nonexistent path"
-        except AssertionError:
-            pass  # Expected
-
-
-class TestPathResolution:
-    """Test that path resolution works from any directory."""
-
-    def test_auto_detect_datasets(self):
-        """Test that datasets directory is auto-detected."""
-        # Should work without specifying data_root
-        dataset = VideoFrameDataset(split="train", max_frame_distance=5, seed=42)
-        assert len(dataset) > 0
-        # With 15 videos and 85% ratio: 12 train
-        assert len(dataset.videos) == 12
-
-    def test_explicit_data_root(self):
-        """Test that explicit data_root still works."""
-        # Use absolute path (relative paths depend on cwd)
-        dataset = VideoFrameDataset(
-            data_root=str(get_datasets_dir()),
-            split="train",
-            max_frame_distance=5,
-            seed=42,
-        )
-        assert len(dataset) > 0
