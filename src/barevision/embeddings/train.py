@@ -1,6 +1,7 @@
 """Training script for embedding model."""
 
 import time
+from functools import partial
 
 import optax
 import tyro
@@ -9,19 +10,14 @@ from flax import nnx
 from barevision.embeddings.loss import compute_embedding_losses
 from barevision.embeddings.logging_utils import log_progress
 from barevision.embeddings.model import SimpleEmbeddingModel, count_parameters
-from barevision.embeddings.settings import (
-    DatasetSettings,
-    LoggingSettings,
-    Settings,
-    TrainingSettings,
-    create_smoke_test_settings,
-)
+from barevision.embeddings.settings import Settings, create_smoke_test_settings
 from barevision.embeddings.video_dataset import create_dataloader
 from barevision.embeddings.visualization import log_visualizations
 from barevision.utils.logging import JaxLogger
 
 
-def train_step(model, optimizer, img1, img2):
+@partial(nnx.jit, static_argnames=("logging"))
+def train_step(model, optimizer, img1, img2, logging: bool = False):
     """Execute single training step with gradient update."""
 
     def loss_fn(model):
@@ -33,8 +29,12 @@ def train_step(model, optimizer, img1, img2):
     (loss, (self_loss, cross_loss)), grads = nnx.value_and_grad(loss_fn, has_aux=True)(
         model
     )
+    aux = {}
+    if logging:
+        aux["self_loss"] = self_loss
+        aux["cross_loss"] = cross_loss
     optimizer.update(model, grads)
-    return loss, self_loss, cross_loss
+    return loss, aux
 
 
 def _run_epoch(
@@ -54,7 +54,13 @@ def _run_epoch(
     for step, (img1, img2, metadata) in enumerate(loader):
         global_step = step
 
-        loss, self_loss, cross_loss = train_step(model, optimizer, img1, img2)
+        loss, aux = train_step(
+            model,
+            optimizer,
+            img1,
+            img2,
+            logging_settings.should_log_something(global_step),
+        )
         epoch_losses.append(float(loss))
 
         if global_step % logging_settings.log_every_steps == 0:
@@ -65,8 +71,7 @@ def _run_epoch(
                 epoch,
                 global_step,
                 loss,
-                self_loss,
-                cross_loss,
+                aux,
                 epoch_start,
             )
 

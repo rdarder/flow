@@ -70,6 +70,12 @@ class LoggingSettings:
                 f"log_visualizations_every_steps must be >= 1, got {self.log_visualizations_every_steps}"
             )
 
+    def should_log_something(self, step: int):
+        return (
+            step % self.log_visualizations_every_steps == 0
+            or step == self.log_every_steps
+        )
+
 
 @dataclass
 class TrainingSettings:

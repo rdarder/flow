@@ -202,11 +202,11 @@ def log_gradient_statistics(
         traceback.print_exc()
 
 
-def log_metrics(logger: JaxLogger, loss, self_loss, cross_loss, step: int):
+def log_metrics(logger: JaxLogger, loss, aux, step: int):
     """Log loss metrics to TensorBoard."""
     logger.log_scalar("Loss/train_step", float(loss), step)
-    logger.log_scalar("Loss/self_entropy", float(self_loss), step)
-    logger.log_scalar("Loss/cross_entropy", float(cross_loss), step)
+    logger.log_scalar("Loss/self_entropy", float(aux["self_loss"]), step)
+    logger.log_scalar("Loss/cross_entropy", float(aux["cross_loss"]), step)
 
 
 def log_diagnostics(logger: JaxLogger, model, img1, step: int):
@@ -231,17 +231,16 @@ def log_progress(
     epoch: int,
     step: int,
     loss,
-    self_loss,
-    cross_loss,
+    aux,
     epoch_start: float,
 ):
     """Log all standard training diagnostics and print progress.
-    
+
     This function orchestrates regular training logging:
     1. Log loss metrics
     2. Log gradient and embedding diagnostics
     3. Print progress line to console
-    
+
     Args:
         logger: JaxLogger instance
         model: NNX model
@@ -249,10 +248,9 @@ def log_progress(
         epoch: Current epoch number
         step: Current step within epoch
         loss: Combined loss value
-        self_loss: Self-attention loss component
-        cross_loss: Cross-attention loss component
+        aux_loss: auxiliary loss information (like self/cross attention loss components.
         epoch_start: Time when epoch started (for speed calculation)
     """
-    log_metrics(logger, loss, self_loss, cross_loss, step)
+    log_metrics(logger, loss, aux, step)
     log_diagnostics(logger, model, img1, step)
     print(format_progress_line(epoch, step, float(loss), time.time() - epoch_start))
