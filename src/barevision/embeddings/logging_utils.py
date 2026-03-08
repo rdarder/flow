@@ -3,6 +3,8 @@
 Builds on barevision.utils.logging.JaxLogger with embedding-specific diagnostics.
 """
 
+import time
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -198,3 +200,59 @@ def log_gradient_statistics(
 
         print(f"Warning: Could not log gradient statistics: {e}")
         traceback.print_exc()
+
+
+def log_metrics(logger: JaxLogger, loss, self_loss, cross_loss, step: int):
+    """Log loss metrics to TensorBoard."""
+    logger.log_scalar("Loss/train_step", float(loss), step)
+    logger.log_scalar("Loss/self_entropy", float(self_loss), step)
+    logger.log_scalar("Loss/cross_entropy", float(cross_loss), step)
+
+
+def log_diagnostics(logger: JaxLogger, model, img1, step: int):
+    """Log gradient statistics, embeddings, and attention statistics."""
+    log_gradient_statistics(logger, None, model, step)
+
+    embeddings = model(img1)
+    log_embedding_statistics(logger, embeddings, step)
+    log_attention_statistics(logger, embeddings, step)
+
+
+def format_progress_line(epoch: int, step: int, loss: float, elapsed: float) -> str:
+    """Format training progress line for console output."""
+    steps_per_sec = (step + 1) / elapsed
+    return f"Epoch {epoch} | Step {step} | Loss: {loss:.4f} | {steps_per_sec:.1f} steps/sec"
+
+
+def log_progress(
+    logger: JaxLogger,
+    model,
+    img1,
+    epoch: int,
+    step: int,
+    loss,
+    self_loss,
+    cross_loss,
+    epoch_start: float,
+):
+    """Log all standard training diagnostics and print progress.
+    
+    This function orchestrates regular training logging:
+    1. Log loss metrics
+    2. Log gradient and embedding diagnostics
+    3. Print progress line to console
+    
+    Args:
+        logger: JaxLogger instance
+        model: NNX model
+        img1: Input frame for diagnostics
+        epoch: Current epoch number
+        step: Current step within epoch
+        loss: Combined loss value
+        self_loss: Self-attention loss component
+        cross_loss: Cross-attention loss component
+        epoch_start: Time when epoch started (for speed calculation)
+    """
+    log_metrics(logger, loss, self_loss, cross_loss, step)
+    log_diagnostics(logger, model, img1, step)
+    print(format_progress_line(epoch, step, float(loss), time.time() - epoch_start))

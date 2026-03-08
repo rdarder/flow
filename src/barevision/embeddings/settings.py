@@ -50,7 +50,7 @@ class LoggingSettings:
         log_dir: Root directory for TensorBoard logs
         run_name_prefix: Prefix for auto-generated run names
         log_every_steps: Log metrics, statistics, and console output every N steps
-        log_visualizations_every_steps: Generate and log visualization figures every N steps (0 to disable)
+        log_visualizations_every_steps: Generate and log visualization figures every N steps
     """
 
     log_dir: str = "runs"
@@ -65,9 +65,9 @@ class LoggingSettings:
             raise ValueError(
                 f"log_every_steps must be >= 1, got {self.log_every_steps}"
             )
-        if self.log_visualizations_every_steps < 0:
+        if self.log_visualizations_every_steps < 1:
             raise ValueError(
-                f"log_visualizations_every_steps must be >= 0, got {self.log_visualizations_every_steps}"
+                f"log_visualizations_every_steps must be >= 1, got {self.log_visualizations_every_steps}"
             )
 
 

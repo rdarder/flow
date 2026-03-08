@@ -7,11 +7,7 @@ import tyro
 from flax import nnx
 
 from barevision.embeddings.loss import compute_embedding_losses
-from barevision.embeddings.logging_utils import (
-    log_attention_statistics,
-    log_embedding_statistics,
-    log_gradient_statistics,
-)
+from barevision.embeddings.logging_utils import log_progress
 from barevision.embeddings.model import SimpleEmbeddingModel, count_parameters
 from barevision.embeddings.settings import (
     DatasetSettings,
@@ -27,18 +23,28 @@ from barevision.utils.logging import JaxLogger
 
 def train_step(model, optimizer, img1, img2):
     """Execute single training step with gradient update."""
+
     def loss_fn(model):
         emb1 = model(img1)
         emb2 = model(img2)
         combined, self_loss, cross_loss = compute_embedding_losses(emb1, emb2)
         return combined.mean(), (self_loss.mean(), cross_loss.mean())
 
-    (loss, (self_loss, cross_loss)), grads = nnx.value_and_grad(loss_fn, has_aux=True)(model)
+    (loss, (self_loss, cross_loss)), grads = nnx.value_and_grad(loss_fn, has_aux=True)(
+        model
+    )
     optimizer.update(model, grads)
     return loss, self_loss, cross_loss
 
 
-def _run_epoch(epoch, model, optimizer, logger, dataset_settings, training_settings, logging_settings):
+def _run_epoch(
+    epoch,
+    model,
+    optimizer,
+    logger,
+    dataset_settings,
+    logging_settings,
+):
     """Run single epoch and return average loss."""
     loader = create_dataloader(dataset_settings, split="train")
 
@@ -52,34 +58,22 @@ def _run_epoch(epoch, model, optimizer, logger, dataset_settings, training_setti
         epoch_losses.append(float(loss))
 
         if global_step % logging_settings.log_every_steps == 0:
-            logger.log_scalar("Loss/train_step", float(loss), global_step)
-            logger.log_scalar("Loss/self_entropy", float(self_loss), global_step)
-            logger.log_scalar("Loss/cross_entropy", float(cross_loss), global_step)
+            log_progress(
+                logger,
+                model,
+                img1,
+                epoch,
+                global_step,
+                loss,
+                self_loss,
+                cross_loss,
+                epoch_start,
+            )
 
-            _log_diagnostics(logger, model, img1, global_step)
-
-            elapsed = time.time() - epoch_start
-            steps_per_sec = (step + 1) / elapsed
-            print(f"Epoch {epoch} | Step {global_step} | Loss: {float(loss):.4f} | {steps_per_sec:.1f} steps/sec")
-
-        if logging_settings.log_visualizations_every_steps > 0 and global_step % logging_settings.log_visualizations_every_steps == 0:
-            _log_visualizations(logger, model, img1, global_step)
+        if global_step % logging_settings.log_visualizations_every_steps == 0:
+            log_visualizations(logger, model, img1[0:1], img1[0:1], {}, global_step)
 
     return sum(epoch_losses) / len(epoch_losses)
-
-
-def _log_diagnostics(logger, model, img1, step):
-    """Log gradient and embedding statistics."""
-    log_gradient_statistics(logger, None, model, step)
-
-    embeddings = model(img1)
-    log_embedding_statistics(logger, embeddings, step)
-    log_attention_statistics(logger, embeddings, step)
-
-
-def _log_visualizations(logger, model, img1, step):
-    """Generate and log visualization figures."""
-    log_visualizations(logger, model, img1[0:1], img1[0:1], {}, step)
 
 
 def train(settings: Settings):
@@ -100,7 +94,9 @@ def train(settings: Settings):
         rngs=nnx.Rngs(0),
     )
 
-    optimizer = nnx.Optimizer(model, optax.adam(settings.training.learning_rate), wrt=nnx.Param)
+    optimizer = nnx.Optimizer(
+        model, optax.adam(settings.training.learning_rate), wrt=nnx.Param
+    )
 
     print(f"Model parameters: {count_parameters(model)}\n")
 
@@ -111,7 +107,6 @@ def train(settings: Settings):
             optimizer,
             logger,
             settings.dataset,
-            settings.training,
             settings.logging,
         )
         print(f"Epoch {epoch} complete | Avg loss: {avg_loss:.4f}\n")
