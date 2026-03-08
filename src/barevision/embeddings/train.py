@@ -13,7 +13,13 @@ from barevision.embeddings.logging_utils import (
     log_gradient_statistics,
 )
 from barevision.embeddings.model import SimpleEmbeddingModel, count_parameters
-from barevision.embeddings.settings import Settings, create_smoke_test_settings
+from barevision.embeddings.settings import (
+    DatasetSettings,
+    LoggingSettings,
+    Settings,
+    TrainingSettings,
+    create_smoke_test_settings,
+)
 from barevision.embeddings.video_dataset import create_dataloader
 from barevision.embeddings.visualization import log_visualizations
 from barevision.utils.logging import JaxLogger
@@ -36,28 +42,27 @@ def train_step(graphdef, state, tx, opt_state, img1, img2):
     return state, opt_state, float(combined), float(self_loss), float(cross_loss)
 
 
-def _run_epoch(epoch, graphdef, state, tx, opt_state, loader, logger, log_every_steps, log_viz_every_steps):
+def _run_epoch(epoch, graphdef, state, tx, opt_state, logger, dataset_settings, training_settings, logging_settings):
     """Run single epoch and return average loss."""
+    loader = create_dataloader(dataset_settings, split="train")
+
     epoch_start = time.time()
     epoch_losses = []
 
     for step, (img1, img2, metadata) in enumerate(loader):
-        global_step = step  # Simple step counting within epoch
+        global_step = step
 
-        # Training step
         state, opt_state, loss, self_loss, cross_loss = train_step(
             graphdef, state, tx, opt_state, img1, img2
         )
         epoch_losses.append(loss)
 
-        # Log metrics
         logger.log_scalar("Loss/train_step", loss, global_step)
         logger.log_scalar("Loss/self_entropy", self_loss, global_step)
         logger.log_scalar("Loss/cross_entropy", cross_loss, global_step)
 
-        # Periodic logging
-        if global_step % log_every_steps == 0:
-            _log_diagnostics(logger, graphdef, state, img1, metadata[0] if metadata else {}, global_step, log_viz_every_steps)
+        if global_step % logging_settings.log_every_steps == 0:
+            _log_diagnostics(logger, graphdef, state, img1, metadata[0] if metadata else {}, global_step, logging_settings)
 
             elapsed = time.time() - epoch_start
             steps_per_sec = (step + 1) / elapsed
@@ -66,21 +71,18 @@ def _run_epoch(epoch, graphdef, state, tx, opt_state, loader, logger, log_every_
     return sum(epoch_losses) / len(epoch_losses)
 
 
-def _log_diagnostics(logger, graphdef, state, img1, metadata, step, log_viz_every_steps):
+def _log_diagnostics(logger, graphdef, state, img1, metadata, step, logging_settings):
     """Log gradient statistics, embeddings, and visualizations."""
     temp_model = nnx.merge(graphdef, state)
 
-    # Gradient statistics
     log_gradient_statistics(logger, None, temp_model, step)
 
-    # Embedding statistics
     embeddings = temp_model(img1)
     log_embedding_statistics(logger, embeddings, step)
     log_attention_statistics(logger, embeddings, step)
 
-    # Visualizations
-    if log_viz_every_steps > 0 and step % log_viz_every_steps == 0:
-        log_visualizations(logger, temp_model, img1[None], img1[None], metadata, step)
+    if logging_settings.log_visualizations_every_steps > 0 and step % logging_settings.log_visualizations_every_steps == 0:
+        log_visualizations(logger, temp_model, img1[0:1], img1[0:1], metadata, step)
 
 
 def train(settings: Settings):
@@ -108,19 +110,13 @@ def train(settings: Settings):
     print(f"Model parameters: {count_parameters(model)}\n")
 
     for epoch in range(settings.training.epochs):
-        loader = create_dataloader(
-            split="train",
-            batch_size=settings.dataset.batch_size,
-            img_size=settings.dataset.img_size,
-            steps_per_epoch=settings.training.steps_per_epoch,
-        )
         avg_loss = _run_epoch(
-            epoch, 
-            graphdef, state, tx, opt_state, 
-            loader, 
+            epoch,
+            graphdef, state, tx, opt_state,
             logger,
-            settings.logging.log_every_steps,
-            settings.logging.log_visualizations_every_steps,
+            settings.dataset,
+            settings.training,
+            settings.logging,
         )
         print(f"Epoch {epoch} complete | Avg loss: {avg_loss:.4f}\n")
 
@@ -141,8 +137,8 @@ def _print_header(settings):
     print()
     print(f"Epochs: {settings.training.epochs}")
     print(f"Batch size: {settings.dataset.batch_size}")
-    if settings.training.steps_per_epoch > 0:
-        print(f"Steps per epoch: {settings.training.steps_per_epoch}")
+    if settings.dataset.max_samples > 0:
+        print(f"Max samples per epoch: {settings.dataset.max_samples}")
     print()
 
 

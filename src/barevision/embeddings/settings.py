@@ -19,12 +19,14 @@ class DatasetSettings:
                   Model uses 5×5 valid conv, so output is (H-4, W-4).
                   Recommended: (196, 196) -> (192, 192) embeddings = 12x12 windows
         max_frame_distance: Maximum temporal distance for frame pairs
+        max_samples: Maximum samples per epoch (-1 for full dataset)
         num_workers: Number of worker processes for data loading (0 = main process only)
     """
 
     batch_size: int = 4
     img_size: Tuple[int, int] = (196, 196)
     max_frame_distance: int = 5
+    max_samples: int = -1
     num_workers: int = 4
 
     def __post_init__(self):
@@ -75,12 +77,10 @@ class TrainingSettings:
 
     Attributes:
         epochs: Number of training epochs
-        steps_per_epoch: Steps per epoch (-1 for full dataset)
         learning_rate: Optimizer learning rate
     """
 
     epochs: int = 1
-    steps_per_epoch: int = -1
     learning_rate: float = 1e-4
 
     def __post_init__(self):
@@ -114,11 +114,11 @@ def create_smoke_test_settings() -> Settings:
             batch_size=1,  # Minimum for speed
             img_size=(196, 196),  # 196-4=192, divisible by 16
             max_frame_distance=5,
+            max_samples=2,  # Only 2 samples for speed
             num_workers=0,
         ),
         training=TrainingSettings(
             epochs=1,
-            steps_per_epoch=2,  # Only 2 steps for speed
             learning_rate=1e-4,
         ),
         logging=LoggingSettings(

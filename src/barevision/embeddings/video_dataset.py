@@ -318,20 +318,16 @@ def _shuffle_indices(
 
 
 def create_dataloader(
+    dataset_settings,
     split: str,
-    batch_size: int,
-    img_size: tuple[int, int],
-    steps_per_epoch: int = -1,
     shuffle: bool = True,
     random_seed: int | None = None,
 ) -> Iterator[tuple[jnp.ndarray, jnp.ndarray, list[dict]]]:
     """Yield batches of frame pairs.
 
     Args:
+        dataset_settings: DatasetSettings object with batch_size, img_size, max_samples
         split: 'train' or 'val'
-        batch_size: Number of samples per batch
-        img_size: Image size (height, width)
-        steps_per_epoch: Number of steps per epoch (-1 = full dataset)
         shuffle: Whether to shuffle the dataset (default True for train)
         random_seed: Random seed for shuffling (for reproducibility)
 
@@ -341,23 +337,20 @@ def create_dataloader(
     dataset = VideoFrameDataset(
         split=split,
         max_frame_distance=5,
-        img_size=img_size,
+        img_size=dataset_settings.img_size,
     )
 
-    # Calculate max_frames from steps_per_epoch
-    max_frames = None
-    if steps_per_epoch > 0:
-        max_frames = steps_per_epoch * batch_size
+    max_samples = dataset_settings.max_samples if dataset_settings.max_samples > 0 else None
 
     # Shuffle and/or sample indices
     indices = _shuffle_indices(
-        list(range(len(dataset))), shuffle, max_frames, random_seed
+        list(range(len(dataset))), shuffle, max_samples, random_seed
     )
 
     # Yield batches
-    for i in range(0, len(indices), batch_size):
-        batch_indices = indices[i : i + batch_size]
-        if len(batch_indices) < batch_size:
+    for i in range(0, len(indices), dataset_settings.batch_size):
+        batch_indices = indices[i : i + dataset_settings.batch_size]
+        if len(batch_indices) < dataset_settings.batch_size:
             continue
 
         # Load batch
