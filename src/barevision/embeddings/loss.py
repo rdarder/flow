@@ -166,3 +166,69 @@ def combined_loss(
     combined = combined.reshape(B, num_h * window_size, num_w * window_size)
 
     return combined
+
+
+def compute_embedding_losses(
+    emb1: jnp.ndarray,
+    emb2: jnp.ndarray,
+    window_size: int = 16,
+    alpha: float = 1.0,
+    beta: float = 0.1,
+) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    """Compute combined self and cross attention losses.
+
+    Handles window splitting and returns all three loss components.
+    Fails explicitly if input resolution is not aligned with window_size.
+
+    Args:
+        emb1: (B, H, W, D) embeddings from frame 1
+        emb2: (B, H, W, D) embeddings from frame 2
+        window_size: Size of attention windows (default 16)
+        alpha: Weight for self-attention loss (default 1.0)
+        beta: Weight for cross-attention loss (default 0.1)
+
+    Returns:
+        Tuple of (combined_loss, self_loss, cross_loss), each (B, H, W)
+
+    Raises:
+        ValueError: If H or W is not divisible by window_size
+    """
+    B, H, W, D = emb1.shape
+
+    # Validate resolution
+    if H % window_size != 0:
+        raise ValueError(f"Height {H} not divisible by window_size {window_size}")
+    if W % window_size != 0:
+        raise ValueError(f"Width {W} not divisible by window_size {window_size}")
+
+    # Validate shapes match
+    assert (
+        emb2.shape == emb1.shape
+    ), f"emb2 shape {emb2.shape} != emb1 shape {emb1.shape}"
+
+    # Split into windows
+    grid = WindowGrid(window_size=window_size)
+    windows1 = grid.split(emb1)
+    windows2 = grid.split(emb2)
+
+    # Flatten batch and windows together for core functions
+    num_windows = (H // window_size) * (W // window_size)
+    flat_windows1 = windows1.reshape(B * num_windows, window_size, window_size, D)
+    flat_windows2 = windows2.reshape(B * num_windows, window_size, window_size, D)
+
+    # Compute core losses
+    self_loss_flat = self_attention_entropy_loss_core(flat_windows1)
+    cross_loss_flat = cross_attention_entropy_loss_core(flat_windows1, flat_windows2)
+
+    # Reshape back to spatial grid: (B * num_windows, window_size, window_size) -> (B, H, W)
+    def reshape_to_grid(loss_flat):
+        loss = loss_flat.reshape(B, num_windows, window_size, window_size)
+        loss = loss.reshape(B, H // window_size, W // window_size, window_size, window_size)
+        loss = loss.transpose(0, 1, 3, 2, 4)
+        return loss.reshape(B, H, W)
+
+    self_loss = reshape_to_grid(self_loss_flat)
+    cross_loss = reshape_to_grid(cross_loss_flat)
+    combined = alpha * self_loss + beta * cross_loss
+
+    return combined, self_loss, cross_loss

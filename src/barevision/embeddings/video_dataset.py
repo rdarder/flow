@@ -10,7 +10,8 @@ Train/val split:
 """
 
 import os
-from typing import List, NamedTuple, Optional, Tuple
+import random
+from typing import Iterator, List, NamedTuple, Optional, Tuple
 
 import jax.numpy as jnp
 import jax.random as jr
@@ -281,3 +282,86 @@ def create_train_val_datasets(
     )
 
     return train_dataset, val_dataset
+
+
+def _shuffle_indices(
+    indices: list[int],
+    shuffle: bool,
+    max_frames: int | None,
+    random_seed: int | None,
+) -> list[int]:
+    """Shuffle and/or sample indices.
+
+    Args:
+        indices: List of indices to shuffle
+        shuffle: Whether to shuffle
+        max_frames: Maximum number of frames to sample (None = use all)
+        random_seed: Random seed for reproducibility
+
+    Returns:
+        Shuffled and/or sampled list of indices
+    """
+    if max_frames is not None and max_frames > 0:
+        # Sampling mode: take max_frames samples
+        if shuffle:
+            rng = random.Random(random_seed)
+            return rng.sample(indices, min(max_frames, len(indices)))
+        return indices[:max_frames]
+
+    if not shuffle:
+        return indices
+
+    # Full shuffle
+    rng = random.Random(random_seed)
+    rng.shuffle(indices)
+    return indices
+
+
+def create_dataloader(
+    split: str,
+    batch_size: int,
+    img_size: tuple[int, int],
+    steps_per_epoch: int = -1,
+    shuffle: bool = True,
+    random_seed: int | None = None,
+) -> Iterator[tuple[jnp.ndarray, jnp.ndarray, list[dict]]]:
+    """Yield batches of frame pairs.
+
+    Args:
+        split: 'train' or 'val'
+        batch_size: Number of samples per batch
+        img_size: Image size (height, width)
+        steps_per_epoch: Number of steps per epoch (-1 = full dataset)
+        shuffle: Whether to shuffle the dataset (default True for train)
+        random_seed: Random seed for shuffling (for reproducibility)
+
+    Yields:
+        Tuple of (img1_batch, img2_batch, metadata_batch)
+    """
+    dataset = VideoFrameDataset(
+        split=split,
+        max_frame_distance=5,
+        img_size=img_size,
+    )
+
+    # Calculate max_frames from steps_per_epoch
+    max_frames = None
+    if steps_per_epoch > 0:
+        max_frames = steps_per_epoch * batch_size
+
+    # Shuffle and/or sample indices
+    indices = _shuffle_indices(
+        list(range(len(dataset))), shuffle, max_frames, random_seed
+    )
+
+    # Yield batches
+    for i in range(0, len(indices), batch_size):
+        batch_indices = indices[i : i + batch_size]
+        if len(batch_indices) < batch_size:
+            continue
+
+        # Load batch
+        batch = [dataset[idx] for idx in batch_indices]
+        imgs1, imgs2, metadata = zip(*batch)
+
+        yield jnp.stack(imgs1), jnp.stack(imgs2), list(metadata)
