@@ -683,11 +683,14 @@ def log_visualizations(
     self_loss_flat = self_attention_entropy_loss_core(flat_windows1)  # (B*num_windows, 16, 16)
     cross_loss_flat = cross_attention_entropy_loss_core(flat_windows1, flat_windows2)
     
-    # Reshape back to full grid: (B, num_windows_h, window_size, num_windows_w, window_size)
-    self_loss_flat = self_loss_flat.reshape(B, num_windows_h, window_size, num_windows_w, window_size)
+    # Reshape back to full grid: (B, num_windows, 16, 16) -> (B, num_h, num_w, 16, 16) -> (B, H, W)
+    num_h = H_emb // window_size
+    num_w = W_emb // window_size
+    
+    self_loss_flat = self_loss_flat.reshape(B, num_h, num_w, window_size, window_size)
     self_loss_flat = self_loss_flat.transpose(0, 1, 3, 2, 4).reshape(B, H_emb, W_emb)
     
-    cross_loss_flat = cross_loss_flat.reshape(B, num_windows_h, window_size, num_windows_w, window_size)
+    cross_loss_flat = cross_loss_flat.reshape(B, num_h, num_w, window_size, window_size)
     cross_loss_flat = cross_loss_flat.transpose(0, 1, 3, 2, 4).reshape(B, H_emb, W_emb)
     
     # Remove batch dim and pad to match image dimensions
