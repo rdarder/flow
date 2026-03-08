@@ -8,7 +8,7 @@ Architecture:
       ↓
     5×5 depthwise conv: 3 in → 48 out (16 filters per channel)
       ↓
-    LeakyReLU (negative_slope=0.1) - prevents dying ReLU
+    ReLU
       ↓
     1×1 conv: 48 in → 16 out
       ↓
@@ -93,13 +93,13 @@ class SimpleEmbeddingModel(nnx.Module):
         Returns:
             Embeddings of shape (B, H-4, W-4, embed_dim), L2-normalized to unit norm
         """
-        # Depthwise convolution + LeakyReLU (prevents dying ReLU problem)
+        # Depthwise convolution + Relu
         x = self.depthwise_conv(x)
-        x = nnx.leaky_relu(x, negative_slope=0.1)
+        x = nnx.relu(x)
 
         # Pointwise convolution
         x = self.pointwise_conv(x)
-        
+
         # L2 normalize embeddings to unit norm (per-pixel)
         # This ensures self-attention peak is at self (q·q = ||q||² = 1 for all pixels)
         # Without this, high-norm embeddings dominate attention regardless of location

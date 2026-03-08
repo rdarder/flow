@@ -37,7 +37,7 @@ def self_attention_entropy_loss_core(
 
     Pure math - no splitting, no dimension rearranging. Just the loss computation.
     Returns POSITIVE entropy so minimizing loss = minimizing entropy.
-    
+
     No masking, no penalties. Self naturally has highest attention (q·q = ||q||²).
     Low entropy means: "only self should dominate, no other pixel competes"
     This encourages unique embeddings.
@@ -58,7 +58,7 @@ def self_attention_entropy_loss_core(
     logits = flat_windows @ flat_windows.transpose(0, 2, 1)  # (B, N, N)
 
     # Softmax and entropy
-    attn_weights = jax.nn.softmax(logits, axis=-1)
+    attn_weights = jax.nn.softmax(logits / 0.05, axis=-1)
     entropy = _compute_entropy(attn_weights)
 
     # Return POSITIVE entropy (minimize entropy = encourage sharp/peaked attention)
@@ -91,7 +91,7 @@ def cross_attention_entropy_loss_core(
     logits = flat1 @ flat2.transpose(0, 2, 1)  # (B, N, N)
 
     # Softmax and entropy
-    attn_weights = jax.nn.softmax(logits, axis=-1)
+    attn_weights = jax.nn.softmax(logits / 0.05, axis=-1)
     entropy = _compute_entropy(attn_weights)
 
     # Reshape back to spatial grid: (B, H, W)
