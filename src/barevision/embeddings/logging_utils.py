@@ -209,13 +209,13 @@ def log_metrics(logger: JaxLogger, loss, aux, step: int):
     logger.log_scalar("Loss/cross_entropy", float(aux["cross_loss"]), step)
 
 
-def log_diagnostics(logger: JaxLogger, model, img1, step: int):
+def log_diagnostics(logger: JaxLogger, model, img1, step: int, window_size: int = 16):
     """Log gradient statistics, embeddings, and attention statistics."""
     log_gradient_statistics(logger, None, model, step)
 
     embeddings = model(img1)
     log_embedding_statistics(logger, embeddings, step)
-    log_attention_statistics(logger, embeddings, step)
+    log_attention_statistics(logger, embeddings, step, window_size)
 
 
 def format_progress_line(epoch: int, step: int, loss: float, elapsed: float) -> str:
@@ -233,6 +233,7 @@ def log_progress(
     loss,
     aux,
     epoch_start: float,
+    window_size: int = 16,
 ):
     """Log all standard training diagnostics and print progress.
 
@@ -248,11 +249,12 @@ def log_progress(
         epoch: Current epoch number
         step: Current step within epoch
         loss: Combined loss value
-        aux_loss: auxiliary loss information (like self/cross attention loss components.
+        aux: auxiliary loss information (like self/cross attention loss components.
         epoch_start: Time when epoch started (for speed calculation)
+        window_size: Attention window size
     """
     log_metrics(logger, loss, aux, step)
-    log_diagnostics(logger, model, img1, step)
+    log_diagnostics(logger, model, img1, step, window_size)
     print(format_progress_line(epoch, step, float(loss), time.time() - epoch_start))
 
 

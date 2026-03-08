@@ -8,7 +8,7 @@ import pytest
 from barevision.embeddings.loss import (
     self_attention_entropy_loss_core,
     cross_attention_entropy_loss_core,
-    combined_loss,
+    compute_embedding_losses,
 )
 
 
@@ -90,20 +90,24 @@ class TestCombinedLoss:
     """Tests for combined loss wrapper (handles splitting)."""
 
     def test_output_shape(self):
-        """Test that combined loss returns (B, H, W)."""
+        """Test that combined loss returns scalar values."""
         emb1 = jr.normal(jr.PRNGKey(0), (2, 32, 32, 16))
         emb2 = jr.normal(jr.PRNGKey(1), (2, 32, 32, 16))
-        loss = combined_loss(emb1, emb2)
+        loss, aux = compute_embedding_losses(emb1, emb2)
 
-        assert loss.shape == (2, 32, 32)
+        assert jnp.isscalar(loss) or loss.shape == ()
+        assert jnp.isscalar(aux["self_loss"]) or aux["self_loss"].shape == ()
+        assert jnp.isscalar(aux["cross_loss"]) or aux["cross_loss"].shape == ()
 
     def test_finite_values(self):
         """Test that combined loss is finite."""
         emb1 = jr.normal(jr.PRNGKey(0), (2, 32, 32, 16))
         emb2 = jr.normal(jr.PRNGKey(1), (2, 32, 32, 16))
-        loss = combined_loss(emb1, emb2)
+        loss, aux = compute_embedding_losses(emb1, emb2)
 
-        assert jnp.isfinite(loss).all()
+        assert jnp.isfinite(loss)
+        assert jnp.isfinite(aux["self_loss"])
+        assert jnp.isfinite(aux["cross_loss"])
 
     def test_misaligned_height_fails(self):
         """Test that misaligned height raises ValueError."""
@@ -111,7 +115,7 @@ class TestCombinedLoss:
         emb2 = jr.normal(jr.PRNGKey(1), (1, 31, 32, 16))
 
         with pytest.raises(ValueError, match="Height.*not divisible"):
-            combined_loss(emb1, emb2)
+            compute_embedding_losses(emb1, emb2)
 
     def test_misaligned_width_fails(self):
         """Test that misaligned width raises ValueError."""
@@ -119,7 +123,7 @@ class TestCombinedLoss:
         emb2 = jr.normal(jr.PRNGKey(1), (1, 32, 33, 16))
 
         with pytest.raises(ValueError, match="Width.*not divisible"):
-            combined_loss(emb1, emb2)
+            compute_embedding_losses(emb1, emb2)
 
     def test_shape_mismatch_fails(self):
         """Test that mismatched shapes raise assertion."""
@@ -127,13 +131,14 @@ class TestCombinedLoss:
         emb2 = jr.normal(jr.PRNGKey(1), (1, 32, 32, 8))  # Different D
 
         with pytest.raises(AssertionError):
-            combined_loss(emb1, emb2)
+            compute_embedding_losses(emb1, emb2)
 
     def test_gradient_flow(self):
         """Test gradients flow through combined loss."""
 
         def loss_fn(e1, e2):
-            return combined_loss(e1, e2).mean()
+            loss, _ = compute_embedding_losses(e1, e2)
+            return loss
 
         emb1 = jr.normal(jr.PRNGKey(0), (1, 32, 32, 16))
         emb2 = jr.normal(jr.PRNGKey(1), (1, 32, 32, 16))
@@ -149,14 +154,18 @@ class TestCombinedLoss:
         emb1 = jr.normal(jr.PRNGKey(0), (1, 32, 32, 16))
         emb2 = jr.normal(jr.PRNGKey(1), (1, 32, 32, 16))
 
-        loss1 = combined_loss(emb1, emb2, alpha=1.0, beta=0.0)  # Self only
-        loss2 = combined_loss(emb1, emb2, alpha=0.0, beta=1.0)  # Cross only
-        loss3 = combined_loss(emb1, emb2, alpha=1.0, beta=1.0)  # Both
+        loss1, aux1 = compute_embedding_losses(
+            emb1, emb2, alpha=1.0, beta=0.0
+        )  # Self only
+        loss2, aux2 = compute_embedding_losses(
+            emb1, emb2, alpha=0.0, beta=1.0
+        )  # Cross only
+        loss3, aux3 = compute_embedding_losses(emb1, emb2, alpha=1.0, beta=1.0)  # Both
 
         # All should be finite
-        assert jnp.isfinite(loss1).all()
-        assert jnp.isfinite(loss2).all()
-        assert jnp.isfinite(loss3).all()
+        assert jnp.isfinite(loss1)
+        assert jnp.isfinite(loss2)
+        assert jnp.isfinite(loss3)
 
         # Combined should equal sum of parts (approximately)
         combined = loss1 + loss2
@@ -174,7 +183,8 @@ class TestLossIntegration:
         emb2 = jr.normal(jr.PRNGKey(1), (B, H, W, D))
 
         def train_loss(e1, e2):
-            return combined_loss(e1, e2).mean()
+            loss, _ = compute_embedding_losses(e1, e2)
+            return loss
 
         loss = train_loss(emb1, emb2)
         assert jnp.isfinite(loss)
@@ -188,6 +198,6 @@ class TestLossIntegration:
         for h, w in [(16, 16), (32, 32), (64, 48), (48, 64)]:
             emb1 = jr.normal(jr.PRNGKey(0), (1, h, w, 16))
             emb2 = jr.normal(jr.PRNGKey(1), (1, h, w, 16))
-            loss = combined_loss(emb1, emb2)
-            assert loss.shape == (1, h, w)
-            assert jnp.isfinite(loss).all()
+            loss, aux = compute_embedding_losses(emb1, emb2)
+            assert jnp.isscalar(loss) or loss.shape == ()
+            assert jnp.isfinite(loss)

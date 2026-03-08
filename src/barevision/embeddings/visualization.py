@@ -345,6 +345,7 @@ def log_visualizations(
     img2: jnp.ndarray,
     metadata: dict,
     step: int,
+    window_size: int = 16,
 ):
     """Generate and log visualization figures.
 
@@ -361,10 +362,9 @@ def log_visualizations(
         img2: Frame 2 (1, H, W, 3)
         metadata: dict with video_name, frame_t, frame_tk, distance
         step: Global step for logging
+        window_size: Attention window size in pixels
     """
     import gc
-
-    window_size = 16  # Fixed for now
 
     # Get image dimensions
     H, W = img1.shape[1:3]

@@ -10,18 +10,26 @@ from flax import nnx
 from barevision.embeddings.loss import compute_embedding_losses
 from barevision.embeddings.logging_utils import log_progress, print_footer, print_header
 from barevision.embeddings.model import SimpleEmbeddingModel, count_parameters
-from barevision.embeddings.settings import Settings, create_smoke_test_settings
+from barevision.embeddings.settings import (
+    ModelSettings,
+    Settings,
+    create_smoke_test_settings,
+)
 from barevision.embeddings.video_dataset import create_dataloader
 from barevision.embeddings.visualization import log_visualizations
 from barevision.utils.logging import JaxLogger
 
 
-@partial(nnx.jit, static_argnames=("logging"))
-def train_step(model, optimizer, img1, img2, logging: bool = False):
+@partial(nnx.jit, static_argnames=("logging", "window_size"))
+def train_step(
+    model, optimizer, img1, img2, logging: bool = False, window_size: int = 16
+):
     """Execute single training step with gradient update."""
 
     def loss_fn(model):
-        return compute_embedding_losses(model(img1), model(img2))
+        return compute_embedding_losses(
+            model(img1), model(img2), window_size=window_size
+        )
 
     (loss, aux), grads = nnx.value_and_grad(loss_fn, has_aux=True)(model)
 
@@ -37,6 +45,7 @@ def run_epoch(
     optimizer,
     logger,
     dataset_settings,
+    model_settings,
     logging_settings,
 ):
     loader = create_dataloader(dataset_settings, split="train")
@@ -51,6 +60,7 @@ def run_epoch(
             img1,
             img2,
             logging_settings.should_log_something(global_step),
+            model_settings.window_size,
         )
 
         if global_step % logging_settings.log_every_steps == 0:
@@ -63,10 +73,19 @@ def run_epoch(
                 loss,
                 aux,
                 epoch_start,
+                model_settings.window_size,
             )
 
         if global_step % logging_settings.log_visualizations_every_steps == 0:
-            log_visualizations(logger, model, img1[0:1], img2[0:1], {}, global_step)
+            log_visualizations(
+                logger,
+                model,
+                img1[0:1],
+                img2[0:1],
+                {},
+                global_step,
+                model_settings.window_size,
+            )
 
 
 def train(settings: Settings):
@@ -100,6 +119,7 @@ def train(settings: Settings):
             optimizer,
             logger,
             settings.dataset,
+            settings.model,
             settings.logging,
         )
 

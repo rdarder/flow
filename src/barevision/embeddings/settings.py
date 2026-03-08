@@ -78,6 +78,21 @@ class LoggingSettings:
 
 
 @dataclass
+class ModelSettings:
+    """Model architecture configuration.
+
+    Attributes:
+        window_size: Attention window size in pixels (must divide img_size dimensions)
+    """
+
+    window_size: int = 16
+
+    def __post_init__(self):
+        if self.window_size < 1:
+            raise ValueError(f"window_size must be >= 1, got {self.window_size}")
+
+
+@dataclass
 class TrainingSettings:
     """Training hyperparameters.
 
@@ -108,6 +123,7 @@ class Settings:
     """
 
     dataset: DatasetSettings
+    model: ModelSettings
     training: TrainingSettings
     logging: LoggingSettings
     smoke_test: bool = False
@@ -122,6 +138,9 @@ def create_smoke_test_settings() -> Settings:
             max_frame_distance=5,
             max_samples=2,  # Only 2 samples for speed
             num_workers=0,
+        ),
+        model=ModelSettings(
+            window_size=16,  # 192/16 = 12 windows per dimension
         ),
         training=TrainingSettings(
             epochs=1,

@@ -27,9 +27,9 @@ Given that flow estimation relies on cross-frame attention, **sharper attention 
 This is essentially learning a **matching cost** without explicit supervision. Instead of optimizing through the flow loss, we use proxy objectives:
 
 1. **Within-frame**: Each patch should have a clear identity relative to neighbors (peaked self-attention)
-2. **Cross-frame**: Each patch should find at most 1-2 corresponding patches in the other frame (peaked cross-attention)
+2. **Cross-frame**: Each patch should find corresponding patches in the other frame (peaked cross-attention)
 
-Note: "Sharp" doesn't mean a single pixel match. Small clusters around the true match are acceptable and expected. The objective is to penalize diffuse attention, not to enforce unrealistic precision.
+Minimizing entropy favors the fewest attention peaks—each peak forms a "signature" linking the source embedding to specific target locations.
 
 ## Loss Functions
 
@@ -37,17 +37,9 @@ Both losses minimize entropy of attention distributions—pushing the model to c
 
 ### Self-Attention Entropy
 
-For a window of patches, each patch's embedding should stand out among its neighbors. However:
-- Self-match is trivial (embedding always peaks with itself)
-- Nearby pixels are expected to be similar
+For a window of patches, each patch's embedding should stand out among its neighbors. Self-match is trivial (embedding always peaks with itself due to dot product properties).
 
-**Approach**: Compute attention over the entire window, then apply soft spatial weighting before entropy calculation:
-1. Compute raw attention weights via softmax over dot products
-2. Multiply element-wise by distance-based weights (lower weight for nearby positions, higher for distant)
-3. Renormalize to get adjusted distribution
-4. Compute entropy on adjusted distribution
-
-This uses a Gaussian kernel (similar to `barevision.flow.token_attention.SpatialScore`) to softly downweight nearby positions without hard masking.
+**Approach**: Compute attention over the entire window via softmax over dot products, then minimize entropy. Low entropy means "only self should dominate, no other pixel competes"—encouraging unique embeddings.
 
 ### Cross-Attention Entropy
 
@@ -55,7 +47,7 @@ For patches in frame t and a search window in frame t+1:
 - Compute cross-frame attention weights
 - Minimize entropy to encourage peaked distributions
 
-**Acknowledgment**: Not all patches are matchable. Textureless regions, occlusions, and ambiguous areas will naturally produce diffuse attention. The loss should tolerate this rather than force false confidence. Future work may include confidence-aware weighting or explicit unmatchable region detection.
+**Limitation**: Unmatchable regions (occlusions, textureless areas, motion boundaries) contribute to loss like any other pixel. We accept this noise rather than adding complexity for confidence weighting or masking.
 
 ### Combined Loss
 
@@ -63,14 +55,22 @@ For patches in frame t and a search window in frame t+1:
 loss = α * self_entropy + β * cross_entropy
 ```
 
-No regularization term is planned initially—let the sharpness objectives drive the learning. We may add terms later if collapse modes emerge.
+Default weights: α=1.0, β=0.1. Cross-attention receives less weight since not all patches have reliable matches.
 
-## Integration with Flow
+## Training Stabilizers: L2 Normalization + Temperature
 
-Embeddings must support the hierarchical coarse-to-fine estimation used in `barevision.flow`. Key constraints:
+Two mechanisms prevent attention collapse and ensure stable training:
 
-- **Multi-scale**: Coarse levels inform finer levels, enabling large flow capture and hierarchical refinement
-- **Interface flexibility**: The current `EmbeddingPyramid` interface is a starting point, not a constraint. We may redefine how embeddings are structured across scales
-- **Inference performance**: Resolution mismatches between embedding levels won't be solved with interpolation if it hurts inference speed. We're willing to compromise resolution or use tricks that preserve performance
+### L2 Normalization
+All embeddings are L2-normalized to unit norm before computing attention. Without normalization, embeddings grow unbounded to exaggerate dot products—a failure mode where a single high-norm embedding captures all attention regardless of content. Normalization constrains all embeddings to the unit sphere surface, eliminating norm-based competition.
 
-The integration point is intentionally open for experimentation.
+### Temperature Scaling
+Attention logits are divided by temperature τ=0.05 before softmax. With normalized embeddings, dot products range in [-1, 1] and produce similar values. Low temperature sharpens the softmax distribution, amplifying small differences to select clear winners. This combination (L2 norm + low temperature) produces stable, discriminative attention without collapse.
+
+## Training Data
+
+Video frame pairs from single continuous takes (no cuts). Temporal continuity is guaranteed by dataset structure—frames are loaded from video directories in sequence without cross-video mixing.
+
+## Configuration
+
+Window size is configurable (default 16×16). Input image dimensions must be divisible by window size after accounting for valid convolutions (output is 4 pixels smaller than input).
