@@ -21,6 +21,7 @@ class DatasetSettings:
         max_frame_distance: Maximum temporal distance for frame pairs
         max_samples: Maximum samples per epoch (-1 for full dataset)
         num_workers: Number of worker processes for data loading (0 = main process only)
+        seed: Random seed for data shuffling and train/val split
     """
 
     batch_size: int = 4
@@ -28,6 +29,7 @@ class DatasetSettings:
     max_frame_distance: int = 5
     max_samples: int = -1
     num_workers: int = 4
+    seed: int = 42
 
     def __post_init__(self):
         if self.batch_size < 1:

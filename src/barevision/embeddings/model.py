@@ -31,6 +31,7 @@ import jax.numpy as jnp
 from flax import nnx
 
 from barevision.utils.grid import WindowGrid
+from barevision.embeddings.loss import TEMPERATURE
 
 
 class SimpleEmbeddingModel(nnx.Module):
@@ -197,12 +198,16 @@ class SimpleEmbeddingModel(nnx.Module):
         # Compute self-attention logits (no masking, no penalty - embeddings are normalized)
         self_logits = flat_emb1 @ flat_emb1.T  # (256, 256)
 
-        # Compute self-attention weights
-        self_attn_weights = jax.nn.softmax(self_logits, axis=-1)  # (256, 256)
+        # Compute self-attention weights with temperature scaling
+        self_attn_weights = jax.nn.softmax(
+            self_logits / TEMPERATURE, axis=-1
+        )  # (256, 256)
 
         # Compute cross-attention logits
         cross_logits = flat_emb1 @ flat_emb2.T  # (256, 256)
-        cross_attn_weights = jax.nn.softmax(cross_logits, axis=-1)  # (256, 256)
+        cross_attn_weights = jax.nn.softmax(
+            cross_logits / TEMPERATURE, axis=-1
+        )  # (256, 256)
 
         # Extract attention maps for selected pixels
         self_attn_maps = self_attn_weights[pixel_indices].reshape(

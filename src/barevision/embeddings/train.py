@@ -48,7 +48,15 @@ def run_epoch(
     model_settings,
     logging_settings,
 ):
-    loader = create_dataloader(dataset_settings, split="train")
+    # Compute deterministic seed for this epoch
+    epoch_seed = dataset_settings.seed + epoch
+
+    loader = create_dataloader(
+        dataset_settings,
+        split="train",
+        shuffle=True,
+        random_seed=epoch_seed,
+    )
     epoch_start = time.time()
 
     for step, (img1, img2, metadata) in enumerate(loader):
