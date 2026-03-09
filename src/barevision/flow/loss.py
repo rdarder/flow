@@ -17,7 +17,7 @@ import jax.numpy as jnp
 from barevision.utils.grid import WindowGrid
 
 # Temperature for softmax scaling. Low temperature sharpens attention distributions.
-TEMPERATURE = 0.15
+TEMPERATURE = 0.08
 
 
 def _compute_entropy(probabilities: jnp.ndarray) -> jnp.ndarray:

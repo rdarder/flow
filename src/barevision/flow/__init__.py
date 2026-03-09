@@ -4,7 +4,11 @@ This package contains models and training utilities for learning
 embedding representations optimized for attention-based matching.
 """
 
-from barevision.flow.model import HierarchicalEmbeddingModel, AttentionMaps, count_parameters
+from barevision.flow.model import (
+    HierarchicalEmbeddingModel,
+    AttentionMaps,
+    count_parameters,
+)
 from barevision.flow.loss import compute_embedding_losses
 
 __version__ = "0.1.0"

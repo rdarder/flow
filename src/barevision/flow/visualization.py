@@ -362,7 +362,7 @@ def log_visualizations(
     num_levels: int = 3,
 ):
     """Generate and log visualization figures for hierarchical model.
-    
+
     This function orchestrates the visualization pipeline:
     1. Compute pyramid and get coarsest level dimensions
     2. Downscale original images to match coarse level size
@@ -370,11 +370,11 @@ def log_visualizations(
     4. Call model.compute_attention_maps() to get attention data
     5. Generate frame/grid and attention maps figures
     6. Log to TensorBoard
-    
+
     The key insight: we downscale the original RGB to match the coarse
     embedding dimensions, so attention maps can be overlaid directly
     without complex coordinate mapping.
-    
+
     Args:
         logger: JaxLogger instance for TensorBoard logging
         model: Hierarchical embedding model
@@ -386,32 +386,30 @@ def log_visualizations(
         num_levels: Number of pyramid levels
     """
     import gc
-    
+
     # Get pyramid to determine coarse level dimensions
     pyramid1 = model(img1)
     pyramid2 = model(img2)
     coarse_emb = pyramid1[-1]  # Coarsest level
     B, H_emb, W_emb, _ = coarse_emb.shape
-    
+
     # Calculate number of windows at coarse level
     num_windows_h = H_emb // window_size
     num_windows_w = W_emb // window_size
-    
+
     # Select random window at coarse level
     rng = np.random.default_rng(seed=step)
     window_row = int(rng.integers(0, num_windows_h))
     window_col = int(rng.integers(0, num_windows_w))
     window_indices = (window_row, window_col)
-    
+
     # Downscale original images to match coarse embedding dimensions
     # This allows direct overlay of attention maps without coordinate mapping
     img1_downscaled = jax.image.resize(
         img1[0], (H_emb, W_emb, 3), method="bilinear"
     )  # (H_emb, W_emb, 3)
-    img2_downscaled = jax.image.resize(
-        img2[0], (H_emb, W_emb, 3), method="bilinear"
-    )
-    
+    img2_downscaled = jax.image.resize(img2[0], (H_emb, W_emb, 3), method="bilinear")
+
     # Call model to get attention maps at coarse level
     attention_data = model.compute_attention_maps(
         img1=img1,  # Full resolution for coordinate mapping
@@ -420,24 +418,34 @@ def log_visualizations(
         window_size=window_size,
         level_index=-1,  # Coarsest level
     )
-    
+
     # Convert JAX arrays to numpy for visualization
     img1_np = np.array(img1_downscaled)  # (H_emb, W_emb, 3) - downscaled
     img2_np = np.array(img2_downscaled)  # (H_emb, W_emb, 3) - downscaled
-    
+
     # Extract window crop from downscaled images (direct 1:1 mapping)
     emb_h_start = window_row * window_size
     emb_w_start = window_col * window_size
-    
-    window_crop1_np = np.array(img1_np[emb_h_start:emb_h_start + window_size,
-                                        emb_w_start:emb_w_start + window_size, :])
-    window_crop2_np = np.array(img2_np[emb_h_start:emb_h_start + window_size,
-                                        emb_w_start:emb_w_start + window_size, :])
-    
+
+    window_crop1_np = np.array(
+        img1_np[
+            emb_h_start : emb_h_start + window_size,
+            emb_w_start : emb_w_start + window_size,
+            :,
+        ]
+    )
+    window_crop2_np = np.array(
+        img2_np[
+            emb_h_start : emb_h_start + window_size,
+            emb_w_start : emb_w_start + window_size,
+            :,
+        ]
+    )
+
     self_attn_np = np.array(attention_data.self_attention)  # (N, 16, 16)
     cross_attn_np = np.array(attention_data.cross_attention)  # (N, 16, 16)
     pixel_positions_np = np.array(attention_data.pixel_positions)  # (N, 2)
-    
+
     # 1. Frame with grid (showing downscaled frames with coarse-level grid)
     fig_frame = create_frame_with_grid_figure(
         img1_np, img2_np, metadata, window_size, highlighted_window=window_indices

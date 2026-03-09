@@ -17,18 +17,19 @@ class TestHierarchicalEmbeddingModel:
         )
         x = jnp.ones((1, 391, 391, 3))  # Input size for 3 levels, 48×48 coarse
         pyramid = model(x)
-        
+
         assert isinstance(pyramid, list), "Output should be a list"
         assert len(pyramid) == 3, f"Expected 3 levels, got {len(pyramid)}"
-        
+
         # Each level should have 16 channels
         for i, level in enumerate(pyramid):
             assert level.shape[-1] == 16, f"Level {i} should have 16 channels"
-        
+
         # Spatial dimensions should decrease at each level
         for i in range(len(pyramid) - 1):
-            assert pyramid[i].shape[1] > pyramid[i+1].shape[1], \
-                f"Level {i} should be larger than level {i+1}"
+            assert (
+                pyramid[i].shape[1] > pyramid[i + 1].shape[1]
+            ), f"Level {i} should be larger than level {i+1}"
 
     def test_single_level(self):
         """Test model with single level."""
@@ -37,7 +38,7 @@ class TestHierarchicalEmbeddingModel:
         )
         x = jnp.ones((1, 50, 50, 3))
         pyramid = model(x)
-        
+
         assert len(pyramid) == 1
         assert pyramid[0].shape[-1] == 16
 
@@ -48,7 +49,7 @@ class TestHierarchicalEmbeddingModel:
         )
         x = jnp.ones((4, 391, 391, 3))
         pyramid = model(x)
-        
+
         assert len(pyramid) == 3
         for level in pyramid:
             assert level.shape[0] == 4, "Batch size should be preserved"
@@ -59,7 +60,7 @@ class TestHierarchicalEmbeddingModel:
             embed_dim=16, in_channels=3, num_levels=3, rngs=nnx.Rngs(jr.PRNGKey(0))
         )
         param_count = count_parameters(model)
-        
+
         # Each level: 3×3 conv + 1×1 conv
         # Level 0: 3→16 channels: 3*16*9 + 16 + 16*16 + 16 = 432 + 16 + 256 + 16 = 720
         # Level 1,2: 16→16 channels: 16*16*9 + 16 + 16*16 + 16 = 2304 + 16 + 256 + 16 = 2592 each
@@ -84,11 +85,11 @@ class TestHierarchicalEmbeddingModel:
 
         # Check that model has gradients (non-zero)
         grad_state = nnx.state(grads)
-        
-        # Check first level has gradients
-        assert "level_0_spatial" in grad_state
-        assert "level_0_proj" in grad_state
-        
-        # Verify gradients exist
-        level0_spatial = grad_state["level_0_spatial"]["kernel"]
+
+        # Check first level has gradients (now stored in lists)
+        assert "spatial_convs" in grad_state
+        assert "pointwise_convs" in grad_state
+
+        # Verify gradients exist for level 0
+        level0_spatial = grad_state["spatial_convs"][0]["kernel"]
         assert level0_spatial is not None

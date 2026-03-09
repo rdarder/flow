@@ -11,7 +11,7 @@ from typing import Tuple
 @dataclass
 class DatasetSettings:
     """Dataset configuration.
-    
+
     Attributes:
         batch_size: Training batch size
         coarse_grid_size: Target coarse-level grid dimension (default 3 for 3×3 grid)
@@ -22,7 +22,7 @@ class DatasetSettings:
         num_workers: Number of worker processes for data loading (0 = main process only)
         seed: Random seed for data shuffling and train/val split
     """
-    
+
     batch_size: int = 4
     coarse_grid_size: int = 3  # 3×3 grid of windows at coarsest level
     window_size: int = 16
@@ -31,32 +31,34 @@ class DatasetSettings:
     max_samples: int = -1
     num_workers: int = 4
     seed: int = 42
-    
+
     @property
     def img_size(self) -> Tuple[int, int]:
         """Calculate required input image size based on pyramid configuration.
-        
+
         Returns:
             (height, width) tuple for input images
         """
         from barevision.flow.model import calculate_required_input_size
-        
+
         # Target coarse dimension: grid_size × window_size
         target_coarse_dim = self.coarse_grid_size * self.window_size
-        
+
         # Calculate required input size
         input_size = calculate_required_input_size(
             target_coarse_dim=target_coarse_dim,
             num_levels=self.num_levels,
         )
-        
+
         return (input_size, input_size)
-    
+
     def __post_init__(self):
         if self.batch_size < 1:
             raise ValueError(f"batch_size must be >= 1, got {self.batch_size}")
         if self.coarse_grid_size < 1:
-            raise ValueError(f"coarse_grid_size must be >= 1, got {self.coarse_grid_size}")
+            raise ValueError(
+                f"coarse_grid_size must be >= 1, got {self.coarse_grid_size}"
+            )
         if self.window_size < 1:
             raise ValueError(f"window_size must be >= 1, got {self.window_size}")
         if self.num_levels < 1:
@@ -107,17 +109,17 @@ class LoggingSettings:
 @dataclass
 class ModelSettings:
     """Model architecture configuration.
-    
+
     Attributes:
         window_size: Attention window size in pixels (must divide img_size dimensions)
         num_levels: Number of pyramid levels (default 3)
         embed_dim: Output embedding dimension per level (default 16)
     """
-    
+
     window_size: int = 16
     num_levels: int = 3
     embed_dim: int = 16
-    
+
     def __post_init__(self):
         if self.window_size < 1:
             raise ValueError(f"window_size must be >= 1, got {self.window_size}")

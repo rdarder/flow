@@ -25,7 +25,7 @@ def train_step(
     model, optimizer, img1, img2, logging: bool = False, window_size: int = 16
 ):
     """Execute single training step with gradient update.
-    
+
     Uses coarsest pyramid level for loss computation (Phase 1).
     """
 
@@ -33,14 +33,12 @@ def train_step(
         # Get pyramid from both frames
         pyramid1 = model(img1)
         pyramid2 = model(img2)
-        
+
         # Use coarsest level only (last in list)
         coarse1 = pyramid1[-1]
         coarse2 = pyramid2[-1]
-        
-        return compute_embedding_losses(
-            coarse1, coarse2, window_size=window_size
-        )
+
+        return compute_embedding_losses(coarse1, coarse2, window_size=window_size)
 
     (loss, aux), grads = nnx.value_and_grad(loss_fn, has_aux=True)(model)
 

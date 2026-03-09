@@ -111,11 +111,7 @@ def log_gradient_statistics(
 ):
     """Log gradient statistics from optimizer state with per-layer breakdown.
 
-    Useful for detecting:
-    - Vanishing gradients (all gradients → 0)
-    - Exploding gradients (gradients too large)
-    - Dead parameters (gradients always zero)
-    - Layer-specific issues (some layers learning, others not)
+    Recursively handles nested structures including nnx.List.
 
     Args:
         logger: JaxLogger instance
@@ -125,6 +121,7 @@ def log_gradient_statistics(
         prefix: Tag prefix
     """
     from flax import nnx
+    from flax.nnx import State
 
     try:
         # Get optimizer state which contains gradients
@@ -134,52 +131,32 @@ def log_gradient_statistics(
         grad_stats = {}
         param_stats = {}
 
-        # Iterate through model parameters to find corresponding gradients
-        for module_path, module_state in model_state.items():
-            module_name = str(module_path).replace("/", ".")
+        def process_state_recursive(state_obj, path=""):
+            """Recursively process state, handling nnx.List and nested structures."""
+            if not isinstance(state_obj, State):
+                return
 
-            for param_name, param_value in module_state.items():
-                param_array = np.array(param_value)
-                param_key = f"{module_name}.{param_name}"
+            for key, value in state_obj.items():
+                # Build full path for this parameter
+                current_path = f"{path}.{key}" if path else str(key)
 
-                # Log parameter statistics
-                param_stats[param_key] = {
-                    "mean": float(np.mean(param_array)),
-                    "std": float(np.std(param_array)),
-                    "abs_max": float(np.max(np.abs(param_array))),
-                }
+                if isinstance(value, State):
+                    # Recurse into nested state (e.g., nnx.List items or nested modules)
+                    process_state_recursive(value, current_path)
+                elif hasattr(value, "size"):
+                    # This is an actual parameter array
+                    param_array = np.array(value)
+                    param_key = current_path
 
-                # Try to find corresponding gradient in optimizer state
-                try:
-                    # Gradient might be in opt_state[module_path][param_name] or nested
-                    if module_path in opt_state:
-                        opt_module = opt_state[module_path]
-                        if param_name in opt_module:
-                            grad_value = opt_module[param_name]
-                            if hasattr(grad_value, "value"):
-                                grad_array = np.array(grad_value.value)
-                            else:
-                                grad_array = np.array(grad_value)
+                    # Log parameter statistics
+                    param_stats[param_key] = {
+                        "mean": float(np.mean(param_array)),
+                        "std": float(np.std(param_array)),
+                        "abs_max": float(np.max(np.abs(param_array))),
+                    }
 
-                            if np.issubdtype(grad_array.dtype, np.number):
-                                grad_norm = float(np.linalg.norm(grad_array))
-                                grad_mean = float(np.mean(np.abs(grad_array)))
-
-                                grad_stats[param_key] = {
-                                    "norm": grad_norm,
-                                    "mean_abs": grad_mean,
-                                    "ratio": grad_norm
-                                    / (param_stats[param_key]["abs_max"] + 1e-10),
-                                }
-                except (KeyError, AttributeError, TypeError):
-                    # Gradient not found or not accessible
-                    pass
-
-        # Log per-layer gradient statistics
-        for param_key, stats in grad_stats.items():
-            logger.log_scalar(f"{prefix}/norm/{param_key}", stats["norm"], step)
-            logger.log_scalar(f"{prefix}/mean_abs/{param_key}", stats["mean_abs"], step)
-            logger.log_scalar(f"{prefix}/param_ratio/{param_key}", stats["ratio"], step)
+        # Process all parameters recursively
+        process_state_recursive(model_state)
 
         # Log parameter statistics
         for param_key, stats in param_stats.items():
@@ -187,13 +164,14 @@ def log_gradient_statistics(
             logger.log_scalar(f"{prefix}/param_std/{param_key}", stats["std"], step)
 
         # Log overall summary
-        if grad_stats:
-            all_norms = [s["norm"] for s in grad_stats.values()]
+        if param_stats:
+            all_abs_max = [s["abs_max"] for s in param_stats.values()]
             logger.log_scalar(
-                f"{prefix}/total_norm", float(np.linalg.norm(all_norms)), step
+                f"{prefix}/max_param_abs", float(np.max(all_abs_max)), step
             )
-            logger.log_scalar(f"{prefix}/max_norm", float(np.max(all_norms)), step)
-            logger.log_scalar(f"{prefix}/min_norm", float(np.min(all_norms)), step)
+            logger.log_scalar(
+                f"{prefix}/min_param_abs", float(np.min(all_abs_max)), step
+            )
 
     except Exception as e:
         import traceback
@@ -211,11 +189,11 @@ def log_metrics(logger: JaxLogger, loss, aux, step: int):
 
 def log_diagnostics(logger: JaxLogger, model, img1, step: int, window_size: int = 16):
     """Log gradient statistics, embeddings, and attention statistics.
-    
+
     For hierarchical models, uses coarsest pyramid level.
     """
     log_gradient_statistics(logger, None, model, step)
-    
+
     # Get pyramid and use coarsest level
     pyramid = model(img1)
     embeddings = pyramid[-1]  # Coarsest level
@@ -276,7 +254,9 @@ def print_header(settings):
     print("=" * 60)
     print()
     print(f"Pyramid levels: {settings.model.num_levels}")
-    print(f"Coarse grid: {settings.dataset.coarse_grid_size}×{settings.dataset.coarse_grid_size}")
+    print(
+        f"Coarse grid: {settings.dataset.coarse_grid_size}×{settings.dataset.coarse_grid_size}"
+    )
     print(f"Window size: {settings.model.window_size}×{settings.model.window_size}")
     print(f"Embedding dim: {settings.model.embed_dim}")
     print(f"Input size: {settings.dataset.img_size}")
