@@ -9,6 +9,9 @@ from barevision.flow.loss import (
     self_attention_entropy_loss_core,
     cross_attention_entropy_loss_core,
     compute_embedding_losses,
+    compute_hierarchical_embedding_losses,
+    crop_to_grid_aligned,
+    TEMPERATURE,
 )
 
 
@@ -201,3 +204,197 @@ class TestLossIntegration:
             loss, aux = compute_embedding_losses(emb1, emb2)
             assert jnp.isscalar(loss) or loss.shape == ()
             assert jnp.isfinite(loss)
+
+
+class TestCropToGridAligned:
+    """Tests for grid alignment cropping utility."""
+
+    def test_no_crop_needed(self):
+        """Test that aligned dimensions are not cropped."""
+        feature_map = jr.normal(jr.PRNGKey(0), (1, 64, 64, 16))
+        cropped = crop_to_grid_aligned(feature_map, window_size=16)
+
+        assert cropped.shape == (1, 64, 64, 16)
+
+    def test_crop_removes_extra_pixels(self):
+        """Test that extra pixels are cropped."""
+        feature_map = jr.normal(jr.PRNGKey(0), (1, 67, 67, 16))
+        cropped = crop_to_grid_aligned(feature_map, window_size=16)
+
+        assert cropped.shape == (1, 64, 64, 16)
+
+    def test_crop_preserves_batch(self):
+        """Test that batch dimension is preserved."""
+        feature_map = jr.normal(jr.PRNGKey(0), (4, 33, 33, 16))
+        cropped = crop_to_grid_aligned(feature_map, window_size=16)
+
+        assert cropped.shape == (4, 32, 32, 16)
+
+    def test_different_window_sizes(self):
+        """Test with different window sizes."""
+        for ws in [8, 16, 32]:
+            feature_map = jr.normal(jr.PRNGKey(0), (1, 50, 50, 16))
+            cropped = crop_to_grid_aligned(feature_map, window_size=ws)
+            assert cropped.shape[1] % ws == 0
+            assert cropped.shape[2] % ws == 0
+
+
+class TestHierarchicalEmbeddingLosses:
+    """Tests for multi-level hierarchical loss computation (Phase 2)."""
+
+    def test_single_level_pyramid(self):
+        """Test with single-level pyramid."""
+        pyramid1 = [jr.normal(jr.PRNGKey(0), (1, 64, 64, 16))]
+        pyramid2 = [jr.normal(jr.PRNGKey(1), (1, 64, 64, 16))]
+
+        loss, aux = compute_hierarchical_embedding_losses(pyramid1, pyramid2)
+
+        assert jnp.isfinite(loss)
+        assert jnp.isfinite(aux["self_loss"])
+        assert jnp.isfinite(aux["cross_loss"])
+        assert len(aux["level_losses"]) == 1
+
+    def test_three_level_pyramid(self):
+        """Test with three-level pyramid (Phase 2 default)."""
+        pyramid1 = [
+            jr.normal(jr.PRNGKey(0), (1, 64, 64, 16)),  # Level 0: 4×4 grid
+            jr.normal(jr.PRNGKey(1), (1, 32, 32, 16)),  # Level 1: 2×2 grid
+            jr.normal(jr.PRNGKey(2), (1, 16, 16, 16)),  # Level 2: 1×1 grid
+        ]
+        pyramid2 = [
+            jr.normal(jr.PRNGKey(3), (1, 64, 64, 16)),
+            jr.normal(jr.PRNGKey(4), (1, 32, 32, 16)),
+            jr.normal(jr.PRNGKey(5), (1, 16, 16, 16)),
+        ]
+
+        loss, aux = compute_hierarchical_embedding_losses(pyramid1, pyramid2)
+
+        assert jnp.isfinite(loss)
+        assert len(aux["level_losses"]) == 3
+        # All level losses should be finite
+        for level_loss in aux["level_losses"]:
+            assert jnp.isfinite(level_loss)
+
+    def test_crops_misaligned_inputs(self):
+        """Test that misaligned inputs are cropped correctly."""
+        pyramid1 = [
+            jr.normal(jr.PRNGKey(0), (1, 67, 67, 16)),  # Needs crop to 64×64
+            jr.normal(jr.PRNGKey(1), (1, 33, 33, 16)),  # Needs crop to 32×32
+            jr.normal(jr.PRNGKey(2), (1, 16, 16, 16)),  # No crop needed
+        ]
+        pyramid2 = [
+            jr.normal(jr.PRNGKey(3), (1, 67, 67, 16)),
+            jr.normal(jr.PRNGKey(4), (1, 33, 33, 16)),
+            jr.normal(jr.PRNGKey(5), (1, 16, 16, 16)),
+        ]
+
+        loss, aux = compute_hierarchical_embedding_losses(pyramid1, pyramid2)
+
+        assert jnp.isfinite(loss)
+        assert len(aux["level_losses"]) == 3
+
+    def test_gradient_flow_all_levels(self):
+        """Test that gradients flow through all pyramid levels."""
+
+        def loss_fn(p1, p2):
+            loss, _ = compute_hierarchical_embedding_losses(p1, p2)
+            return loss
+
+        pyramid1 = [
+            jr.normal(jr.PRNGKey(0), (1, 64, 64, 16)),
+            jr.normal(jr.PRNGKey(1), (1, 32, 32, 16)),
+            jr.normal(jr.PRNGKey(2), (1, 16, 16, 16)),
+        ]
+        pyramid2 = [
+            jr.normal(jr.PRNGKey(3), (1, 64, 64, 16)),
+            jr.normal(jr.PRNGKey(4), (1, 32, 32, 16)),
+            jr.normal(jr.PRNGKey(5), (1, 16, 16, 16)),
+        ]
+
+        grads1, grads2 = jax.grad(loss_fn, argnums=(0, 1))(pyramid1, pyramid2)
+
+        # All levels should have gradients
+        assert len(grads1) == 3
+        assert len(grads2) == 3
+
+        # All gradients should be finite
+        for g1, g2 in zip(grads1, grads2):
+            assert jnp.isfinite(g1).all()
+            assert jnp.isfinite(g2).all()
+
+    def test_per_level_averaging(self):
+        """Test that per-level averaging prevents fine levels from dominating."""
+        # Create pyramids where Level 0 has many more windows than Level 2
+        pyramid1 = [
+            jr.normal(jr.PRNGKey(0), (1, 64, 64, 16)),  # 16 windows
+            jr.normal(jr.PRNGKey(1), (1, 32, 32, 16)),  # 4 windows
+            jr.normal(jr.PRNGKey(2), (1, 16, 16, 16)),  # 1 window
+        ]
+        pyramid2 = [
+            jr.normal(jr.PRNGKey(3), (1, 64, 64, 16)),
+            jr.normal(jr.PRNGKey(4), (1, 32, 32, 16)),
+            jr.normal(jr.PRNGKey(5), (1, 16, 16, 16)),
+        ]
+
+        loss, aux = compute_hierarchical_embedding_losses(pyramid1, pyramid2)
+
+        # Each level should contribute to the total loss
+        level_losses = aux["level_losses"]
+        assert len(level_losses) == 3
+
+        # All level losses should be positive (entropy is non-negative)
+        for level_loss in level_losses:
+            assert level_loss >= 0
+
+        # Total loss should equal sum of level losses
+        total_from_sum = sum(level_losses)
+        assert jnp.allclose(loss, total_from_sum)
+
+    def test_level_mismatch_fails(self):
+        """Test that mismatched pyramid levels raise ValueError."""
+        pyramid1 = [
+            jr.normal(jr.PRNGKey(0), (1, 64, 64, 16)),
+            jr.normal(jr.PRNGKey(1), (1, 32, 32, 16)),
+        ]
+        pyramid2 = [
+            jr.normal(jr.PRNGKey(3), (1, 64, 64, 16)),
+        ]
+
+        with pytest.raises(ValueError, match="Pyramid level mismatch"):
+            compute_hierarchical_embedding_losses(pyramid1, pyramid2)
+
+    def test_temperature_constant(self):
+        """Verify temperature is set to 0.05 for Phase 2."""
+        assert TEMPERATURE == 0.05
+
+
+class TestHierarchicalLossIntegration:
+    """Integration tests for hierarchical loss with model forward pass."""
+
+    def test_full_training_step_with_pyramid(self):
+        """Test a complete training step using hierarchical loss."""
+        from barevision.flow.model import HierarchicalEmbeddingModel
+        from flax import nnx
+
+        model = HierarchicalEmbeddingModel(
+            embed_dim=16, in_channels=3, num_levels=3, rngs=nnx.Rngs(jr.PRNGKey(0))
+        )
+
+        # Input size for 3 levels targeting 16×16 at coarsest
+        img1 = jr.normal(jr.PRNGKey(1), (1, 135, 135, 3))
+        img2 = jr.normal(jr.PRNGKey(2), (1, 135, 135, 3))
+
+        def train_loss(m, x1, x2):
+            pyramid1 = m(x1)
+            pyramid2 = m(x2)
+            loss, _ = compute_hierarchical_embedding_losses(pyramid1, pyramid2)
+            return loss
+
+        loss = train_loss(model, img1, img2)
+        assert jnp.isfinite(loss)
+
+        # Test gradient flow
+        grad = jax.grad(train_loss, argnums=(0, 1, 2))(model, img1, img2)
+        assert grad[0] is not None  # Model has gradients
+        assert jnp.isfinite(grad[1]).all()  # img1 gradients
+        assert jnp.isfinite(grad[2]).all()  # img2 gradients

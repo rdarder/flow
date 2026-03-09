@@ -4,22 +4,28 @@ This package trains hierarchical embedding representations optimized for attenti
 
 ## Overview
 
-We use a coarse-to-fine pyramid architecture to learn embeddings at multiple scales. This Phase 1 implementation focuses on training the coarsest level only, establishing the foundation for future phases that will add flow-based window shifting at finer levels.
+We use a coarse-to-fine pyramid architecture to learn embeddings at multiple scales. **Phase 2 implements Deep Supervision** by applying entropy loss at ALL pyramid levels simultaneously.
 
-**Key insight**: By training embeddings at a coarse spatial scale (e.g., 3×3 grid of 16×16 windows), we learn representations that capture larger spatial context, which will later enable tracking patches across large displacements when combined with flow priors.
+**Key insight**: By training embeddings at multiple spatial scales with deep supervision, we ensure gradients flow equally into macro-structures (coarse levels) and micro-structures (fine levels), forcing all convolutional layers to learn trackable features immediately.
+
+**Phase 2 approach**:
+- Applies entropy loss at every pyramid level (not just coarsest)
+- Restricts training to adjacent frames (max_frame_distance=2) so physical motion stays within 16×16 windows
+- Crops each level to grid-aligned dimensions for clean 16×16 window splitting
+- Averages loss per-level first, then sums across levels (prevents fine levels from dominating)
 
 ## Architecture
 
-### Pyramid Structure
+### Pyramid Structure (Phase 2 Default)
 
 ```
-Input: (B, 391, 391, 3) RGB
+Input: (B, 135, 135, 3) RGB
   ↓
-Level 0: Conv(3×3, stride=2) → 1×1 → 16 channels → (B, 195, 195, 16)
+Level 0: Conv(3×3, stride=2) → 1×1 → 16 channels → (B, 67, 67, 16) → crop to 64×64 → 4×4 grid
   ↓
-Level 1: Conv(3×3, stride=2) → 1×1 → 16 channels → (B, 97, 97, 16)
+Level 1: Conv(3×3, stride=2) → 1×1 → 16 channels → (B, 33, 33, 16) → crop to 32×32 → 2×2 grid
   ↓
-Level 2: Conv(3×3, stride=2) → 1×1 → 16 channels → (B, 48, 48, 16)
+Level 2: Conv(3×3, stride=2) → 1×1 → 16 channels → (B, 16, 16, 16) → 1×1 grid
 ```
 
 Each level:
@@ -27,12 +33,16 @@ Each level:
 - Stride=2 convolution for 2× spatial downsampling
 - 1×1 convolution to maintain 16 channels
 - L2 normalization to unit norm
+- **Phase 2**: Crops to grid-aligned dimensions (divisible by 16) for clean window splitting
 
 ### Output
 
 The model returns a list of feature maps: `[Level_0, Level_1, Level_2]`
 
-For Phase 1 training, we use only the coarsest level (Level 2: 48×48 spatial, arranged as 3×3 grid of 16×16 windows).
+**Phase 2 Training**: All levels are used for loss computation with deep supervision.
+- Level 0: 64×64 spatial → 4×4 grid of 16×16 windows (16 windows)
+- Level 1: 32×32 spatial → 2×2 grid of 16×16 windows (4 windows)
+- Level 2: 16×16 spatial → 1×1 grid of 16×16 windows (1 window)
 
 ## Input Dimension Calculation
 
@@ -43,38 +53,43 @@ Because we use VALID padding with stride=2, spatial dimensions shrink at each le
 input_size = (output_size - 1) * stride + kernel_size
 ```
 
-For 3 levels targeting 48×48 at coarsest:
-- Level 2 output: 48×48
-- Level 1 output → Level 2 input: (48-1)*2 + 3 = 97
-- Level 0 output → Level 1 input: (97-1)*2 + 3 = 195
-- Raw input → Level 0 input: (195-1)*2 + 3 = **391**
+For 3 levels targeting 16×16 at coarsest (Phase 2 default):
+- Level 2 output: 16×16
+- Level 1 output → Level 2 input: (16-1)*2 + 3 = 33
+- Level 0 output → Level 1 input: (33-1)*2 + 3 = 67
+- Raw input → Level 0 input: (67-1)*2 + 3 = **135**
 
 The `DatasetSettings.img_size` property automatically calculates this based on `num_levels`, `coarse_grid_size`, and `window_size`.
 
 ## Loss Functions
 
-Training uses the coarsest pyramid level only (Phase 1). The loss functions remain unchanged from the original design:
+**Phase 2: Deep Supervision** - Loss is applied at ALL pyramid levels simultaneously.
 
-### Self-Attention Entropy (Coarsest Level)
+### Grid Alignment (Phase 2)
 
-For the 3×3 grid of 16×16 windows at the coarsest level:
-- Split each 48×48 feature map into nine 16×16 windows
-- Compute self-attention within each window
-- Minimize entropy to encourage unique embeddings
+Each level is cropped to dimensions divisible by window_size (16) before loss computation:
+- Level 0: 67×67 → crop to 64×64 → 4×4 grid of windows
+- Level 1: 33×33 → crop to 32×32 → 2×2 grid of windows
+- Level 2: 16×16 → no crop → 1×1 grid of windows
 
-### Cross-Attention Entropy (Coarsest Level)
+### Per-Level Loss Computation
 
-For corresponding windows between frame t and t+k:
-- Compute cross-frame attention between matching windows
-- Minimize entropy to encourage sharp matches
+For each pyramid level:
+1. Crop feature maps to grid-aligned dimensions
+2. Split into 16×16 windows
+3. Compute self-attention entropy within each window
+4. Compute cross-attention entropy between corresponding windows
 
-### Combined Loss
+### Combined Loss (Phase 2)
 
 ```
-loss = α * self_entropy + β * cross_entropy
+loss_L[i] = α * self_entropy_L[i] + β * cross_entropy_L[i]  # per level
+Total_Loss = loss_L0 + loss_L1 + loss_L2  # sum across levels
 ```
 
 Default weights: α=1.0, β=0.1
+
+**Why sum per-level losses?** If we flattened all windows from all levels into a single batch, Level 0 (16 windows) would statistically drown out Level 2 (1 window). By averaging within each level first, then summing, all levels contribute equally to the gradient.
 
 ## Training Stabilizers
 
@@ -88,12 +103,14 @@ Attention logits are divided by temperature τ=0.05 before softmax. Low temperat
 
 ## Training Data
 
-Video frame pairs from single continuous takes (no cuts). The dataset automatically resizes frames to the exact calculated input dimension (391×391 for default 3-level pyramid).
+Video frame pairs from single continuous takes (no cuts). **Phase 2 restricts to adjacent frames** (max_frame_distance=2) to ensure physical pixel displacement stays within 16×16 attention windows at the finest resolutions.
+
+The dataset automatically resizes frames to the exact calculated input dimension (135×135 for default 3-level pyramid with 1×1 coarse grid).
 
 ## Configuration
 
 ```bash
-# Default training (3 levels, 3×3 coarse grid, 16×16 windows)
+# Phase 2 default (3 levels, 1×1 coarse grid, 16×16 windows, adjacent frames)
 python -m barevision.flow.train
 
 # Custom configuration
@@ -101,7 +118,8 @@ python -m barevision.flow.train \
   --model.num-levels 3 \
   --model.embed-dim 16 \
   --model.window-size 16 \
-  --dataset.coarse-grid-size 3 \
+  --dataset.coarse-grid-size 1 \
+  --dataset.max-frame-distance 2 \
   --dataset.batch-size 4
 
 # Smoke test
@@ -112,23 +130,29 @@ Key settings in `settings.py`:
 - `ModelSettings.num_levels`: Number of pyramid levels (default 3)
 - `ModelSettings.embed_dim`: Output channels per level (default 16)
 - `ModelSettings.window_size`: Attention window size (default 16)
-- `DatasetSettings.coarse_grid_size`: Target coarse grid dimension (default 3)
+- `DatasetSettings.coarse_grid_size`: Target coarse grid dimension (default 1 for 1×1 grid)
+- `DatasetSettings.max_frame_distance`: Max temporal distance (default 2 for Phase 2)
 - `DatasetSettings.img_size`: **Calculated automatically** based on above parameters
 
 ## Visualization
 
-Visualizations are adapted for the pyramid:
-1. Original RGB images are downscaled to match coarse embedding dimensions (48×48)
-2. Attention maps from coarsest level are overlaid directly on downscaled images
-3. No complex coordinate mapping needed - 1:1 correspondence between coarse pixels and downscaled RGB
+**Phase 2**: Visualizations are generated for ALL pyramid levels independently.
+
+For each level:
+1. Original RGB images are downscaled to match that level's embedding dimensions
+2. A random 16×16 window is selected at that level's resolution
+3. Attention maps are overlaid directly on downscaled images
+4. Figures are logged with level-specific tags: `Level0/`, `Level1/`, `Level2/`
+
+This allows visual inspection of how each level tracks image structure at its native resolution.
 
 ## Future Phases
 
-### Phase 2: Multi-Level Training
-Train intermediate levels with flow-based window shifting to cancel ego-motion.
+### Phase 2: Multi-Level Deep Supervision ✓ COMPLETED
+Train all pyramid levels with deep supervision using adjacent frames.
 
-### Phase 3: Fine-Level Refinement
-Add finest pyramid level for pixel-accurate flow estimation.
+### Phase 3: Flow-Based Window Shifting
+Add flow priors to shift attention windows at finer levels, canceling ego-motion to track patches across larger displacements.
 
 ### Phase 4: Full Integration
 Integrate with flow estimation pipeline for end-to-end optical flow.

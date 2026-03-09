@@ -9,15 +9,21 @@ Simple entropy minimization for both self and cross attention:
 Design:
 - Core functions: Pure math on (B, H, W, D) batches - no splitting, no vmap
 - Wrapper functions: Handle window splitting, dimension rearranging, calling core, aggregating results
+
+Phase 2 (Deep Supervision):
+- Applies entropy loss at ALL pyramid levels simultaneously
+- Crops each level to grid-aligned dimensions (divisible by window_size)
+- Averages loss per-level first, then sums across levels to prevent fine levels from dominating
 """
 
 import jax
 import jax.numpy as jnp
+from typing import List, Tuple
 
 from barevision.utils.grid import WindowGrid
 
 # Temperature for softmax scaling. Low temperature sharpens attention distributions.
-TEMPERATURE = 0.08
+TEMPERATURE = 0.15
 
 
 def _compute_entropy(probabilities: jnp.ndarray) -> jnp.ndarray:
@@ -174,3 +180,135 @@ def compute_embedding_losses(
     )
 
     return combined, aux
+
+
+def crop_to_grid_aligned(
+    feature_map: jnp.ndarray, window_size: int = 16
+) -> jnp.ndarray:
+    """Crop feature map to dimensions divisible by window_size.
+
+    Phase 2: Ensures each pyramid level can be cleanly split into 16x16 windows.
+    Uses top-left crop to maintain spatial alignment between frame pairs.
+
+    Args:
+        feature_map: (B, H, W, D) feature map
+        window_size: Window size for attention (default 16)
+
+    Returns:
+        Cropped feature map with H and W divisible by window_size
+    """
+    B, H, W, D = feature_map.shape
+
+    # Calculate cropped dimensions
+    crop_h = (H // window_size) * window_size
+    crop_w = (W // window_size) * window_size
+
+    # Top-left crop (same crop applied to both frames for alignment)
+    return feature_map[:, :crop_h, :crop_w, :]
+
+
+def compute_hierarchical_embedding_losses(
+    pyramid1: List[jnp.ndarray],
+    pyramid2: List[jnp.ndarray],
+    window_size: int = 16,
+    alpha: float = 1.0,
+    beta: float = 0.1,
+) -> Tuple[jnp.ndarray, dict]:
+    """Compute compound embedding loss across all pyramid levels.
+
+    Phase 2 Deep Supervision:
+    1. Crops each level to grid-aligned dimensions (divisible by window_size)
+    2. Applies L2 normalization and temperature scaling per level
+    3. Computes self + cross entropy loss per level
+    4. Averages loss within each level (prevents fine levels from dominating)
+    5. Sums per-level losses for final compound loss
+
+    Args:
+        pyramid1: List of feature maps from frame 1, one per level
+        pyramid2: List of feature maps from frame 2, one per level
+        window_size: Size of attention windows (default 16)
+        alpha: Weight for self-attention loss (default 1.0)
+        beta: Weight for cross-attention loss (default 0.1)
+
+    Returns:
+        Tuple of (total_loss, aux_dict) where:
+            - total_loss: scalar sum of per-level losses
+            - aux_dict: {'self_loss': scalar, 'cross_loss': scalar,
+                        'level_losses': list of per-level total losses}
+
+    Raises:
+        ValueError: If pyramid levels don't match or crops result in zero-sized windows
+    """
+    if len(pyramid1) != len(pyramid2):
+        raise ValueError(f"Pyramid level mismatch: {len(pyramid1)} vs {len(pyramid2)}")
+
+    num_levels = len(pyramid1)
+    level_losses = []
+    total_self_loss = 0.0
+    total_cross_loss = 0.0
+
+    for level_idx in range(num_levels):
+        emb1 = pyramid1[level_idx]
+        emb2 = pyramid2[level_idx]
+
+        # Crop to grid-aligned dimensions
+        emb1_cropped = crop_to_grid_aligned(emb1, window_size)
+        emb2_cropped = crop_to_grid_aligned(emb2, window_size)
+
+        B, H, W, D = emb1_cropped.shape
+
+        # Validate we have at least one window after cropping
+        num_windows_h = H // window_size
+        num_windows_w = W // window_size
+        if num_windows_h == 0 or num_windows_w == 0:
+            raise ValueError(
+                f"Level {level_idx}: Cropped dimensions ({H}x{W}) too small "
+                f"for window_size {window_size}"
+            )
+
+        # Split into windows
+        grid = WindowGrid(window_size=window_size)
+        windows1 = grid.split(emb1_cropped)
+        windows2 = grid.split(emb2_cropped)
+
+        # Flatten batch and windows together for core functions
+        num_windows = num_windows_h * num_windows_w
+        flat_windows1 = windows1.reshape(B * num_windows, window_size, window_size, D)
+        flat_windows2 = windows2.reshape(B * num_windows, window_size, window_size, D)
+
+        # Compute core losses
+        self_loss_flat = self_attention_entropy_loss_core(flat_windows1)
+        cross_loss_flat = cross_attention_entropy_loss_core(
+            flat_windows1, flat_windows2
+        )
+
+        # Reshape back to spatial grid: (B * num_windows, window_size, window_size) -> (B, H, W)
+        def reshape_to_grid(loss_flat):
+            loss = loss_flat.reshape(B, num_windows, window_size, window_size)
+            loss = loss.reshape(
+                B, num_windows_h, num_windows_w, window_size, window_size
+            )
+            loss = loss.transpose(0, 1, 3, 2, 4)
+            return loss.reshape(B, H, W)
+
+        # Mean across batch and spatial dimensions for this level
+        self_loss_level = reshape_to_grid(self_loss_flat).mean()
+        cross_loss_level = reshape_to_grid(cross_loss_flat).mean()
+
+        # Per-level combined loss
+        level_loss = alpha * self_loss_level + beta * cross_loss_level
+
+        level_losses.append(level_loss)
+        total_self_loss += self_loss_level
+        total_cross_loss += cross_loss_level
+
+    # Sum per-level losses (each level contributes equally)
+    total_loss = sum(level_losses)
+
+    aux = dict(
+        self_loss=total_self_loss,
+        cross_loss=total_cross_loss,
+        level_losses=level_losses,
+    )
+
+    return total_loss, aux

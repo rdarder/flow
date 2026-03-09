@@ -24,10 +24,12 @@ class DatasetSettings:
     """
 
     batch_size: int = 4
-    coarse_grid_size: int = 3  # 3×3 grid of windows at coarsest level
+    coarse_grid_size: int = 1  # Phase 2: 1×1 grid at coarsest level (16×16 window)
     window_size: int = 16
     num_levels: int = 3
-    max_frame_distance: int = 5
+    max_frame_distance: int = (
+        2  # Phase 2: Restrict to adjacent frames for deep supervision
+    )
     max_samples: int = -1
     num_workers: int = 4
     seed: int = 42
@@ -171,10 +173,10 @@ def create_smoke_test_settings() -> Settings:
     return Settings(
         dataset=DatasetSettings(
             batch_size=1,  # Minimum for speed
-            coarse_grid_size=3,  # 3×3 grid
+            coarse_grid_size=1,  # Phase 2: 1×1 grid at coarsest
             window_size=16,
             num_levels=3,  # 3 pyramid levels
-            max_frame_distance=5,
+            max_frame_distance=2,  # Phase 2: Adjacent frames only
             max_samples=2,  # Only 2 samples for speed
             num_workers=0,
         ),

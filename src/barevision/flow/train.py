@@ -7,7 +7,7 @@ import optax
 import tyro
 from flax import nnx
 
-from barevision.flow.loss import compute_embedding_losses
+from barevision.flow.loss import compute_hierarchical_embedding_losses
 from barevision.flow.logging_utils import log_progress, print_footer, print_header
 from barevision.flow.model import HierarchicalEmbeddingModel, count_parameters
 from barevision.flow.settings import (
@@ -34,11 +34,10 @@ def train_step(
         pyramid1 = model(img1)
         pyramid2 = model(img2)
 
-        # Use coarsest level only (last in list)
-        coarse1 = pyramid1[-1]
-        coarse2 = pyramid2[-1]
-
-        return compute_embedding_losses(coarse1, coarse2, window_size=window_size)
+        # Apply hierarchical loss across all levels (Phase 2 deep supervision)
+        return compute_hierarchical_embedding_losses(
+            pyramid1, pyramid2, window_size=window_size
+        )
 
     (loss, aux), grads = nnx.value_and_grad(loss_fn, has_aux=True)(model)
 
