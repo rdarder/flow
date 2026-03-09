@@ -1,37 +1,72 @@
-# Flow: Self-Supervised Embedding Learning for Patch Matching
+# Flow: Hierarchical Embedding Training for Patch Matching
 
-This package trains embedding representations optimized for attention-based matching in optical flow estimation.
+This package trains hierarchical embedding representations optimized for attention-based matching in optical flow estimation.
 
-## Core Idea
+## Overview
 
-What makes a good embedding for attention-based matching?
+We use a coarse-to-fine pyramid architecture to learn embeddings at multiple scales. This Phase 1 implementation focuses on training the coarsest level only, establishing the foundation for future phases that will add flow-based window shifting at finer levels.
 
-Given that flow estimation relies on cross-frame attention, **sharper attention → less ambiguous matching → more confident flow**. The goal is to learn embeddings that produce peaked attention distributions rather than diffuse ones.
+**Key insight**: By training embeddings at a coarse spatial scale (e.g., 3×3 grid of 16×16 windows), we learn representations that capture larger spatial context, which will later enable tracking patches across large displacements when combined with flow priors.
 
-This is essentially learning a **matching cost** without explicit supervision. Instead of optimizing through the flow loss, we use proxy objectives:
+## Architecture
 
-1. **Within-frame**: Each patch should have a clear identity relative to neighbors (peaked self-attention)
-2. **Cross-frame**: Each patch should find corresponding patches in the other frame (peaked cross-attention)
+### Pyramid Structure
 
-Minimizing entropy favors the fewest attention peaks—each peak forms a "signature" linking the source embedding to specific target locations.
+```
+Input: (B, 391, 391, 3) RGB
+  ↓
+Level 0: Conv(3×3, stride=2) → 1×1 → 16 channels → (B, 195, 195, 16)
+  ↓
+Level 1: Conv(3×3, stride=2) → 1×1 → 16 channels → (B, 97, 97, 16)
+  ↓
+Level 2: Conv(3×3, stride=2) → 1×1 → 16 channels → (B, 48, 48, 16)
+```
+
+Each level:
+- Uses VALID padding (no padding) to avoid border artifacts
+- Stride=2 convolution for 2× spatial downsampling
+- 1×1 convolution to maintain 16 channels
+- L2 normalization to unit norm
+
+### Output
+
+The model returns a list of feature maps: `[Level_0, Level_1, Level_2]`
+
+For Phase 1 training, we use only the coarsest level (Level 2: 48×48 spatial, arranged as 3×3 grid of 16×16 windows).
+
+## Input Dimension Calculation
+
+Because we use VALID padding with stride=2, spatial dimensions shrink at each level. The dataloader must provide exactly the right input size to yield the target coarse dimensions.
+
+**Formula** (working backwards from target):
+```
+input_size = (output_size - 1) * stride + kernel_size
+```
+
+For 3 levels targeting 48×48 at coarsest:
+- Level 2 output: 48×48
+- Level 1 output → Level 2 input: (48-1)*2 + 3 = 97
+- Level 0 output → Level 1 input: (97-1)*2 + 3 = 195
+- Raw input → Level 0 input: (195-1)*2 + 3 = **391**
+
+The `DatasetSettings.img_size` property automatically calculates this based on `num_levels`, `coarse_grid_size`, and `window_size`.
 
 ## Loss Functions
 
-Both losses minimize entropy of attention distributions—pushing the model to commit to specific matches rather than hedging.
+Training uses the coarsest pyramid level only (Phase 1). The loss functions remain unchanged from the original design:
 
-### Self-Attention Entropy
+### Self-Attention Entropy (Coarsest Level)
 
-For a window of patches, each patch's embedding should stand out among its neighbors. Self-match is trivial (embedding always peaks with itself due to dot product properties).
+For the 3×3 grid of 16×16 windows at the coarsest level:
+- Split each 48×48 feature map into nine 16×16 windows
+- Compute self-attention within each window
+- Minimize entropy to encourage unique embeddings
 
-**Approach**: Compute attention over the entire window via softmax over dot products, then minimize entropy. Low entropy means "only self should dominate, no other pixel competes"—encouraging unique embeddings.
+### Cross-Attention Entropy (Coarsest Level)
 
-### Cross-Attention Entropy
-
-For patches in frame t and a search window in frame t+1:
-- Compute cross-frame attention weights
-- Minimize entropy to encourage peaked distributions
-
-**Limitation**: Unmatchable regions (occlusions, textureless areas, motion boundaries) contribute to loss like any other pixel. We accept this noise rather than adding complexity for confidence weighting or masking.
+For corresponding windows between frame t and t+k:
+- Compute cross-frame attention between matching windows
+- Minimize entropy to encourage sharp matches
 
 ### Combined Loss
 
@@ -39,36 +74,80 @@ For patches in frame t and a search window in frame t+1:
 loss = α * self_entropy + β * cross_entropy
 ```
 
-Default weights: α=1.0, β=0.1. Cross-attention receives less weight since not all patches have reliable matches.
+Default weights: α=1.0, β=0.1
 
-**Future**: A reconstructive loss will be added to the composite objective.
-
-## Training Stabilizers: L2 Normalization + Temperature
-
-Two mechanisms prevent attention collapse and ensure stable training:
+## Training Stabilizers
 
 ### L2 Normalization
 
-All embeddings are L2-normalized to unit norm before computing attention. Without normalization, embeddings grow unbounded to exaggerate dot products—a failure mode where a single high-norm embedding captures all attention regardless of content. Normalization constrains all embeddings to the unit sphere surface, eliminating norm-based competition.
+All embeddings are L2-normalized to unit norm before computing attention. This prevents high-norm embeddings from dominating attention regardless of content.
 
 ### Temperature Scaling
 
-Attention logits are divided by temperature τ=0.05 before softmax. With normalized embeddings, dot products range in [-1, 1] and produce similar values. Low temperature sharpens the softmax distribution, amplifying small differences to select clear winners. This combination (L2 norm + low temperature) produces stable, discriminative attention without collapse.
+Attention logits are divided by temperature τ=0.05 before softmax. Low temperature sharpens the distribution, amplifying small differences to select clear winners.
 
 ## Training Data
 
-Video frame pairs from single continuous takes (no cuts). Temporal continuity is guaranteed by dataset structure—frames are loaded from video directories in sequence without cross-video mixing.
+Video frame pairs from single continuous takes (no cuts). The dataset automatically resizes frames to the exact calculated input dimension (391×391 for default 3-level pyramid).
 
 ## Configuration
 
-Window size is configurable (default 16×16). Input image dimensions must be divisible by window size after accounting for valid convolutions (output is 4 pixels smaller than input).
-
-## Usage
-
 ```bash
-# Training
-python -m barevision.flow.train --model.window-size 16 --dataset.img-size 200 200
+# Default training (3 levels, 3×3 coarse grid, 16×16 windows)
+python -m barevision.flow.train
+
+# Custom configuration
+python -m barevision.flow.train \
+  --model.num-levels 3 \
+  --model.embed-dim 16 \
+  --model.window-size 16 \
+  --dataset.coarse-grid-size 3 \
+  --dataset.batch-size 4
 
 # Smoke test
 python -m barevision.flow.train --smoke-test
 ```
+
+Key settings in `settings.py`:
+- `ModelSettings.num_levels`: Number of pyramid levels (default 3)
+- `ModelSettings.embed_dim`: Output channels per level (default 16)
+- `ModelSettings.window_size`: Attention window size (default 16)
+- `DatasetSettings.coarse_grid_size`: Target coarse grid dimension (default 3)
+- `DatasetSettings.img_size`: **Calculated automatically** based on above parameters
+
+## Visualization
+
+Visualizations are adapted for the pyramid:
+1. Original RGB images are downscaled to match coarse embedding dimensions (48×48)
+2. Attention maps from coarsest level are overlaid directly on downscaled images
+3. No complex coordinate mapping needed - 1:1 correspondence between coarse pixels and downscaled RGB
+
+## Future Phases
+
+### Phase 2: Multi-Level Training
+Train intermediate levels with flow-based window shifting to cancel ego-motion.
+
+### Phase 3: Fine-Level Refinement
+Add finest pyramid level for pixel-accurate flow estimation.
+
+### Phase 4: Full Integration
+Integrate with flow estimation pipeline for end-to-end optical flow.
+
+## Testing
+
+```bash
+# Unit tests
+pytest src/barevision/flow/test_model.py
+pytest src/barevision/flow/test_loss.py
+
+# Smoke test
+python -m barevision.flow.train --smoke-test
+```
+
+## Parameter Count
+
+For default 3-level pyramid with 16 channels:
+- Level 0 (3→16 ch): ~720 parameters
+- Level 1 (16→16 ch): ~2,592 parameters
+- Level 2 (16→16 ch): ~2,592 parameters
+- **Total: ~5,904 parameters**

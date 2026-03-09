@@ -210,10 +210,15 @@ def log_metrics(logger: JaxLogger, loss, aux, step: int):
 
 
 def log_diagnostics(logger: JaxLogger, model, img1, step: int, window_size: int = 16):
-    """Log gradient statistics, embeddings, and attention statistics."""
+    """Log gradient statistics, embeddings, and attention statistics.
+    
+    For hierarchical models, uses coarsest pyramid level.
+    """
     log_gradient_statistics(logger, None, model, step)
-
-    embeddings = model(img1)
+    
+    # Get pyramid and use coarsest level
+    pyramid = model(img1)
+    embeddings = pyramid[-1]  # Coarsest level
     log_embedding_statistics(logger, embeddings, step)
     log_attention_statistics(logger, embeddings, step, window_size)
 
@@ -267,8 +272,14 @@ def print_footer():
 def print_header(settings):
     """Print training configuration header."""
     print("=" * 60)
-    print("EMBEDDING TRAINING")
+    print("HIERARCHICAL EMBEDDING TRAINING")
     print("=" * 60)
+    print()
+    print(f"Pyramid levels: {settings.model.num_levels}")
+    print(f"Coarse grid: {settings.dataset.coarse_grid_size}×{settings.dataset.coarse_grid_size}")
+    print(f"Window size: {settings.model.window_size}×{settings.model.window_size}")
+    print(f"Embedding dim: {settings.model.embed_dim}")
+    print(f"Input size: {settings.dataset.img_size}")
     print()
     print(f"Epochs: {settings.training.epochs}")
     print(f"Batch size: {settings.dataset.batch_size}")

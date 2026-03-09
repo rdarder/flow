@@ -9,7 +9,7 @@ from flax import nnx
 
 from barevision.flow.loss import compute_embedding_losses
 from barevision.flow.logging_utils import log_progress, print_footer, print_header
-from barevision.flow.model import SimpleEmbeddingModel, count_parameters
+from barevision.flow.model import HierarchicalEmbeddingModel, count_parameters
 from barevision.flow.settings import (
     ModelSettings,
     Settings,
@@ -24,11 +24,22 @@ from barevision.utils.logging import JaxLogger
 def train_step(
     model, optimizer, img1, img2, logging: bool = False, window_size: int = 16
 ):
-    """Execute single training step with gradient update."""
+    """Execute single training step with gradient update.
+    
+    Uses coarsest pyramid level for loss computation (Phase 1).
+    """
 
     def loss_fn(model):
+        # Get pyramid from both frames
+        pyramid1 = model(img1)
+        pyramid2 = model(img2)
+        
+        # Use coarsest level only (last in list)
+        coarse1 = pyramid1[-1]
+        coarse2 = pyramid2[-1]
+        
         return compute_embedding_losses(
-            model(img1), model(img2), window_size=window_size
+            coarse1, coarse2, window_size=window_size
         )
 
     (loss, aux), grads = nnx.value_and_grad(loss_fn, has_aux=True)(model)
@@ -93,6 +104,7 @@ def run_epoch(
                 {},
                 global_step,
                 model_settings.window_size,
+                model_settings.num_levels,
             )
 
 
@@ -108,9 +120,10 @@ def train(settings: Settings):
         run_name_prefix=settings.logging.run_name_prefix,
     )
 
-    model = SimpleEmbeddingModel(
-        embed_dim=16,
+    model = HierarchicalEmbeddingModel(
+        embed_dim=settings.model.embed_dim,
         in_channels=3,
+        num_levels=settings.model.num_levels,
         rngs=nnx.Rngs(0),
     )
 

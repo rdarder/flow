@@ -1,4 +1,4 @@
-"""Tests for embedding visualization functions.
+"""Tests for hierarchical embedding visualization functions.
 
 Run: python -m barevision.flow.test_visualization
 """
@@ -7,7 +7,7 @@ import numpy as np
 import jax.random as jr
 from flax import nnx
 
-from barevision.flow.model import SimpleEmbeddingModel
+from barevision.flow.model import HierarchicalEmbeddingModel
 from barevision.flow.visualization import (
     create_frame_with_grid_figure,
     create_attention_maps_figure,
@@ -16,11 +16,12 @@ from barevision.flow.visualization import (
 
 def test_frame_with_grid_figure():
     """Test frame with grid overlay visualization."""
-    img1 = np.random.rand(196, 196, 3).astype(np.float32)
-    img2 = np.random.rand(196, 196, 3).astype(np.float32)
+    # Coarse level is 48×48 for 3-level pyramid
+    img1 = np.random.rand(48, 48, 3).astype(np.float32)
+    img2 = np.random.rand(48, 48, 3).astype(np.float32)
     metadata = {"video_name": "test", "frame_t": 10, "frame_tk": 13, "distance": 3}
 
-    # Without highlighted window
+    # Without highlighted window (3×3 grid of 16×16)
     fig = create_frame_with_grid_figure(img1, img2, metadata, 16)
     assert fig.dtype == np.uint8
     assert fig.shape[2] == 3  # RGB
@@ -29,7 +30,7 @@ def test_frame_with_grid_figure():
 
     # With highlighted window
     fig = create_frame_with_grid_figure(
-        img1, img2, metadata, 16, highlighted_window=(5, 6)
+        img1, img2, metadata, 16, highlighted_window=(1, 1)
     )
     assert fig.dtype == np.uint8
     print("✓ test_frame_with_grid_figure (with highlight)")
@@ -49,7 +50,7 @@ def test_attention_maps_figure():
         self_attn,
         cross_attn,
         pixel_positions,
-        window_indices=(5, 6),
+        window_indices=(1, 1),
         frame_t=100,
         frame_tk=103,
         distance=3,
@@ -61,29 +62,38 @@ def test_attention_maps_figure():
 
 
 def test_model_compute_attention_maps():
-    """Test model's compute_attention_maps method."""
-    model = SimpleEmbeddingModel(rngs=nnx.Rngs(jr.PRNGKey(0)))
-    img1 = jr.uniform(jr.PRNGKey(1), (1, 196, 196, 3))
-    img2 = jr.uniform(jr.PRNGKey(2), (1, 196, 196, 3))
+    """Test model's compute_attention_maps method for hierarchical model."""
+    model = HierarchicalEmbeddingModel(
+        embed_dim=16, in_channels=3, num_levels=3, rngs=nnx.Rngs(jr.PRNGKey(0))
+    )
+    # Input size for 3-level pyramid targeting 48×48 coarse
+    img1 = jr.uniform(jr.PRNGKey(1), (1, 391, 391, 3))
+    img2 = jr.uniform(jr.PRNGKey(2), (1, 391, 391, 3))
 
-    attn_data = model.compute_attention_maps(img1, img2, window_indices=(0, 0))
+    # Test coarsest level (level_index=-1)
+    attn_data = model.compute_attention_maps(
+        img1, img2, window_indices=(0, 0), level_index=-1
+    )
 
-    assert attn_data.embeddings1.shape == (192, 192, 16)
+    # Coarsest level is 48×48
+    assert attn_data.embeddings1.shape == (48, 48, 16)
     assert attn_data.self_attention.shape[0] == 4  # 4 random pixels
     assert attn_data.self_attention.shape[1:] == (16, 16)
     assert attn_data.pixel_positions.shape == (4, 2)
-    print("✓ test_model_compute_attention_maps")
+    print("✓ test_model_compute_attention_maps (coarsest level)")
 
 
 def test_model_random_pixel_selection():
     """Test that different windows get different random pixels."""
-    model = SimpleEmbeddingModel(rngs=nnx.Rngs(jr.PRNGKey(0)))
-    img1 = jr.uniform(jr.PRNGKey(1), (1, 196, 196, 3))
-    img2 = jr.uniform(jr.PRNGKey(2), (1, 196, 196, 3))
+    model = HierarchicalEmbeddingModel(
+        embed_dim=16, in_channels=3, num_levels=3, rngs=nnx.Rngs(jr.PRNGKey(0))
+    )
+    img1 = jr.uniform(jr.PRNGKey(1), (1, 391, 391, 3))
+    img2 = jr.uniform(jr.PRNGKey(2), (1, 391, 391, 3))
 
-    # Get attention maps for different windows
-    attn_0_0 = model.compute_attention_maps(img1, img2, (0, 0))
-    attn_1_1 = model.compute_attention_maps(img1, img2, (1, 1))
+    # Get attention maps for different windows at coarsest level
+    attn_0_0 = model.compute_attention_maps(img1, img2, (0, 0), level_index=-1)
+    attn_1_1 = model.compute_attention_maps(img1, img2, (1, 1), level_index=-1)
 
     # Pixel positions should be different (deterministic but window-dependent)
     assert not np.array_equal(attn_0_0.pixel_positions, attn_1_1.pixel_positions)

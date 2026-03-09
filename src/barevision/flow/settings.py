@@ -11,31 +11,56 @@ from typing import Tuple
 @dataclass
 class DatasetSettings:
     """Dataset configuration.
-
+    
     Attributes:
         batch_size: Training batch size
-        img_size: Input image size as (height, width) tuple.
-                  Must result in embeddings divisible by window_size (16).
-                  Model uses 5×5 valid conv, so output is (H-4, W-4).
-                  Recommended: (196, 196) -> (192, 192) embeddings = 12x12 windows
+        coarse_grid_size: Target coarse-level grid dimension (default 3 for 3×3 grid)
+        window_size: Window size at coarse level (default 16)
+        num_levels: Number of pyramid levels (used to calculate required input size)
         max_frame_distance: Maximum temporal distance for frame pairs
         max_samples: Maximum samples per epoch (-1 for full dataset)
         num_workers: Number of worker processes for data loading (0 = main process only)
         seed: Random seed for data shuffling and train/val split
     """
-
+    
     batch_size: int = 4
-    img_size: Tuple[int, int] = (196, 196)
+    coarse_grid_size: int = 3  # 3×3 grid of windows at coarsest level
+    window_size: int = 16
+    num_levels: int = 3
     max_frame_distance: int = 5
     max_samples: int = -1
     num_workers: int = 4
     seed: int = 42
-
+    
+    @property
+    def img_size(self) -> Tuple[int, int]:
+        """Calculate required input image size based on pyramid configuration.
+        
+        Returns:
+            (height, width) tuple for input images
+        """
+        from barevision.flow.model import calculate_required_input_size
+        
+        # Target coarse dimension: grid_size × window_size
+        target_coarse_dim = self.coarse_grid_size * self.window_size
+        
+        # Calculate required input size
+        input_size = calculate_required_input_size(
+            target_coarse_dim=target_coarse_dim,
+            num_levels=self.num_levels,
+        )
+        
+        return (input_size, input_size)
+    
     def __post_init__(self):
         if self.batch_size < 1:
             raise ValueError(f"batch_size must be >= 1, got {self.batch_size}")
-        if len(self.img_size) != 2:
-            raise ValueError(f"img_size must be (height, width), got {self.img_size}")
+        if self.coarse_grid_size < 1:
+            raise ValueError(f"coarse_grid_size must be >= 1, got {self.coarse_grid_size}")
+        if self.window_size < 1:
+            raise ValueError(f"window_size must be >= 1, got {self.window_size}")
+        if self.num_levels < 1:
+            raise ValueError(f"num_levels must be >= 1, got {self.num_levels}")
         if self.max_frame_distance < 1:
             raise ValueError(
                 f"max_frame_distance must be >= 1, got {self.max_frame_distance}"
@@ -82,16 +107,24 @@ class LoggingSettings:
 @dataclass
 class ModelSettings:
     """Model architecture configuration.
-
+    
     Attributes:
         window_size: Attention window size in pixels (must divide img_size dimensions)
+        num_levels: Number of pyramid levels (default 3)
+        embed_dim: Output embedding dimension per level (default 16)
     """
-
+    
     window_size: int = 16
-
+    num_levels: int = 3
+    embed_dim: int = 16
+    
     def __post_init__(self):
         if self.window_size < 1:
             raise ValueError(f"window_size must be >= 1, got {self.window_size}")
+        if self.num_levels < 1:
+            raise ValueError(f"num_levels must be >= 1, got {self.num_levels}")
+        if self.embed_dim < 1:
+            raise ValueError(f"embed_dim must be >= 1, got {self.embed_dim}")
 
 
 @dataclass
@@ -136,13 +169,17 @@ def create_smoke_test_settings() -> Settings:
     return Settings(
         dataset=DatasetSettings(
             batch_size=1,  # Minimum for speed
-            img_size=(196, 196),  # 196-4=192, divisible by 16
+            coarse_grid_size=3,  # 3×3 grid
+            window_size=16,
+            num_levels=3,  # 3 pyramid levels
             max_frame_distance=5,
             max_samples=2,  # Only 2 samples for speed
             num_workers=0,
         ),
         model=ModelSettings(
-            window_size=16,  # 192/16 = 12 windows per dimension
+            window_size=16,
+            num_levels=3,
+            embed_dim=16,
         ),
         training=TrainingSettings(
             epochs=1,
