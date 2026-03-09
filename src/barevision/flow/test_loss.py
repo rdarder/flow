@@ -5,7 +5,7 @@ import jax.numpy as jnp
 import jax.random as jr
 import pytest
 
-from barevision.embeddings.loss import (
+from barevision.flow.loss import (
     self_attention_entropy_loss_core,
     cross_attention_entropy_loss_core,
     compute_embedding_losses,

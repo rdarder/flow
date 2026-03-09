@@ -10,16 +10,14 @@ Create a complete perception pipeline for low-cost robots using only a monocular
 
 ### Current Packages
 
-- **`barevision.flow`**: Hierarchical optical flow estimation using attention-based matching
-  - Multi-level pyramid with windowed attention
-  - Confidence-based flow blending
-  - No warping operations (gatherND-free)
-
-- **`barevision.embeddings`** (Planned): Self-supervised embedding learning for patch matching
+- **`barevision.flow`**: Self-supervised embedding learning for patch matching
   - Sharpness-based loss functions (self/cross-attention entropy)
-  - Compatible with flow model's embedding interface
+  - Trains embeddings optimized for attention-based matching
+  - Foundation for optical flow estimation
 
-For more details on each package, look for the ARCHITECTURE.md file within each package's path.
+- **`barevision.old_flow`** (Deprecated): Hierarchical optical flow estimation
+  - Kept for reference during transition
+  - Will be removed once new flow pipeline is complete
 
 ### Future Packages
 
@@ -36,20 +34,20 @@ For more details on each package, look for the ARCHITECTURE.md file within each 
 pip install -e .
 ```
 
-### Running Optical Flow Training
+### Running Embedding Training
 
 ```bash
 # Smoke test
 python -m barevision.flow.train --smoke-test
 
 # Full training with custom settings
-python -m barevision.flow.train --model.num-levels 3 --dataset.img-size 384 512 --training.epochs 50
+python -m barevision.flow.train --model.window-size 16 --dataset.img-size 200 200
 ```
+
 ## Documentation
 
 - **[ARCHITECTURE.md](ARCHITECTURE.md)**: High-level project architecture and design decisions
-- **[src/barevision/flow/ARCHITECTURE.md](src/barevision/flow/ARCHITECTURE.md)**: Optical flow model details
-- **[src/barevision/embeddings/ARCHITECTURE.md](src/barevision/embeddings/ARCHITECTURE.md)**: Embedding training approach
+- **[src/barevision/flow/ARCHITECTURE.md](src/barevision/flow/ARCHITECTURE.md)**: Embedding training approach
 - **[AGENTS.md](AGENTS.md)**: Development notes for AI assistants
 
 ## Development Philosophy

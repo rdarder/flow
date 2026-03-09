@@ -31,7 +31,7 @@ import jax.numpy as jnp
 from flax import nnx
 
 from barevision.utils.grid import WindowGrid
-from barevision.embeddings.loss import TEMPERATURE
+from barevision.flow.loss import TEMPERATURE
 
 
 class SimpleEmbeddingModel(nnx.Module):

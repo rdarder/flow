@@ -4,7 +4,7 @@ import jax.numpy as jnp
 import jax.random as jr
 from flax import nnx
 
-from barevision.embeddings.model import SimpleEmbeddingModel, count_parameters
+from barevision.flow.model import SimpleEmbeddingModel, count_parameters
 
 
 class TestSimpleEmbeddingModel:
