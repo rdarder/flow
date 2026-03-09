@@ -67,5 +67,6 @@ dev = [
     "tensorboard (>=2.20.0,<3.0.0)",
     "torchvision (>=0.25.0,<0.26.0)",
     "setuptools (==81.0)",
-    "matplotlib (>=3.10.8,<4.0.0)"
+    "matplotlib (>=3.10.8,<4.0.0)",
+    "black (>=26.3.0,<27.0.0)"
 ]
