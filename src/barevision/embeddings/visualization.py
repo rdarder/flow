@@ -247,11 +247,10 @@ def create_attention_maps_figure(
     # Define colors for pixel markers
     colors = ["red", "blue", "green", "orange"]
 
-    # Mark pixel positions on BOTH crops
+    # Mark pixel positions on Frame 1 (row 0)
     for i, (y, x) in enumerate(pixel_positions):
         color = colors[i % len(colors)]
 
-        # Mark on Frame 1 (row 0)
         axes[0, 0].scatter(
             [x + 0.5],
             [y + 0.5],
@@ -260,15 +259,6 @@ def create_attention_maps_figure(
             marker="x",
             linewidths=3,
             label=f"Pixel {i}" if i == 0 else "",
-        )
-        # Mark on Frame 2 (row 1)
-        axes[1, 0].scatter(
-            [x + 0.5],
-            [y + 0.5],
-            c=color,
-            s=100,
-            marker="x",
-            linewidths=3,
         )
     axes[0, 0].legend(loc="upper right", fontsize=9)
 
@@ -320,6 +310,11 @@ def create_attention_maps_figure(
         axes[1, col].axis("off")
         plt.colorbar(im_cross, ax=axes[1, col], fraction=0.046, pad=0.04)
 
+        # Mark source pixel position (where query comes from)
+        axes[1, col].scatter(
+            [x + 0.5], [y + 0.5], c=color, s=80, marker="x", linewidths=2
+        )
+
         # Mark best match position in frame 2
         best_match = np.unravel_index(
             np.argmax(cross_attn_maps[i]), cross_attn_maps[i].shape
@@ -331,8 +326,25 @@ def create_attention_maps_figure(
             s=60,
             marker="+",
             linewidths=2,
-            label="Best match",
+            label="Best match" if i == 0 else "",
         )
+
+    # Mark best match positions on Frame 2 crop (row 1, column 0)
+    for i in range(n_pixels):
+        color = colors[i % 4]
+        best_match = np.unravel_index(
+            np.argmax(cross_attn_maps[i]), cross_attn_maps[i].shape
+        )
+        axes[1, 0].scatter(
+            [best_match[1] + 0.5],
+            [best_match[0] + 0.5],
+            c=color,
+            s=80,
+            marker="+",
+            linewidths=2,
+            label=f"Match {i}" if i == 0 else "",
+        )
+    axes[1, 0].legend(loc="upper right", fontsize=9)
 
     plt.tight_layout()
     return _figure_to_array(fig)
