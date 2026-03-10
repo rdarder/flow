@@ -323,7 +323,7 @@ def create_attention_maps_figure(
         axes[1, col].scatter(
             [best_match[1] + 0.5],
             [best_match[0] + 0.5],
-            c="red",
+            c=color,  # Same color as source pixel
             s=60,
             marker="+",
             linewidths=2,

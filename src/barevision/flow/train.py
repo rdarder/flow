@@ -20,13 +20,19 @@ from barevision.flow.visualization import log_visualizations
 from barevision.utils.logging import JaxLogger
 
 
-@partial(nnx.jit, static_argnames=("logging", "window_size"))
+@partial(nnx.jit, static_argnames=("logging", "window_size", "level_weight_decay"))
 def train_step(
-    model, optimizer, img1, img2, logging: bool = False, window_size: int = 16
+    model,
+    optimizer,
+    img1,
+    img2,
+    logging: bool = False,
+    window_size: int = 16,
+    level_weight_decay: float = 2.0,
 ):
     """Execute single training step with gradient update.
 
-    Uses coarsest pyramid level for loss computation (Phase 1).
+    Uses hierarchical loss across all pyramid levels (Phase 2 deep supervision).
     """
 
     def loss_fn(model):
@@ -34,15 +40,18 @@ def train_step(
         pyramid1 = model(img1)
         pyramid2 = model(img2)
 
-        # Apply hierarchical loss across all levels (Phase 2 deep supervision)
+        # Apply hierarchical loss across all levels with level weighting
         return compute_hierarchical_embedding_losses(
-            pyramid1, pyramid2, window_size=window_size
+            pyramid1,
+            pyramid2,
+            window_size=window_size,
+            level_weight_decay=level_weight_decay,
         )
 
     (loss, aux), grads = nnx.value_and_grad(loss_fn, has_aux=True)(model)
 
     if not logging:
-        aux = {}  # drop aux so jit can trace it as not being used.
+        aux = {}  # drop so jit can trace it as not being used.
     optimizer.update(model, grads)
     return loss, aux
 
@@ -77,6 +86,7 @@ def run_epoch(
             img2,
             logging_settings.should_log_something(global_step),
             model_settings.window_size,
+            model_settings.level_weight_decay,
         )
 
         if global_step % logging_settings.log_every_steps == 0:
@@ -125,7 +135,12 @@ def train(settings: Settings):
     )
 
     optimizer = nnx.Optimizer(
-        model, optax.adam(settings.training.learning_rate), wrt=nnx.Param
+        model,
+        optax.chain(
+            optax.clip_by_global_norm(1.0),
+            optax.adam(settings.training.learning_rate),
+        ),
+        wrt=nnx.Param,
     )
 
     print(f"Model parameters: {count_parameters(model)}\n")

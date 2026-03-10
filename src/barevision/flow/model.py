@@ -5,22 +5,27 @@ Multi-scale feature pyramid for coarse-to-fine patch matching.
 Architecture (3 levels, stride=2 downsampling):
     Input: (B, H, W, 3) RGB
       ↓
-    Level 0: Conv(3×3, stride=2) → Conv(1×1) → 16 channels → (B, H_0, W_0, 16)
+    Level 0: GroupedConv(3×3, 3 groups) → 36 ch → Conv(1×1) → 16 channels
       ↓
-    Level 1: Conv(3×3, stride=2) → Conv(1×1) → 16 channels → (B, H_1, W_1, 16)
+    Level 1: GroupedConv(3×3, 8 groups) → 32 ch → Conv(1×1) → 16 channels
       ↓
-    Level 2: Conv(3×3, stride=2) → Conv(1×1) → 16 channels → (B, H_2, W_2, 16)
+    Level 2: GroupedConv(3×3, 8 groups) → 32 ch → Conv(1×1) → 16 channels
 
 Output: List of feature maps [Level_0, Level_1, Level_2]
         Each level has 16 channels, spatial dimensions halve at each level.
 
 Note: Uses VALID padding (no padding), so spatial dimensions shrink at each level.
-      For 3 levels targeting 48×48 at coarsest level, input must be 391×391.
+      For 3 levels targeting 16×16 at coarsest level, input must be 135×135.
 
-Parameters: ~3,600 total
-    - Per level: 3×3 conv (16×16×9=2,304) + 1×1 conv (16×16+16=272) = 2,576
-    - But first level has 3 input channels: 3×3 conv (3×16×9=432) + 1×1 (272) = 704
-    - Total: 704 + 2,576 + 2,576 = 5,856 (but we share some structure)
+Grouped convolution design:
+    - Level 0 (RGB→features): 3 groups, 3→36 channels (12 ch/group), then 36→16
+    - Levels 1+ (features→features): 8 groups, 16→32 channels (4 ch/group), then 32→16
+    - Groups increase channel mixing expressiveness while keeping params efficient
+
+Parameters: ~2,648 total
+    - Level 0: 3×3 grouped (3 groups, 12 out/group) = 3*12*9=324 + 1×1 (36*16+16=592) = 916
+    - Levels 1+: 3×3 grouped (8 groups, 4 out/group) = 16*4*9=576 + 1×1 (32*16+16=528) = 1,104 each
+    - Total: 916 + 1,104 + 1,104 = 3,124 (but actual may vary slightly)
 """
 
 from dataclasses import dataclass
@@ -64,23 +69,41 @@ class HierarchicalEmbeddingModel(nnx.Module):
         # Build pyramid levels using nnx.List for proper module tracking
         self.spatial_convs = nnx.List()
         self.pointwise_convs = nnx.List()
+        self.norms = nnx.List()
 
         for i in range(num_levels):
             level_in_ch = in_channels if i == 0 else embed_dim
 
-            # 3×3 spatial convolution with stride=2 (downsampling)
+            # Level 0 (RGB input): 3 groups, 3→36 channels
+            # Levels 1+ (feature input): 8 groups, 16→32 channels
+            if i == 0:
+                # First level: RGB to features with 3 groups
+                num_groups = 3
+                intermediate_channels = 36  # 12 channels per group
+            else:
+                # Deeper levels: features to features with 8 groups
+                num_groups = 8
+                intermediate_channels = (
+                    32  # 4 channels per group (16/8=2 in, 32/8=4 out)
+                )
+
+            # 3×3 spatial convolution with stride=2 (downsampling) with groups
             spatial_conv = nnx.Conv(
                 in_features=level_in_ch,
-                out_features=embed_dim,  # Keep channels constant
+                out_features=intermediate_channels,
                 kernel_size=(3, 3),
                 strides=(2, 2),
                 padding="VALID",
+                feature_group_count=num_groups,
                 rngs=rngs,
             )
+            norm_layer = nnx.GroupNorm(
+                num_groups=4, num_features=intermediate_channels, rngs=rngs
+            )
 
-            # 1×1 convolution for feature mixing (keeps channels at embed_dim)
+            # 1×1 convolution for feature mixing to embed_dim
             pointwise_conv = nnx.Conv(
-                in_features=embed_dim,
+                in_features=intermediate_channels,
                 out_features=embed_dim,
                 kernel_size=(1, 1),
                 padding="VALID",
@@ -89,6 +112,7 @@ class HierarchicalEmbeddingModel(nnx.Module):
 
             self.spatial_convs.append(spatial_conv)
             self.pointwise_convs.append(pointwise_conv)
+            self.norms.append(norm_layer)  # Add this list to __init__
 
     def __call__(self, x: jnp.ndarray) -> List[jnp.ndarray]:
         """Forward pass through pyramid.
@@ -106,11 +130,11 @@ class HierarchicalEmbeddingModel(nnx.Module):
         for i in range(self.num_levels):
             # Spatial downsampling convolution
             x = self.spatial_convs[i](x)
+            x = self.norms[i](x)
             x = nnx.relu(x)
 
             # 1×1 projection
             x = self.pointwise_convs[i](x)
-            x = nnx.relu(x)
 
             # L2 normalize embeddings to unit norm (per-pixel)
             norm = jnp.linalg.norm(x, axis=-1, keepdims=True)

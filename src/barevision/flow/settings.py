@@ -116,11 +116,14 @@ class ModelSettings:
         window_size: Attention window size in pixels (must divide img_size dimensions)
         num_levels: Number of pyramid levels (default 3)
         embed_dim: Output embedding dimension per level (default 16)
+        level_weight_decay: Loss weight decay factor per level (default 2.0)
+                           Coarser levels get higher weight: level_i weight = decay^(num_levels - 1 - i)
     """
 
     window_size: int = 16
     num_levels: int = 3
     embed_dim: int = 16
+    level_weight_decay: float = 2.0  # Coarsest level gets 2x weight per level step
 
     def __post_init__(self):
         if self.window_size < 1:
@@ -129,6 +132,10 @@ class ModelSettings:
             raise ValueError(f"num_levels must be >= 1, got {self.num_levels}")
         if self.embed_dim < 1:
             raise ValueError(f"embed_dim must be >= 1, got {self.embed_dim}")
+        if self.level_weight_decay < 0:
+            raise ValueError(
+                f"level_weight_decay must be >= 0, got {self.level_weight_decay}"
+            )
 
 
 @dataclass
@@ -184,6 +191,7 @@ def create_smoke_test_settings() -> Settings:
             window_size=16,
             num_levels=3,
             embed_dim=16,
+            level_weight_decay=2.0,
         ),
         training=TrainingSettings(
             epochs=1,

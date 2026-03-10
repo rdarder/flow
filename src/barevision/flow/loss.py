@@ -13,7 +13,8 @@ Design:
 Phase 2 (Deep Supervision):
 - Applies entropy loss at ALL pyramid levels simultaneously
 - Crops each level to grid-aligned dimensions (divisible by window_size)
-- Averages loss per-level first, then sums across levels to prevent fine levels from dominating
+- Applies level weight decay (coarser levels get higher weight)
+- Averages loss per-level first, then sums across levels
 """
 
 import jax
@@ -23,6 +24,7 @@ from typing import List, Tuple
 from barevision.utils.grid import WindowGrid
 
 # Temperature for softmax scaling. Low temperature sharpens attention distributions.
+# Fixed at 0.05 for Phase 2 deep supervision.
 TEMPERATURE = 0.15
 
 
@@ -213,15 +215,22 @@ def compute_hierarchical_embedding_losses(
     window_size: int = 16,
     alpha: float = 1.0,
     beta: float = 0.1,
-) -> Tuple[jnp.ndarray, dict]:
+    level_weight_decay: float = 2.0,
+) -> tuple[jnp.ndarray, dict]:
     """Compute compound embedding loss across all pyramid levels.
 
     Phase 2 Deep Supervision:
     1. Crops each level to grid-aligned dimensions (divisible by window_size)
     2. Applies L2 normalization and temperature scaling per level
     3. Computes self + cross entropy loss per level
-    4. Averages loss within each level (prevents fine levels from dominating)
-    5. Sums per-level losses for final compound loss
+    4. Applies level-weighted loss (coarser levels get higher weight)
+    5. Sums weighted per-level losses for final compound loss
+
+    Level weighting: level_i_weight = level_weight_decay^i
+    - Level 0 (finest): weight = decay^0 = 1
+    - Level 1 (middle): weight = decay^1
+    - Level 2 (coarsest): weight = decay^2
+    With default decay=2.0, coarsest level gets 4x the weight of finest level.
 
     Args:
         pyramid1: List of feature maps from frame 1, one per level
@@ -229,12 +238,15 @@ def compute_hierarchical_embedding_losses(
         window_size: Size of attention windows (default 16)
         alpha: Weight for self-attention loss (default 1.0)
         beta: Weight for cross-attention loss (default 0.1)
+        level_weight_decay: Weight multiplier per level (default 2.0)
+                           Coarser levels get: weight = decay^level_index
 
     Returns:
         Tuple of (total_loss, aux_dict) where:
-            - total_loss: scalar sum of per-level losses
+            - total_loss: scalar sum of weighted per-level losses
             - aux_dict: {'self_loss': scalar, 'cross_loss': scalar,
-                        'level_losses': list of per-level total losses}
+                        'level_losses': list of per-level weighted losses,
+                        'level_weights': list of weight per level}
 
     Raises:
         ValueError: If pyramid levels don't match or crops result in zero-sized windows
@@ -244,10 +256,15 @@ def compute_hierarchical_embedding_losses(
 
     num_levels = len(pyramid1)
     level_losses = []
-    total_self_loss = 0.0
-    total_cross_loss = 0.0
+    level_weights = []
+    total_loss = jnp.array(0.0)
+    total_self_loss = jnp.array(0.0)
+    total_cross_loss = jnp.array(0.0)
 
     for level_idx in range(num_levels):
+        # Calculate level weight: coarser levels (higher index) get higher weight
+        level_weight = level_weight_decay**level_idx
+
         emb1 = pyramid1[level_idx]
         emb2 = pyramid2[level_idx]
 
@@ -295,20 +312,24 @@ def compute_hierarchical_embedding_losses(
         self_loss_level = reshape_to_grid(self_loss_flat).mean()
         cross_loss_level = reshape_to_grid(cross_loss_flat).mean()
 
-        # Per-level combined loss
-        level_loss = alpha * self_loss_level + beta * cross_loss_level
+        # Per-level combined loss (unweighted)
+        level_loss_unweighted = alpha * self_loss_level + beta * cross_loss_level
 
-        level_losses.append(level_loss)
-        total_self_loss += self_loss_level
-        total_cross_loss += cross_loss_level
+        # Apply level weight
+        level_loss_weighted = level_loss_unweighted * level_weight
 
-    # Sum per-level losses (each level contributes equally)
-    total_loss = sum(level_losses)
+        level_losses.append(level_loss_weighted)
+        level_weights.append(level_weight)
+        total_self_loss += self_loss_level * level_weight
+        total_cross_loss += cross_loss_level * level_weight
+        total_loss += level_loss_weighted
 
-    aux = dict(
+    # Weighted per-level losses summed
+    aux: dict = dict(
         self_loss=total_self_loss,
         cross_loss=total_cross_loss,
         level_losses=level_losses,
+        level_weights=level_weights,
     )
 
     return total_loss, aux

@@ -363,6 +363,69 @@ class TestHierarchicalEmbeddingLosses:
         with pytest.raises(ValueError, match="Pyramid level mismatch"):
             compute_hierarchical_embedding_losses(pyramid1, pyramid2)
 
+    def test_level_weight_decay(self):
+        """Test that level weight decay correctly weights coarser levels higher."""
+        pyramid1 = [
+            jr.normal(jr.PRNGKey(0), (1, 64, 64, 16)),  # Level 0: weight = 1
+            jr.normal(jr.PRNGKey(1), (1, 32, 32, 16)),  # Level 1: weight = 2
+            jr.normal(jr.PRNGKey(2), (1, 16, 16, 16)),  # Level 2: weight = 4
+        ]
+        pyramid2 = [
+            jr.normal(jr.PRNGKey(3), (1, 64, 64, 16)),
+            jr.normal(jr.PRNGKey(4), (1, 32, 32, 16)),
+            jr.normal(jr.PRNGKey(5), (1, 16, 16, 16)),
+        ]
+
+        # Default decay=2.0
+        loss, aux = compute_hierarchical_embedding_losses(pyramid1, pyramid2)
+
+        # Check weights are correct
+        assert aux["level_weights"] == [1.0, 2.0, 4.0]
+
+        # Verify weighted sum
+        weighted_sum = sum(aux["level_losses"])
+        assert jnp.allclose(loss, weighted_sum)
+
+    def test_level_weight_decay_custom(self):
+        """Test custom level weight decay factor."""
+        pyramid1 = [
+            jr.normal(jr.PRNGKey(0), (1, 64, 64, 16)),
+            jr.normal(jr.PRNGKey(1), (1, 32, 32, 16)),
+            jr.normal(jr.PRNGKey(2), (1, 16, 16, 16)),
+        ]
+        pyramid2 = [
+            jr.normal(jr.PRNGKey(3), (1, 64, 64, 16)),
+            jr.normal(jr.PRNGKey(4), (1, 32, 32, 16)),
+            jr.normal(jr.PRNGKey(5), (1, 16, 16, 16)),
+        ]
+
+        # Custom decay=3.0: weights should be [1, 3, 9]
+        loss, aux = compute_hierarchical_embedding_losses(
+            pyramid1, pyramid2, level_weight_decay=3.0
+        )
+
+        assert aux["level_weights"] == [1.0, 3.0, 9.0]
+
+    def test_level_weight_decay_disabled(self):
+        """Test that decay=1.0 gives equal weight to all levels."""
+        pyramid1 = [
+            jr.normal(jr.PRNGKey(0), (1, 64, 64, 16)),
+            jr.normal(jr.PRNGKey(1), (1, 32, 32, 16)),
+            jr.normal(jr.PRNGKey(2), (1, 16, 16, 16)),
+        ]
+        pyramid2 = [
+            jr.normal(jr.PRNGKey(3), (1, 64, 64, 16)),
+            jr.normal(jr.PRNGKey(4), (1, 32, 32, 16)),
+            jr.normal(jr.PRNGKey(5), (1, 16, 16, 16)),
+        ]
+
+        # decay=1.0: all levels get equal weight
+        loss, aux = compute_hierarchical_embedding_losses(
+            pyramid1, pyramid2, level_weight_decay=1.0
+        )
+
+        assert aux["level_weights"] == [1.0, 1.0, 1.0]
+
     def test_temperature_constant(self):
         """Verify temperature is set to 0.05 for Phase 2."""
         assert TEMPERATURE == 0.05
