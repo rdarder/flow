@@ -50,8 +50,9 @@ import jax
 import jax.numpy as jnp
 from flax import nnx
 
-from barevision.utils.grid import WindowGrid
-from barevision.flow.loss import TEMPERATURE
+# from barevision.flow.loss import TEMPERATURE
+# Use a larger temperature for vizualiation. this is a test.
+TEMPERATURE = 1.0
 
 # Global constants for blocks
 HIDDEN_CHANNELS = 32

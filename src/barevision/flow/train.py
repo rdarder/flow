@@ -58,6 +58,7 @@ def train_step(
 
 def run_epoch(
     epoch,
+    global_step,
     model,
     optimizer,
     logger,
@@ -77,8 +78,6 @@ def run_epoch(
     epoch_start = time.time()
 
     for step, (img1, img2, metadata) in enumerate(loader):
-        global_step = step
-
         loss, aux = train_step(
             model,
             optimizer,
@@ -114,6 +113,10 @@ def run_epoch(
                 model_settings.num_levels,
             )
 
+        global_step += 1
+
+    return global_step
+
 
 def train(settings: Settings):
     """Main training loop."""
@@ -145,9 +148,11 @@ def train(settings: Settings):
 
     print(f"Model parameters: {count_parameters(model)}\n")
 
+    global_step = 0
     for epoch in range(settings.training.epochs):
-        run_epoch(
+        global_step = run_epoch(
             epoch,
+            global_step,
             model,
             optimizer,
             logger,

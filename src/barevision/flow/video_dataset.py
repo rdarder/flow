@@ -201,13 +201,7 @@ class VideoFrameDataset:
         if img.mode != "RGB":
             img = img.convert("RGB")
 
-        # Resize to target size (use Resampling.LANCZOS if available, else LANCZOS)
-        try:
-            from PIL.Image import Resampling
-
-            resample = Resampling.LANCZOS
-        except ImportError:
-            resample = Image.LANCZOS
+        resample = Image.Resampling.LANCZOS
 
         # PIL resize expects (width, height), so swap from (height, width)
         img = img.resize((self.img_size[1], self.img_size[0]), resample)

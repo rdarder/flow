@@ -1,177 +1,127 @@
-# Flow: Hierarchical Embedding Training for Patch Matching
+# Code Map: Embedding Engine
 
-This package trains hierarchical embedding representations optimized for attention-based matching in optical flow estimation.
+This document maps concepts to source files. It tells you **what is where**, not how things work. Read the code for details.
 
-## Overview
+---
 
-We use a coarse-to-fine pyramid architecture to learn embeddings at multiple scales. **Phase 2 implements Deep Supervision** by applying entropy loss at ALL pyramid levels simultaneously.
+## Quick Map
 
-**Key insight**: By training embeddings at multiple spatial scales with deep supervision, we ensure gradients flow equally into macro-structures (coarse levels) and micro-structures (fine levels), forcing all convolutional layers to learn trackable features immediately.
+| Concept | Primary File | What's There |
+|---------|-------------|--------------|
+| Pyramid Model | `model.py` | `StemBlock`, `StandardBlock`, `HierarchicalEmbeddingModel` |
+| Entropy Loss | `loss.py` | Self/cross attention loss, hierarchical aggregation |
+| Training Loop | `train.py` | Epoch/step orchestration, logging hooks |
+| Data Loading | `video_dataset.py` | Frame pair generation, batching |
+| Hyperparameters | `settings.py` | tyro CLI config, dataclasses |
+| Visualization | `visualization.py` | TensorBoard figures (diagnostic only) |
+| Window Utilities | `../utils/grid.py` | `WindowGrid` split/stitch, resolution helpers |
 
-**Phase 2 approach**:
-- Applies entropy loss at every pyramid level (not just coarsest)
-- Restricts training to adjacent frames (max_frame_distance=2) so physical motion stays within 16×16 windows
-- Crops each level to grid-aligned dimensions for clean 16×16 window splitting
-- Averages loss per-level first, then sums across levels (prevents fine levels from dominating)
+---
 
-## Architecture
+## File Roles
 
-### Pyramid Structure (Phase 2 Default)
+### Core (Read These First)
 
-```
-Input: (B, 135, 135, 3) RGB
-  ↓
-Level 0: Conv(3×3, stride=2) → 1×1 → 16 channels → (B, 67, 67, 16) → crop to 64×64 → 4×4 grid
-  ↓
-Level 1: Conv(3×3, stride=2) → 1×1 → 16 channels → (B, 33, 33, 16) → crop to 32×32 → 2×2 grid
-  ↓
-Level 2: Conv(3×3, stride=2) → 1×1 → 16 channels → (B, 16, 16, 16) → 1×1 grid
-```
+**`model.py`** — The embedding pyramid architecture.
+- `StemBlock`: Level 0, RGB input, two stacked 3×3 convs
+- `StandardBlock`: Levels 1-N, single 3×3 conv
+- `HierarchicalEmbeddingModel`: Full pyramid, 3 levels by default
+- Read this for architecture changes.
 
-Each level:
-- Uses VALID padding (no padding) to avoid border artifacts
-- Stride=2 convolution for 2× spatial downsampling
-- 1×1 convolution to maintain 16 channels
-- L2 normalization to unit norm
-- **Phase 2**: Crops to grid-aligned dimensions (divisible by 16) for clean window splitting
+**`loss.py`** — Training objectives.
+- `self_attention_entropy_loss_core`: Sharp self-peaks
+- `cross_attention_entropy_loss_core`: Sharp cross-peaks
+- `compute_hierarchical_embedding_losses`: Multi-level aggregation with level weighting
+- Read this for loss function changes.
 
-### Output
+### Orchestration (Read When Needed)
 
-The model returns a list of feature maps: `[Level_0, Level_1, Level_2]`
+**`train.py`** — Training loop.
+- `train_step`: JIT-compiled gradient update
+- `run_epoch`: DataLoader iteration, logging calls
+- `train`: Model/optimizer setup, main loop
+- Rarely changes. Read for debugging training flow.
 
-**Phase 2 Training**: All levels are used for loss computation with deep supervision.
-- Level 0: 64×64 spatial → 4×4 grid of 16×16 windows (16 windows)
-- Level 1: 32×32 spatial → 2×2 grid of 16×16 windows (4 windows)
-- Level 2: 16×16 spatial → 1×1 grid of 16×16 windows (1 window)
+**`video_dataset.py`** — Data pipeline.
+- `VideoFrameDataset`: Frame pair (t, t+k) generation
+- `create_dataloader`: Batch iterator
+- Only touch for dataset or pairing logic changes.
 
-## Input Dimension Calculation
+### Configuration
 
-Because we use VALID padding with stride=2, spatial dimensions shrink at each level. The dataloader must provide exactly the right input size to yield the target coarse dimensions.
+**`settings.py`** — Hyperparameters and CLI.
+- `DatasetSettings`, `ModelSettings`, `TrainingSettings`, `LoggingSettings`
+- `Settings`: Root dataclass, tyro CLI entry point
+- `create_smoke_test_settings`: Quick validation config
+- Change values here, not in code.
 
-**Formula** (working backwards from target):
-```
-input_size = (output_size - 1) * stride + kernel_size
-```
+### Diagnostics
 
-For 3 levels targeting 16×16 at coarsest (Phase 2 default):
-- Level 2 output: 16×16
-- Level 1 output → Level 2 input: (16-1)*2 + 3 = 33
-- Level 0 output → Level 1 input: (33-1)*2 + 3 = 67
-- Raw input → Level 0 input: (67-1)*2 + 3 = **135**
+**`visualization.py`** — TensorBoard logging figures.
+- `create_frame_with_grid_figure`: Input frames with 16×16 grid overlay
+- `create_attention_maps_figure`: Self/cross attention heatmaps
+- `log_visualizations`: Called every N steps, not in training loss path
+- Diagnostic only. Safe to modify without affecting training.
 
-The `DatasetSettings.img_size` property automatically calculates this based on `num_levels`, `coarse_grid_size`, and `window_size`.
+**`logging_utils.py`** — Console output helpers.
+- `print_header`, `print_footer`, `log_progress`
+- Pure formatting. No logic.
 
-## Loss Functions
+---
 
-**Phase 2: Deep Supervision** - Loss is applied at ALL pyramid levels simultaneously.
+## Utility Modules
 
-### Grid Alignment (Phase 2)
+**`../utils/grid.py`** — Spatial operations.
+- `WindowGrid`: Split/stitch embeddings into 16×16 windows
+- `compute_valid_resolution`, `validate_resolution`: Shape helpers
+- Used by `loss.py` for window splitting.
 
-Each level is cropped to dimensions divisible by window_size (16) before loss computation:
-- Level 0: 67×67 → crop to 64×64 → 4×4 grid of windows
-- Level 1: 33×33 → crop to 32×32 → 2×2 grid of windows
-- Level 2: 16×16 → no crop → 1×1 grid of windows
+**`../utils/path.py`** — Path helpers.
+- `get_datasets_dir`: Project datasets directory resolver
 
-### Per-Level Loss Computation
+**`../utils/logging.py`** — `JaxLogger` wrapper for TensorBoard.
 
-For each pyramid level:
-1. Crop feature maps to grid-aligned dimensions
-2. Split into 16×16 windows
-3. Compute self-attention entropy within each window
-4. Compute cross-attention entropy between corresponding windows
+---
 
-### Combined Loss (Phase 2)
+## Legacy Code (Ignore)
 
-```
-loss_L[i] = α * self_entropy_L[i] + β * cross_entropy_L[i]  # per level
-Total_Loss = loss_L0 + loss_L1 + loss_L2  # sum across levels
-```
+**`old_flow/`** — Previous implementation iteration.
+- Contains hierarchical flow estimation, checkpointing, older training scripts
+- **Do not modify.** Superseded by current `flow/` implementation.
 
-Default weights: α=1.0, β=0.1
+---
 
-**Why sum per-level losses?** If we flattened all windows from all levels into a single batch, Level 0 (16 windows) would statistically drown out Level 2 (1 window). By averaging within each level first, then summing, all levels contribute equally to the gradient.
-
-## Training Stabilizers
-
-### L2 Normalization
-
-All embeddings are L2-normalized to unit norm before computing attention. This prevents high-norm embeddings from dominating attention regardless of content.
-
-### Temperature Scaling
-
-Attention logits are divided by temperature τ=0.05 before softmax. Low temperature sharpens the distribution, amplifying small differences to select clear winners.
-
-## Training Data
-
-Video frame pairs from single continuous takes (no cuts). **Phase 2 restricts to adjacent frames** (max_frame_distance=2) to ensure physical pixel displacement stays within 16×16 attention windows at the finest resolutions.
-
-The dataset automatically resizes frames to the exact calculated input dimension (135×135 for default 3-level pyramid with 1×1 coarse grid).
-
-## Configuration
+## Entry Points
 
 ```bash
-# Phase 2 default (3 levels, 1×1 coarse grid, 16×16 windows, adjacent frames)
-python -m barevision.flow.train
+# Training
+python -m barevision.flow.train --dataset.batch_size=4 --training.epochs=10
 
-# Custom configuration
-python -m barevision.flow.train \
-  --model.num-levels 3 \
-  --model.embed-dim 16 \
-  --model.window-size 16 \
-  --dataset.coarse-grid-size 1 \
-  --dataset.max-frame-distance 2 \
-  --dataset.batch-size 4
-
-# Smoke test
+# Smoke test (quick validation)
 python -m barevision.flow.train --smoke-test
-```
 
-Key settings in `settings.py`:
-- `ModelSettings.num_levels`: Number of pyramid levels (default 3)
-- `ModelSettings.embed_dim`: Output channels per level (default 16)
-- `ModelSettings.window_size`: Attention window size (default 16)
-- `DatasetSettings.coarse_grid_size`: Target coarse grid dimension (default 1 for 1×1 grid)
-- `DatasetSettings.max_frame_distance`: Max temporal distance (default 2 for Phase 2)
-- `DatasetSettings.img_size`: **Calculated automatically** based on above parameters
-
-## Visualization
-
-**Phase 2**: Visualizations are generated for ALL pyramid levels independently.
-
-For each level:
-1. Original RGB images are downscaled to match that level's embedding dimensions
-2. A random 16×16 window is selected at that level's resolution
-3. Attention maps are overlaid directly on downscaled images
-4. Figures are logged with level-specific tags: `Level0/`, `Level1/`, `Level2/`
-
-This allows visual inspection of how each level tracks image structure at its native resolution.
-
-## Future Phases
-
-### Phase 2: Multi-Level Deep Supervision ✓ COMPLETED
-Train all pyramid levels with deep supervision using adjacent frames.
-
-### Phase 3: Flow-Based Window Shifting
-Add flow priors to shift attention windows at finer levels, canceling ego-motion to track patches across larger displacements.
-
-### Phase 4: Full Integration
-Integrate with flow estimation pipeline for end-to-end optical flow.
-
-## Testing
-
-```bash
-# Unit tests
+# Tests
 pytest src/barevision/flow/test_model.py
 pytest src/barevision/flow/test_loss.py
-
-# Smoke test
-python -m barevision.flow.train --smoke-test
+pytest src/barevision/flow/test_video_dataset.py
+pytest src/barevision/flow/test_visualization.py
 ```
 
-## Parameter Count
+---
 
-For default 3-level pyramid with 16 channels:
-- Level 0 (3→16 ch): ~720 parameters
-- Level 1 (16→16 ch): ~2,592 parameters
-- Level 2 (16→16 ch): ~2,592 parameters
-- **Total: ~5,904 parameters**
+## Typical Workflows
+
+| Task | Files to Read |
+|------|---------------|
+| Change pyramid depth/channels | `model.py`, `settings.py` |
+| Modify loss function | `loss.py` |
+| Debug training crash | `train.py`, `video_dataset.py` |
+| Add logging metric | `train.py`, `logging_utils.py` |
+| Change dataset format | `video_dataset.py` |
+| Adjust hyperparameters | `settings.py` (CLI or code) |
+
+---
+
+## Related Documentation
+
+- **Conceptual Design**: [`/ARCHITECTURE.md`](../../ARCHITECTURE.md) — Algorithm, loss formulation, pyramid design rationale

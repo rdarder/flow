@@ -17,6 +17,7 @@ import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.axes import Axes
+from matplotlib.figure import Figure
 from matplotlib.patches import Rectangle
 
 from barevision.flow.model import AttentionMaps, HierarchicalEmbeddingModel
@@ -42,7 +43,7 @@ ATTENTION_MAPS_SIZE = (20, 10)  # Multiple attention maps
 # =============================================================================
 
 
-def _figure_to_array(fig: "matplotlib.figure.Figure") -> np.ndarray:
+def _figure_to_array(fig: Figure) -> np.ndarray:  # type: ignore[assignment]
     """Convert matplotlib figure to RGB numpy array for TensorBoard.
 
     Args:
@@ -54,12 +55,12 @@ def _figure_to_array(fig: "matplotlib.figure.Figure") -> np.ndarray:
     fig.canvas.draw()
     width, height = fig.canvas.get_width_height()
 
-    # Get ARGB buffer from canvas
-    buf = fig.canvas.tostring_argb()
+    # Get RGBA buffer from canvas (modern matplotlib API)
+    buf = fig.canvas.buffer_rgba()
     buffer = np.frombuffer(buf, dtype=np.uint8)
 
-    # ARGB to RGB - skip alpha channel (first byte of each pixel)
-    image_array = buffer.reshape(height, width, 4)[:, :, 1:]
+    # RGBA to RGB - skip alpha channel (4th byte of each pixel)
+    image_array = buffer.reshape(height, width, 4)[:, :, :3]
 
     plt.close(fig)
 

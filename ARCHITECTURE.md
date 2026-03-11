@@ -1,117 +1,104 @@
-# Barevision: Non-Semantic Perception Architecture
+# Barevision: Hierarchical Optical Flow Architecture
 
-Barevision is a collection of machine learning models for non-semantic perception tasks, specifically designed to run on cheap inference hardware.
+This document outlines the design and architecture of the Barevision optical flow model. The system is divided into two primary components:
 
-## Project Vision
+1. **The Embedding Engine** (Currently Implemented): A self-supervised hierarchical feature extractor.
+2. **The Flow Estimation Pipeline** (Planned Design): A coarse-to-fine tracker utilizing a learned residual corrector and latent reconstruction loss.
 
-Create a complete perception pipeline for low-cost robots using only a monocular camera. The system understands the 3D world through geometric reasoning (optical flow → depth → pose → SLAM) without semantic labels ("this is a wall, a person"), focusing instead on low-level "voxel" reconstruction.
+---
 
-## Known Hardware Constraints
+## 1. The Embedding Engine (Implemented)
 
-- We limit ourselves to using only one camera, so the approach is monocular.
-- Most solutions involving images as matrices tend to involve `gatherND` style operations, which serve as a basis for image warping. For example, if we wanted to apply flow to an image, gatherND would be the go-to approach. The NPUs we're targeting don't have support for gatherND. Even if they had it, it'd be inefficient. We don't resort to solutions involving this kind of dynamic memory access (a matrix containing individual memory offsets).
-- We aim to be able to reconstruct a 3D scene on very cheap hardware, so optimization doesn't happen after the design, but rather guides the solution search space.
+The embedding engine processes raw RGB frames into a multi-scale pyramid of dense, visually unique feature embeddings. It is designed to be highly efficient on NPUs by strictly utilizing dense and grouped convolutions without complex routing or spatial padding.
 
-## Component Map
+### Architecture: The "Decoupled Cascade"
 
-| Package | Status | Purpose | Key Constraint |
-|---------|--------|---------|----------------|
-| **[`barevision.flow`](src/barevision/flow/ARCHITECTURE.md)** | ✅ Implemented | Self-supervised embedding learning for patch matching | Sharp, unique patch representations |
-| `barevision.depth` | 📋 Future | Monocular depth from flow | Depth from flow magnitude + epipolar geometry |
-| `barevision.pose` | 📋 Future | Camera pose estimation | Rotation/translation from flow field |
-| `barevision.slam` | 📋 Future | Visual SLAM system | Integration of flow, depth, pose |
+To prevent the destruction of high-frequency structural details during downsampling, feature extraction is strictly decoupled from spatial reduction.
 
-## Core Design Patterns
+* **Strictly `VALID` Padding:** The network uses no artificial padding (`padding='VALID'`). This drops edge pixels at every convolution, structurally preventing misleading boundary data (zero-padding) from corrupting the embeddings.
+* **L2 Normalized Hypersphere:** The final embeddings at each level are L2 normalized to unit length. Crucially, no ReLU activation is applied before normalization, allowing the network to utilize the full [-1.0, 1.0] cosine similarity space.
 
-- We use simplified cross attention mechanisms to find a patch in one frame inside the other frame.
-- We use a small attention window size for being able to run attention efficiently.
-- We use simplified self attention mechanism to help guess flow on areas where cross attention didn't match well.
-- We process frames in a pyramid of resolutions to be able to capture large flow with a small window size.
-- Hierarchies in the pyramid are processed coarse to fine grained, each level becoming a prior for next level flow.
-- Attention mechanism use visual similarity and spatial proximity for computing weights.
-- The sharpness of the attention vectors is a strong indicator of a good match, we use it as confidence.
+**Pyramid Blocks:**
 
-### Abstraction Boundaries
+1. **StemBlock (Level 0):** Operates on raw 3-channel RGB. Expands the receptive field to 25 pixels using two stacked 3x3 `stride=1` convolutions.
+* `Conv(Dense, 3→32)` → `GroupNorm` → `GELU`
+* `Conv(Groups=8, 32→32)` → `GroupNorm` → `GELU`
+* *Branch A (Embed):* 1x1 Conv (32→16) → L2 Norm
+* *Branch B (Downsample):* 3x3 Conv, `stride=2`, `VALID`
 
-```
-Embedding <- Window <- Grid <- Image level
-```
 
-Clean separation between spatial operations (splitting/stitching) and attention mechanics.
+2. **StandardBlock (Levels 1 to N):** Refines features for coarser levels.
+* `Conv(Groups=8, 32→32)` → `GroupNorm` → `GELU`
+* *Branch A (Embed):* 1x1 Conv (32→16) → L2 Norm
+* *Branch B (Downsample):* 3x3 Conv, `stride=2`, `VALID` (Omitted on the final level).
 
-- **Embedding**: A dimensional representation of a patch of the image, computed by a model. An abstract "pixel".
-- **Window**: A square contiguous region of embeddings where attention mechanism can run on.
-- **Grid**: A rectangular arrangement of non overlapping windows that makes up the entire image being analyzed.
-- **Image**: The raw frame, typically in 1 or 3 channels.
 
-Images are analyzed in pairs (as in a pair of consecutive frames in a video).
 
-### Verification Pipeline
+### Resolution and the Spatial Buffer
 
-1. **Unit tests**: `pytest barevision.flow`
-2. **Smoke test**: `python -m barevision.flow.train --smoke-test`
-3. **Import validation**: `from barevision.flow import SimpleEmbeddingModel`
+Because the network drops edge pixels via `VALID` padding, the physical resolution of the feature maps shrinks slightly more than a standard 2x downsample at every level. For example, to get a clean 16x16 grid at Level 2, the network must ingest an 83x83 crop at Level 0.
 
-## Package Details
+This means the finer levels (Level 0 and Level 1) physically cover a wider field of view than the coarsest level. This "extra" resolution acts as a crucial spatial buffer that becomes necessary during the flow estimation phase.
 
-### `barevision.flow` - Self-Supervised Embedding Learning
+---
 
-**Goal**: Learn embedding representations optimized for attention-based patch matching.
+## 2. Flow Estimation Pipeline (Planned Design)
 
-**Approach**:
-- **Loss function**: Self-attention entropy + cross-attention entropy minimization
-- **Objective**: Embeddings should identify patches uniquely (sharp self-attention) and find 1-2 matches in next frame (sharp cross-attention)
-- **Training data**: "Single-take" video frames (no cuts)
-- **Future**: Reconstructive loss will be added to the composite loss
+Once the embeddings are trained, the inference pipeline extracts optical flow by recursively passing global flow priors down the pyramid from coarse to fine.
 
-**Rationale**: Training embeddings with simpler, focused objectives that directly optimize for patch matching. This avoids the gradient complexity of end-to-end flow training and enables faster experimentation.
+### Hierarchical Cascading and Window Shifting
 
-## Integration Strategy
+At the coarsest level (Level 2), the network estimates the macro-flow of the scene. This median flow vector is upscaled and passed as a prior to the next finer level (Level 1).
 
-The flow package is designed for incremental integration:
+To cancel out global/ego-motion, Frame 2's attention window at Level 1 is physically shifted by this prior to re-center the target object. **This is where the spatial buffer from Part 1 is utilized:** Because Level 1 ingested a wider field of view without artificial padding, we have the valid, uncorrupted feature context required to safely slide this shifted window without falling off the edge of the image tensor.
 
-1. **Phase 1**: Standalone embedding training produces optimized representations
-2. **Phase 2**: Embeddings integrated into full optical flow estimation pipeline
-3. **Phase 3**: Depth estimation from flow outputs
-4. **Phase 4**: Integration of pose and SLAM as pipelines stabilize
+### The Constellation & Centroids
 
-Each package maintains its own:
-- Training loop
-- Configuration (`settings.py`)
-- Architecture documentation
-- Test suite
+Because the embeddings form stable "signatures" or "constellations" of attention peaks rather than single solid blobs, tracking relies on comparing the center of mass (Centroid) of the Self-Attention map to the Cross-Attention map.
 
-## Configuration
+### Decoupled Temperature
 
-All packages use tyro CLI with nested dataclass support:
+The temperature used for the softmax operation is decoupled between the embedding generation phase and the flow estimation phase:
 
-```bash
-# Embedding training
-python -m barevision.flow.train --model.window-size 16 --dataset.img-size 200 200
-```
+* **Embedding Generation (Entropy Loss):** Uses a cold temperature (e.g., 0.05) to force the network to sculpt sharp, highly distinct peaks and reject ambiguous background noise.
+* **Flow Estimation:** Uses a higher temperature (e.g., 0.2 to 0.5). This visually softens the sharp peaks into smoother, more continuous blob-like regions, ensuring that the centroid calculation has a stable, contiguous mass to measure.
 
-## Future Directions
+### The Boundary Problem (Centroid Drag)
 
-### Short-term (v2+)
-- Add reconstructive loss to composite objective
-- Overlapping windows for better peer propagation
-- Confidence calibration across pyramid levels
+When a feature moves near the edge of a 16x16 window, the boundary physically truncates part of the attention signature. Taking the geometric centroid of a truncated signature artificially skews the flow estimate backward (Centroid Drag).
 
-### Medium-term
-- Depth estimation from optical flow (epipolar geometry)
-- Camera pose estimation
-- Moving object detection via flow consensus
+### Solution: The Flow Estimator
 
-### Long-term
-- Full visual SLAM pipeline
-- Multi-camera support
-- Real-time deployment on target NPU hardware
+Instead of utilizing explicit mathematical geometry to correct boundary clipping, the pipeline employs a small, per-embedding MLP to statistically predict the local residual flow based on extremely cheap spatial features.
 
-## Documentation Structure
+For every embedding, the following 18-float feature vector is extracted:
 
-- **This file**: High-level project architecture
-- **Package-specific**: `src/barevision/<package>/ARCHITECTURE.md`
-- **Development**: `AGENTS.md` (notes for AI assistants)
-- **Getting started**: `README.md`
+1. **Source Position:** Local `X, Y` coordinates (2 floats).
+2. **Prior Flow:** `U, V` vector passed down from the parent level (2 floats).
+3. **Centroids:** `Cx, Cy` for both Self and Cross attention maps (4 floats).
+4. **Quadrant Masses:** The unnormalized sum of attention weights split into 4 spatial quadrants for both Self and Cross maps. This acts as a cheap geometric proxy for boundary truncation (8 floats).
+5. **Max Peak Value:** The absolute maximum attention weight for Self and Cross maps. Serves as a cheap proxy for variance/scatter (2 floats).
 
-New contributors should read this document first, then dive into specific package documentation as needed.
+These 18 floats are passed through a small neural network (`Linear(18→24) → ReLU → Linear(24→3)`).
+The network outputs three values:
+
+* **Residual U:** The local X displacement relative to the shifted window.
+* **Residual V:** The local Y displacement relative to the shifted window.
+* **Confidence:** A score [0, 1] predicting the reliability of the patch.
+
+*Note: The residual U and V outputs are continuous values that represent the full local flow of that specific embedding, which can span multiple pixels.*
+
+### Flow Aggregation
+
+At each level, the predicted residual flows are added to the prior flow. The flows are then aggregated across the entire image using a **Confidence-Weighted Median**, which naturally discards ambiguous or occluded patches. This robust median flow is then upscaled and passed to the next finer level as the new prior.
+
+---
+
+## 3. Dual Loss Formulation (End-to-End Training)
+
+Once the flow estimation pipeline is integrated, the model will be trained using a dual objective to balance structural distinctness with accurate tracking.
+
+1. **Entropy Minimization Loss:** Applied to the raw attention maps (Self and Cross). This acts as a regularizer to prevent the embeddings and flow estimation from collapsing into trivial, perfectly smooth solutions. It forces the embeddings to remain locally unique and visually distinct.
+2. **Reconstruction Loss (Latent Space):** Instead of reconstructing physical RGB pixels (which is highly sensitive to lighting changes and noise), the loss is computed in the latent space. The network uses the estimated flow field to warp the Frame 1 embeddings and minimizes the distance between the warped Frame 1 embeddings and the true Frame 2 embeddings.
+
+By optimizing both simultaneously, the embedding engine learns features that are specifically optimized to be trackable by the flow estimator, while the entropy loss guarantees those features remain sharply grounded in the visual structure of the frame.

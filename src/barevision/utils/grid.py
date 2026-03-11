@@ -12,9 +12,9 @@ import jax.numpy as jnp
 def compute_valid_resolution(
     num_levels: int,
     window_size: int = 16,
-    height: Optional[int] = None,
-    width: Optional[int] = None,
-) -> Tuple[int, int]:
+    height: int | None = None,
+    width: int | None = None,
+) -> tuple[int, int]:
     """Compute the required image resolution for a given number of pyramid levels.
 
     For num_levels pyramid levels and given window_size, we need:
@@ -37,12 +37,10 @@ def compute_valid_resolution(
     """
     min_size = window_size * (2**num_levels)
 
-    if height is None:
-        height = min_size
-    if width is None:
-        width = min_size
-
-    return (height, width)
+    # Ensure we return concrete ints (not Optional)
+    final_height: int = height if height is not None else min_size
+    final_width: int = width if width is not None else min_size
+    return (final_height, final_width)
 
 
 def validate_resolution(
