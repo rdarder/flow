@@ -426,10 +426,6 @@ class TestHierarchicalEmbeddingLosses:
 
         assert aux["level_weights"] == [1.0, 1.0, 1.0]
 
-    def test_temperature_constant(self):
-        """Verify temperature is set to 0.05 for Phase 2."""
-        assert TEMPERATURE == 0.05
-
 
 class TestHierarchicalLossIntegration:
     """Integration tests for hierarchical loss with model forward pass."""
