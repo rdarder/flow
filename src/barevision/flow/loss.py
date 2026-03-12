@@ -17,9 +17,10 @@ Phase 2 (Deep Supervision):
 - Averages loss per-level first, then sums across levels
 """
 
+from typing import List, Tuple
+
 import jax
 import jax.numpy as jnp
-from typing import List, Tuple
 
 from barevision.utils.grid import WindowGrid
 
@@ -113,24 +114,26 @@ def compute_embedding_losses(
     emb1: jnp.ndarray,
     emb2: jnp.ndarray,
     window_size: int = 16,
-    alpha: float = 1.0,
-    beta: float = 0.1,
+    lambda_entropy: float = 0.5,
 ) -> tuple[jnp.ndarray, dict]:
     """Compute combined self and cross attention losses.
 
     Handles window splitting and returns scalar loss values.
     Fails explicitly if input resolution is not aligned with window_size.
 
+    Entropy is normalized by log(window_size²) to bring it into [0, 1] range,
+    making it comparable to reconstruction loss.
+
     Args:
         emb1: (B, H, W, D) embeddings from frame 1
         emb2: (B, H, W, D) embeddings from frame 2
         window_size: Size of attention windows (default 16)
-        alpha: Weight for self-attention loss (default 1.0)
-        beta: Weight for cross-attention loss (default 0.1)
+        lambda_entropy: Cross-attention loss weight in [0, 1] (default 0.5 = equal weighting)
+                       combined = (1 - lambda_entropy) * self_loss + lambda_entropy * cross_loss
 
     Returns:
         Tuple of (combined_loss, aux_dict) where:
-            - combined_loss: scalar combined loss value
+            - combined_loss: scalar combined loss value (normalized to [0, 1])
             - aux_dict: {'self_loss': scalar, 'cross_loss': scalar}
 
     Raises:
@@ -172,9 +175,15 @@ def compute_embedding_losses(
         loss = loss.transpose(0, 1, 3, 2, 4)
         return loss.reshape(B, H, W)
 
-    self_loss = reshape_to_grid(self_loss_flat).mean()
-    cross_loss = reshape_to_grid(cross_loss_flat).mean()
-    combined = alpha * self_loss + beta * cross_loss
+    # Mean and normalize by theoretical maximum entropy
+    self_loss = reshape_to_grid(self_loss_flat).mean() / jnp.log(
+        window_size * window_size
+    )
+    cross_loss = reshape_to_grid(cross_loss_flat).mean() / jnp.log(
+        window_size * window_size
+    )
+
+    combined = (1 - lambda_entropy) * self_loss + lambda_entropy * cross_loss
 
     aux = dict(
         self_loss=self_loss,
@@ -213,8 +222,7 @@ def compute_hierarchical_embedding_losses(
     pyramid1: List[jnp.ndarray],
     pyramid2: List[jnp.ndarray],
     window_size: int = 16,
-    alpha: float = 1.0,
-    beta: float = 0.1,
+    lambda_entropy: float = 0.5,
     level_weight_decay: float = 2.0,
 ) -> tuple[jnp.ndarray, dict]:
     """Compute compound embedding loss across all pyramid levels.
@@ -223,8 +231,9 @@ def compute_hierarchical_embedding_losses(
     1. Crops each level to grid-aligned dimensions (divisible by window_size)
     2. Applies L2 normalization and temperature scaling per level
     3. Computes self + cross entropy loss per level
-    4. Applies level-weighted loss (coarser levels get higher weight)
-    5. Sums weighted per-level losses for final compound loss
+    4. Normalizes entropy by theoretical maximum (log of window size squared)
+    5. Applies level-weighted loss (coarser levels get higher weight)
+    6. Sums weighted per-level losses for final compound loss
 
     Level weighting: level_i_weight = level_weight_decay^i
     - Level 0 (finest): weight = decay^0 = 1
@@ -232,18 +241,23 @@ def compute_hierarchical_embedding_losses(
     - Level 2 (coarsest): weight = decay^2
     With default decay=2.0, coarsest level gets 4x the weight of finest level.
 
+    Entropy Normalization:
+    - Per-level entropy is divided by log(window_size²) to normalize to [0, 1]
+    - Final weighted sum is divided by sum(level_weights) to maintain [0, 1] range
+    - This makes lambda_entropy and lambda_recon directly comparable
+
     Args:
         pyramid1: List of feature maps from frame 1, one per level
         pyramid2: List of feature maps from frame 2, one per level
         window_size: Size of attention windows (default 16)
-        alpha: Weight for self-attention loss (default 1.0)
-        beta: Weight for cross-attention loss (default 0.1)
+        lambda_entropy: Cross-attention loss weight in [0, 1] (default 0.5 = equal weighting)
+                       combined = (1 - lambda_entropy) * self_loss + lambda_entropy * cross_loss
         level_weight_decay: Weight multiplier per level (default 2.0)
                            Coarser levels get: weight = decay^level_index
 
     Returns:
         Tuple of (total_loss, aux_dict) where:
-            - total_loss: scalar sum of weighted per-level losses
+            - total_loss: scalar sum of weighted per-level losses (normalized to [0, 1])
             - aux_dict: {'self_loss': scalar, 'cross_loss': scalar,
                         'level_losses': list of per-level weighted losses,
                         'level_weights': list of weight per level}
@@ -260,6 +274,10 @@ def compute_hierarchical_embedding_losses(
     total_loss = jnp.array(0.0)
     total_self_loss = jnp.array(0.0)
     total_cross_loss = jnp.array(0.0)
+
+    # Theoretical maximum entropy for a window: log(N) where N = window_size²
+    # This normalizes entropy to [0, 1] range
+    max_entropy = jnp.log(window_size * window_size)
 
     for level_idx in range(num_levels):
         # Calculate level weight: coarser levels (higher index) get higher weight
@@ -312,8 +330,14 @@ def compute_hierarchical_embedding_losses(
         self_loss_level = reshape_to_grid(self_loss_flat).mean()
         cross_loss_level = reshape_to_grid(cross_loss_flat).mean()
 
-        # Per-level combined loss (unweighted)
-        level_loss_unweighted = alpha * self_loss_level + beta * cross_loss_level
+        # Normalize entropy by theoretical maximum to bring into [0, 1] range
+        self_loss_level = self_loss_level / max_entropy
+        cross_loss_level = cross_loss_level / max_entropy
+
+        # Per-level combined loss (unweighted) using lambda_entropy
+        level_loss_unweighted = (
+            1 - lambda_entropy
+        ) * self_loss_level + lambda_entropy * cross_loss_level
 
         # Apply level weight
         level_loss_weighted = level_loss_unweighted * level_weight
@@ -324,12 +348,77 @@ def compute_hierarchical_embedding_losses(
         total_cross_loss += cross_loss_level * level_weight
         total_loss += level_loss_weighted
 
+    # Normalize by total weight to maintain [0, 1] range regardless of num_levels
+    total_weight = sum(level_weights)
+    total_loss = total_loss / total_weight
+    total_self_loss = total_self_loss / total_weight
+    total_cross_loss = total_cross_loss / total_weight
+
     # Weighted per-level losses summed
     aux: dict = dict(
         self_loss=total_self_loss,
         cross_loss=total_cross_loss,
         level_losses=level_losses,
         level_weights=level_weights,
+    )
+
+    return total_loss, aux
+
+
+def compute_combined_loss(
+    pyramid1,
+    pyramid2,
+    warped_embeddings,
+    target_embeddings,
+    window_size: int = 16,
+    lambda_entropy: float = 0.5,
+    level_weight_decay: float = 2.0,
+    lambda_recon: float = 0.5,
+) -> tuple[jnp.ndarray, dict]:
+    """Compute combined entropy + reconstruction loss.
+
+    total = (1 - lambda_recon) * entropy_loss + lambda_recon * reconstruction_loss
+
+    Args:
+        pyramid1: List of feature maps from frame 1, one per level
+        pyramid2: List of feature maps from frame 2, one per level
+        warped_embeddings: (B, H, W, D) Frame 1 embeddings warped to F2 coordinate frame
+        target_embeddings: (B, H, W, D) Frame 2 embeddings (target for reconstruction)
+        window_size: Size of attention windows (default 16)
+        lambda_entropy: Cross-attention loss weight in [0, 1] (default 0.5 = equal weighting)
+                       entropy_loss = (1 - lambda_entropy) * self_loss + lambda_entropy * cross_loss
+        level_weight_decay: Weight multiplier per level (default 2.0)
+        lambda_recon: Reconstruction loss weight in [0, 1] (default 0.5 = equal weighting)
+                      total = (1 - lambda_recon) * entropy + lambda_recon * reconstruction
+
+    Returns:
+        Tuple of (total_loss, aux_dict) where:
+            - total_loss: scalar combined loss
+            - aux_dict: {'self_loss', 'cross_loss', 'entropy_loss', 'reconstruction_loss'}
+    """
+    # Compute entropy loss
+    entropy_loss, entropy_aux = compute_hierarchical_embedding_losses(
+        pyramid1,
+        pyramid2,
+        window_size=window_size,
+        lambda_entropy=lambda_entropy,
+        level_weight_decay=level_weight_decay,
+    )
+
+    # Compute reconstruction loss
+    from barevision.flow.reconstruction_loss import reconstruction_loss_core
+
+    recon_loss = reconstruction_loss_core(warped_embeddings, target_embeddings)
+
+    # Combine losses with weighting
+    # total = (1 - lambda_recon) * entropy + lambda_recon * reconstruction
+    total_loss = (1 - lambda_recon) * entropy_loss + lambda_recon * recon_loss
+
+    aux = dict(
+        self_loss=entropy_aux["self_loss"],
+        cross_loss=entropy_aux["cross_loss"],
+        entropy_loss=entropy_loss,
+        reconstruction_loss=recon_loss,
     )
 
     return total_loss, aux

@@ -1,4 +1,4 @@
-"""Training script for embedding model."""
+"""Training script for embedding model with flow estimation."""
 
 import time
 from functools import partial
@@ -7,9 +7,11 @@ import optax
 import tyro
 from flax import nnx
 
-from barevision.flow.loss import compute_hierarchical_embedding_losses
+from barevision.flow.loss import compute_combined_loss
 from barevision.flow.logging_utils import log_progress, print_footer, print_header
 from barevision.flow.model import HierarchicalEmbeddingModel, count_parameters
+from barevision.flow.flow_estimator import FlowEstimator
+from barevision.flow.reconstruction_loss import warp_embeddings
 from barevision.flow.settings import (
     ModelSettings,
     Settings,
@@ -20,39 +22,77 @@ from barevision.flow.visualization import log_visualizations
 from barevision.utils.logging import JaxLogger
 
 
-@partial(nnx.jit, static_argnames=("logging", "window_size", "level_weight_decay"))
+@partial(
+    nnx.jit,
+    static_argnames=(
+        "logging",
+        "window_size",
+        "level_weight_decay",
+        "lambda_entropy",
+        "lambda_recon",
+        "flow_temperature",
+    ),
+)
 def train_step(
     model,
+    flow_estimator,
     optimizer,
+    flow_optimizer,
     img1,
     img2,
     logging: bool = False,
     window_size: int = 16,
     level_weight_decay: float = 2.0,
+    lambda_entropy: float = 0.5,
+    lambda_recon: float = 0.5,
+    flow_temperature: float = 0.15,
 ):
     """Execute single training step with gradient update.
 
-    Uses hierarchical loss across all pyramid levels (Phase 2 deep supervision).
+    Uses combined entropy + reconstruction loss across all pyramid levels.
     """
 
-    def loss_fn(model):
+    def loss_fn(model, flow_estimator):
         # Get pyramid from both frames
         pyramid1 = model(img1)
         pyramid2 = model(img2)
 
-        # Apply hierarchical loss across all levels with level weighting
-        return compute_hierarchical_embedding_losses(
-            pyramid1,
-            pyramid2,
-            window_size=window_size,
-            level_weight_decay=level_weight_decay,
+        # Compute flow at coarsest level
+        flow = model.compute_flow(
+            img1, img2, flow_estimator, temperature=flow_temperature
         )
 
-    (loss, aux), grads = nnx.value_and_grad(loss_fn, has_aux=True)(model)
+        # Get coarsest level embeddings for reconstruction
+        emb1_coarse = pyramid1[-1]
+        emb2_coarse = pyramid2[-1]
+
+        # Warp Frame 1 embeddings using predicted flow
+        warped = warp_embeddings(emb1_coarse, flow)
+
+        # Compute combined loss
+        return compute_combined_loss(
+            pyramid1,
+            pyramid2,
+            warped_embeddings=warped,
+            target_embeddings=emb2_coarse,
+            window_size=window_size,
+            lambda_entropy=lambda_entropy,
+            level_weight_decay=level_weight_decay,
+            lambda_recon=lambda_recon,
+        )
+
+    # Get gradients for both model and flow_estimator
+    (loss, aux), (model_grads, flow_grads) = nnx.value_and_grad(
+        loss_fn, has_aux=True, argnums=(0, 1)
+    )(model, flow_estimator)
 
     if not logging:
         aux = {}  # drop so jit can trace it as not being used.
-    optimizer.update(model, grads)
+
+    # Update both model and flow estimator
+    optimizer.update(model, model_grads)
+    flow_optimizer.update(flow_estimator, flow_grads)
+
     return loss, aux
 
 
@@ -60,7 +100,9 @@ def run_epoch(
     epoch,
     global_step,
     model,
+    flow_estimator,
     optimizer,
+    flow_optimizer,
     logger,
     dataset_settings,
     model_settings,
@@ -80,12 +122,17 @@ def run_epoch(
     for step, (img1, img2, metadata) in enumerate(loader):
         loss, aux = train_step(
             model,
+            flow_estimator,
             optimizer,
+            flow_optimizer,
             img1,
             img2,
             logging_settings.should_log_something(global_step),
             model_settings.window_size,
             model_settings.level_weight_decay,
+            model_settings.lambda_entropy,
+            model_settings.lambda_recon,
+            model_settings.flow_temperature,
         )
 
         if global_step % logging_settings.log_every_steps == 0:
@@ -111,6 +158,8 @@ def run_epoch(
                 global_step,
                 model_settings.window_size,
                 model_settings.num_levels,
+                flow_estimator=flow_estimator,
+                flow_temperature=model_settings.flow_temperature,
             )
 
         global_step += 1
@@ -130,6 +179,7 @@ def train(settings: Settings):
         run_name_prefix=settings.logging.run_name_prefix,
     )
 
+    # Create embedding model
     model = HierarchicalEmbeddingModel(
         embed_dim=settings.model.embed_dim,
         in_channels=3,
@@ -137,6 +187,14 @@ def train(settings: Settings):
         rngs=nnx.Rngs(0),
     )
 
+    # Create flow estimator
+    flow_estimator = FlowEstimator(
+        window_size=settings.model.window_size,
+        hidden_dim=settings.model.flow_hidden_dim,
+        rngs=nnx.Rngs(0),
+    )
+
+    # Create optimizers for both models
     optimizer = nnx.Optimizer(
         model,
         optax.chain(
@@ -146,7 +204,21 @@ def train(settings: Settings):
         wrt=nnx.Param,
     )
 
-    print(f"Model parameters: {count_parameters(model)}\n")
+    flow_optimizer = nnx.Optimizer(
+        flow_estimator,
+        optax.chain(
+            optax.clip_by_global_norm(1.0),
+            optax.adam(settings.training.learning_rate),
+        ),
+        wrt=nnx.Param,
+    )
+
+    # Count parameters
+    model_params = count_parameters(model)
+    flow_params = count_parameters(flow_estimator)
+    print(f"Embedding model parameters: {model_params}")
+    print(f"Flow estimator parameters: {flow_params}")
+    print(f"Total parameters: {model_params + flow_params}\n")
 
     global_step = 0
     for epoch in range(settings.training.epochs):
@@ -154,7 +226,9 @@ def train(settings: Settings):
             epoch,
             global_step,
             model,
+            flow_estimator,
             optimizer,
+            flow_optimizer,
             logger,
             settings.dataset,
             settings.model,
@@ -163,7 +237,7 @@ def train(settings: Settings):
 
     logger.close()
     print_footer()
-    return model
+    return model, flow_estimator
 
 
 def main():

@@ -361,6 +361,8 @@ def log_visualizations(
     step: int,
     window_size: int = 16,
     num_levels: int = 3,
+    flow_estimator=None,
+    flow_temperature: float = 0.15,
 ):
     """Generate and log visualization figures for hierarchical model.
 
@@ -384,12 +386,47 @@ def log_visualizations(
         step: Global step for logging
         window_size: Attention window size in pixels
         num_levels: Number of pyramid levels
+        flow_estimator: FlowEstimator module (optional, for flow visualization)
+        flow_temperature: Temperature for attention softmax in flow estimation
     """
     import gc
 
     # Get pyramid to determine dimensions for each level
     pyramid1 = model(img1)
     pyramid2 = model(img2)
+
+    # Log flow visualization if flow_estimator is provided
+    if flow_estimator is not None:
+        try:
+            from barevision.flow.visualization_flow import (
+                flow_to_colorwheel,
+                create_flow_component_figure,
+            )
+
+            # Compute flow at coarsest level
+            flow = model.compute_flow(
+                img1, img2, flow_estimator, temperature=flow_temperature
+            )
+
+            # Get coarsest level dimensions
+            flow_coarse = pyramid1[-1]
+            B, H_flow, W_flow, _ = flow_coarse.shape
+
+            # Reshape flow if needed (batch size 1)
+            flow_viz = flow[0] if flow.shape[0] == 1 else flow.mean(axis=0)
+
+            # Convert to colorwheel
+            flow_rgb = flow_to_colorwheel(flow_viz, max_flow=1.0)
+
+            # Log flow colorwheel visualization
+            logger.log_image("Flow/Predicted", flow_rgb, step)
+
+            # Log flow component visualizations (X and Y as heatmaps)
+            flow_component_fig = create_flow_component_figure(flow_viz, metadata, step)
+            logger.log_image("Flow/Components_XY", flow_component_fig, step)
+        except Exception as e:
+            # Silently skip flow visualization if it fails
+            pass
 
     # Log visualizations for each level
     for level_idx in range(num_levels):

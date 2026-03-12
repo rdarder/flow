@@ -186,6 +186,13 @@ def log_metrics(logger: JaxLogger, loss, aux, step: int):
     logger.log_scalar("Loss/self_entropy", float(aux["self_loss"]), step)
     logger.log_scalar("Loss/cross_entropy", float(aux["cross_loss"]), step)
 
+    # Log reconstruction loss if available (flow estimation)
+    if "reconstruction_loss" in aux:
+        logger.log_scalar(
+            "Loss/reconstruction", float(aux["reconstruction_loss"]), step
+        )
+        logger.log_scalar("Loss/entropy", float(aux["entropy_loss"]), step)
+
 
 def log_diagnostics(logger: JaxLogger, model, img1, step: int, window_size: int = 16):
     """Log gradient statistics, embeddings, and attention statistics.
@@ -201,10 +208,24 @@ def log_diagnostics(logger: JaxLogger, model, img1, step: int, window_size: int 
     log_attention_statistics(logger, embeddings, step, window_size)
 
 
-def format_progress_line(epoch: int, step: int, loss: float, elapsed: float) -> str:
+def format_progress_line(
+    epoch: int, step: int, loss: float, elapsed: float, aux: dict | None = None
+) -> str:
     """Format training progress line for console output."""
     steps_per_sec = (step + 1) / elapsed
-    return f"Epoch {epoch} | Step {step} | Loss: {loss:.4f} | {steps_per_sec:.1f} steps/sec"
+
+    # Start with basic info
+    parts = [f"Epoch {epoch} | Step {step} | Loss: {loss:.4f}"]
+
+    # Add loss breakdown if available
+    if aux is not None and "entropy_loss" in aux and "reconstruction_loss" in aux:
+        entropy = float(aux["entropy_loss"])
+        recon = float(aux["reconstruction_loss"])
+        parts.append(f"Entropy: {entropy:.4f} | Recon: {recon:.4f}")
+
+    parts.append(f"{steps_per_sec:.1f} steps/sec")
+
+    return " | ".join(parts)
 
 
 def log_progress(
@@ -238,7 +259,9 @@ def log_progress(
     """
     log_metrics(logger, loss, aux, step)
     log_diagnostics(logger, model, img1, step, window_size)
-    print(format_progress_line(epoch, step, float(loss), time.time() - epoch_start))
+    print(
+        format_progress_line(epoch, step, float(loss), time.time() - epoch_start, aux)
+    )
 
 
 def print_footer():

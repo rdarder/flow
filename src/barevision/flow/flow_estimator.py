@@ -1,0 +1,181 @@
+"""Minimal flow estimator for coarsest level.
+
+Predicts optical flow from attention centroid positions.
+"""
+
+import jax
+import jax.numpy as jnp
+from flax import nnx
+
+
+class AttentionCentroids(nnx.Module):
+    """Computes centroids from attention weight maps.
+
+    Input: self_attn (B, N, N), cross_attn (B, N, N) where N = H*W
+    Output: (self_cx, self_cy, cross_cx, cross_cy) all normalized [0,1]
+
+    The centroid is computed as the center-of-mass of attention weights,
+    where each position's contribution is weighted by its attention value.
+    """
+
+    def __init__(self, window_size: int = 16, *, rngs: nnx.Rngs):
+        """Initialize centroid computer.
+
+        Args:
+            window_size: Size of attention window (default 16)
+            rngs: NNX RNGs (not used, but required for consistency)
+        """
+        self.window_size = window_size
+
+        # Pre-compute normalized coordinate grid (window_size, window_size, 2)
+        # where values range from 0 to 1 in both axes
+        # This is a static buffer, not a parameter
+        y, x = jnp.meshgrid(
+            jnp.arange(window_size, dtype=jnp.float32),
+            jnp.arange(window_size, dtype=jnp.float32),
+            indexing="ij",
+        )
+
+        # Normalize to [0, 1]
+        self.norm_coords = jnp.stack(
+            [
+                x / (window_size - 1),  # cx normalized
+                y / (window_size - 1),  # cy normalized
+            ],
+            axis=-1,
+        )  # (H, W, 2)
+
+    def __call__(self, self_attn: jnp.ndarray, cross_attn: jnp.ndarray) -> jnp.ndarray:
+        """Compute centroids for self and cross attention maps.
+
+        Args:
+            self_attn: (B, N, N) self-attention weights where N = H*W
+            cross_attn: (B, N, N) cross-attention weights where N = H*W
+
+        Returns:
+            centroids: (B, N, 4) = [self_cx, self_cy, cross_cx, cross_cy] per query pixel
+        """
+        B, N, _ = self_attn.shape
+        H = W = self.window_size
+
+        # Reshape attention maps to spatial format
+        # (B, N, N) -> (B, N, H, W) where N queries each attend to H*W positions
+        self_attn_spatial = self_attn.reshape(B, N, H, W)
+        cross_attn_spatial = cross_attn.reshape(B, N, H, W)
+
+        # Compute centroid for each query pixel
+        # Centroid = sum over spatial positions of (attention_weight * normalized_coord)
+        # self_attn_spatial: (B, N, H, W)
+        # norm_coords: (H, W, 2)
+        # Result: (B, N, 2) for each attention type
+
+        # For self attention
+        self_cx = jnp.sum(
+            self_attn_spatial * self.norm_coords[..., 0], axis=(2, 3)
+        )  # (B, N)
+        self_cy = jnp.sum(
+            self_attn_spatial * self.norm_coords[..., 1], axis=(2, 3)
+        )  # (B, N)
+
+        # For cross attention
+        cross_cx = jnp.sum(
+            cross_attn_spatial * self.norm_coords[..., 0], axis=(2, 3)
+        )  # (B, N)
+        cross_cy = jnp.sum(
+            cross_attn_spatial * self.norm_coords[..., 1], axis=(2, 3)
+        )  # (B, N)
+
+        # Stack: (B, N, 4)
+        centroids = jnp.stack([self_cx, self_cy, cross_cx, cross_cy], axis=-1)
+
+        return centroids
+
+
+class FlowEstimator(nnx.Module):
+    """Predicts residual flow from attention centroids.
+
+    Input: 6 floats per pixel (src_x, src_y, self_cx, self_cy, cross_cx, cross_cy)
+    Output: 2 floats per pixel (residual_u, residual_v)
+
+    All coordinates are normalized to [0, 1] range.
+    """
+
+    def __init__(self, window_size: int = 16, hidden_dim: int = 24, *, rngs: nnx.Rngs):
+        """Initialize flow estimator.
+
+        Args:
+            window_size: Size of attention window (used for coordinate grid)
+            hidden_dim: Hidden layer dimension (default 24)
+            rngs: NNX RNGs for parameter initialization
+        """
+        self.window_size = window_size
+        self.hidden_dim = hidden_dim
+
+        self.mlp = nnx.Sequential(
+            nnx.Linear(6, hidden_dim, rngs=rngs),
+            nnx.relu,
+            nnx.Linear(hidden_dim, 2, rngs=rngs),
+        )
+
+    def __call__(self, src_pos: jnp.ndarray, centroids: jnp.ndarray) -> jnp.ndarray:
+        """Predict flow from source positions and centroids.
+
+        Args:
+            src_pos: (B, N, 2) normalized source coordinates [x, y]
+            centroids: (B, N, 4) from AttentionCentroids [self_cx, self_cy, cross_cx, cross_cy]
+
+        Returns:
+            flow: (B, N, 2) predicted flow [u, v] in normalized coordinates
+                  where (u, v) = where source pixel moves to in target frame
+        """
+        # Concatenate inputs: (B, N, 6)
+        x = jnp.concatenate([src_pos, centroids], axis=-1)
+
+        # Pass through MLP: (B, N, 2)
+        flow = self.mlp(x)
+
+        return flow
+
+
+def create_source_position_grid(window_size: int = 16) -> jnp.ndarray:
+    """Create normalized source position grid.
+
+    Args:
+        window_size: Size of window (default 16)
+
+    Returns:
+        src_pos: (N, 2) normalized coordinates [x, y] for each pixel
+    """
+    H = W = window_size
+    N = H * W
+
+    y, x = jnp.meshgrid(
+        jnp.arange(H, dtype=jnp.float32),
+        jnp.arange(W, dtype=jnp.float32),
+        indexing="ij",
+    )
+
+    # Flatten and normalize to [0, 1]
+    x_flat = x.ravel() / (W - 1)
+    y_flat = y.ravel() / (H - 1)
+
+    # Stack: (N, 2)
+    src_pos = jnp.stack([x_flat, y_flat], axis=-1)
+
+    return src_pos
+
+
+def flow_to_dense(flow: jnp.ndarray, H: int, W: int) -> jnp.ndarray:
+    """Reshape flow from token format to spatial grid.
+
+    Args:
+        flow: (B, N, 2) flow in token format
+        H: Target height
+        W: Target width
+
+    Returns:
+        flow_dense: (B, H, W, 2) flow as spatial grid
+    """
+    B, N, _ = flow.shape
+    assert N == H * W, f"Flow has {N} tokens but grid is {H}x{W}"
+    return flow.reshape(B, H, W, 2)

@@ -492,6 +492,68 @@ class HierarchicalEmbeddingModel(nnx.Module):
             pixel_positions=pixel_positions,
         )
 
+    def compute_flow(
+        self,
+        img1: jnp.ndarray,
+        img2: jnp.ndarray,
+        flow_estimator,
+        temperature: float = 0.15,
+    ) -> jnp.ndarray:
+        """Compute flow field at coarsest level.
+
+        Flow convention: (u, v) = where F1 pixel moves TO in F2
+
+        Args:
+            img1: Frame 1 (B, H, W, 3)
+            img2: Frame 2 (B, H, W, 3)
+            flow_estimator: FlowEstimator module
+            temperature: Softmax temperature (default 0.15)
+
+        Returns:
+            flow: (B, H, W, 2) normalized flow field at coarsest level
+        """
+        from barevision.flow.flow_estimator import (
+            AttentionCentroids,
+            create_source_position_grid,
+        )
+
+        # Get embeddings at coarsest level (last level)
+        pyramid1 = self(img1)
+        pyramid2 = self(img2)
+
+        emb1 = pyramid1[-1]  # (B, H, W, D)
+        emb2 = pyramid2[-1]  # (B, H, W, D)
+        B, H, W, D = emb1.shape
+
+        # Flatten spatial dimensions: (B, N, D) where N = H*W
+        N = H * W
+        flat_emb1 = emb1.reshape(B, N, D)
+        flat_emb2 = emb2.reshape(B, N, D)
+
+        # Compute self and cross attention logits
+        self_logits = flat_emb1 @ flat_emb1.transpose(0, 2, 1)  # (B, N, N)
+        cross_logits = flat_emb1 @ flat_emb2.transpose(0, 2, 1)  # (B, N, N)
+
+        # Apply temperature and softmax
+        self_attn = jax.nn.softmax(self_logits / temperature, axis=-1)  # (B, N, N)
+        cross_attn = jax.nn.softmax(cross_logits / temperature, axis=-1)  # (B, N, N)
+
+        # Compute centroids
+        centroids_computer = AttentionCentroids(window_size=H, rngs=nnx.Rngs(0))
+        centroids = centroids_computer(self_attn, cross_attn)  # (B, N, 4)
+
+        # Create source position grid
+        src_pos = create_source_position_grid(window_size=H)  # (N, 2)
+        src_pos = jnp.broadcast_to(src_pos, (B, N, 2))  # (B, N, 2)
+
+        # Predict flow through estimator
+        flow = flow_estimator(src_pos, centroids)  # (B, N, 2)
+
+        # Reshape to spatial grid: (B, H, W, 2)
+        flow_dense = flow.reshape(B, H, W, 2)
+
+        return flow_dense
+
 
 @dataclass
 class AttentionMaps:

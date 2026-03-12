@@ -153,26 +153,28 @@ class TestCombinedLoss:
         assert jnp.isfinite(grad2).all()
 
     def test_weights_applied(self):
-        """Test that alpha/beta weights affect the loss."""
+        """Test that lambda_entropy weights affect the loss."""
         emb1 = jr.normal(jr.PRNGKey(0), (1, 32, 32, 16))
         emb2 = jr.normal(jr.PRNGKey(1), (1, 32, 32, 16))
 
         loss1, aux1 = compute_embedding_losses(
-            emb1, emb2, alpha=1.0, beta=0.0
+            emb1, emb2, lambda_entropy=0.0
         )  # Self only
         loss2, aux2 = compute_embedding_losses(
-            emb1, emb2, alpha=0.0, beta=1.0
+            emb1, emb2, lambda_entropy=1.0
         )  # Cross only
-        loss3, aux3 = compute_embedding_losses(emb1, emb2, alpha=1.0, beta=1.0)  # Both
+        loss3, aux3 = compute_embedding_losses(
+            emb1, emb2, lambda_entropy=0.5
+        )  # Equal mix
 
         # All should be finite
         assert jnp.isfinite(loss1)
         assert jnp.isfinite(loss2)
         assert jnp.isfinite(loss3)
 
-        # Combined should equal sum of parts (approximately)
-        combined = loss1 + loss2
-        assert jnp.allclose(loss3, combined)
+        # Equal mix should equal average of self and cross
+        expected = 0.5 * loss1 + 0.5 * loss2
+        assert jnp.allclose(loss3, expected)
 
 
 class TestLossIntegration:
@@ -340,15 +342,18 @@ class TestHierarchicalEmbeddingLosses:
 
         # Each level should contribute to the total loss
         level_losses = aux["level_losses"]
+        level_weights = aux["level_weights"]
         assert len(level_losses) == 3
 
         # All level losses should be positive (entropy is non-negative)
         for level_loss in level_losses:
             assert level_loss >= 0
 
-        # Total loss should equal sum of level losses
-        total_from_sum = sum(level_losses)
-        assert jnp.allclose(loss, total_from_sum)
+        # Total loss should equal weighted sum divided by total weight
+        total_weight = sum(level_weights)
+        weighted_sum = sum(level_losses)
+        expected = weighted_sum / total_weight
+        assert jnp.allclose(loss, expected)
 
     def test_level_mismatch_fails(self):
         """Test that mismatched pyramid levels raise ValueError."""
@@ -382,9 +387,11 @@ class TestHierarchicalEmbeddingLosses:
         # Check weights are correct
         assert aux["level_weights"] == [1.0, 2.0, 4.0]
 
-        # Verify weighted sum
+        # Verify weighted sum normalized by total weight
         weighted_sum = sum(aux["level_losses"])
-        assert jnp.allclose(loss, weighted_sum)
+        total_weight = sum(aux["level_weights"])
+        expected = weighted_sum / total_weight
+        assert jnp.allclose(loss, expected)
 
     def test_level_weight_decay_custom(self):
         """Test custom level weight decay factor."""
