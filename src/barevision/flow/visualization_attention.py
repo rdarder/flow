@@ -49,20 +49,23 @@ def extract_pixel_attention_maps(
     """Extract attention maps for specific pixels within a window.
 
     Args:
-        attention_weights: (B, window_size^2, window_size^2) attention matrix for a window
+        attention_weights: (window_size^2, window_size^2) or (B, window_size^2, window_size^2) attention matrix
         pixel_indices: (num_pixels,) indices of pixels to extract maps for
         window_size: Size of window in pixels
 
     Returns:
-        (B, num_pixels, window_size, window_size) attention maps
+        (num_pixels, window_size, window_size) or (B, num_pixels, window_size, window_size) attention maps
     """
-    B, N, _ = attention_weights.shape
-
-    # Gather attention maps for selected pixels
-    selected_attn = attention_weights[:, pixel_indices, :]  # (B, num_pixels, N)
-
-    # Reshape to spatial grid
-    selected_attn = selected_attn.reshape(B, -1, window_size, window_size)
+    if attention_weights.ndim == 2:
+        # No batch dimension
+        N, _ = attention_weights.shape
+        selected_attn = attention_weights[pixel_indices, :]  # (num_pixels, N)
+        selected_attn = selected_attn.reshape(-1, window_size, window_size)
+    else:
+        # Has batch dimension
+        B, N, _ = attention_weights.shape
+        selected_attn = attention_weights[:, pixel_indices, :]  # (B, num_pixels, N)
+        selected_attn = selected_attn.reshape(B, -1, window_size, window_size)
 
     return selected_attn
 
@@ -151,8 +154,8 @@ def extract_window_data_for_viz(
     and entropy for a selected window and selected pixels within that window.
 
     Args:
-        self_attention_weights: (B, N, N) self-attention for the level
-        cross_attention_weights: (B, N, N) cross-attention for the level
+        self_attention_weights: (B*num_windows, window_size^2, window_size^2) self-attention per window
+        cross_attention_weights: (B*num_windows, window_size^2, window_size^2) cross-attention per window
         self_entropy_map: (B, H, W) self-entropy for the level
         cross_entropy_map: (B, H, W) cross-entropy for the level
         window_indices: (row, col) of window to visualize
@@ -176,30 +179,21 @@ def extract_window_data_for_viz(
         seed=pixel_selection_seed,
     )
 
-    # Extract window-specific attention weights
-    window_self_attn = extract_window_attention(
-        self_attention_weights,
-        window_indices,
-        window_size,
-        num_windows_h,
-        num_windows_w,
-    )
-    window_cross_attn = extract_window_attention(
-        cross_attention_weights,
-        window_indices,
-        window_size,
-        num_windows_h,
-        num_windows_w,
-    )
+    # Calculate flat window index
+    window_idx = window_indices[0] * num_windows_w + window_indices[1]
+    
+    # Extract this window's attention (shape: window_size^2 x window_size^2)
+    window_self_attn = self_attention_weights[window_idx]
+    window_cross_attn = cross_attention_weights[window_idx]
 
     # Extract pixel-specific attention maps
     self_attn_maps = extract_pixel_attention_maps(
-        window_self_attn[0],  # Take first batch element
+        window_self_attn,  # (window_size^2, window_size^2)
         pixel_indices,
         window_size,
     )
     cross_attn_maps = extract_pixel_attention_maps(
-        window_cross_attn[0],  # Take first batch element
+        window_cross_attn,
         pixel_indices,
         window_size,
     )

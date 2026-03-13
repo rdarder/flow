@@ -11,7 +11,6 @@ from barevision.flow.loss import (
     compute_embedding_losses,
     compute_hierarchical_embedding_losses,
     crop_to_grid_aligned,
-    TEMPERATURE,
 )
 
 

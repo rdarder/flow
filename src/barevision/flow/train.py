@@ -25,7 +25,6 @@ from barevision.utils.logging import JaxLogger
 @partial(
     nnx.jit,
     static_argnames=(
-        "logging",
         "return_aux",
         "window_size",
         "level_weight_decay",
@@ -41,7 +40,6 @@ def train_step(
     flow_optimizer,
     img1,
     img2,
-    logging: bool = False,
     return_aux: bool = False,
     window_size: int = 16,
     level_weight_decay: float = 2.0,
@@ -76,7 +74,7 @@ def train_step(
         warped = warp_embeddings(emb1_coarse, flow)
 
         # Compute combined loss
-        return compute_combined_loss(
+        loss, loss_aux = compute_combined_loss(
             pyramid1,
             pyramid2,
             warped_embeddings=warped,
@@ -89,25 +87,23 @@ def train_step(
             return_attention_weights=return_aux,
         )
 
+        # Build aux structure
+        aux = {}
+        if return_aux:
+            aux = {
+                "model": {
+                    "pyramid1": pyramid1,
+                    "pyramid2": pyramid2,
+                },
+                "loss": loss_aux,
+            }
+
+        return loss, aux
+
     # Get gradients for both model and flow_estimator
-    (loss, loss_aux), (model_grads, flow_grads) = nnx.value_and_grad(
+    (loss, aux), (model_grads, flow_grads) = nnx.value_and_grad(
         loss_fn, has_aux=True, argnums=(0, 1)
     )(model, flow_estimator)
-
-    # Build comprehensive aux structure when requested
-    aux = {}
-    if return_aux:
-        # Re-compute pyramid for aux (will be used by visualization)
-        pyramid1 = model(img1)
-        pyramid2 = model(img2)
-        
-        aux = {
-            "model": {
-                "pyramid1": pyramid1,
-                "pyramid2": pyramid2,
-            },
-            "loss": loss_aux,
-        }
 
     # Update both model and flow estimator
     optimizer.update(model, model_grads)
@@ -150,7 +146,6 @@ def run_epoch(
             flow_optimizer,
             img1,
             img2,
-            logging=logging_settings.should_log_something(global_step),
             return_aux=should_return_aux,
             window_size=model_settings.window_size,
             level_weight_decay=model_settings.level_weight_decay,
@@ -178,7 +173,7 @@ def run_epoch(
                 model,
                 img1[0:1],
                 img2[0:1],
-                metadata,
+                metadata[0],  # Take first batch element
                 global_step,
                 model_settings.window_size,
                 model_settings.num_levels,

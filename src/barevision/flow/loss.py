@@ -523,4 +523,11 @@ def compute_combined_loss(
         reconstruction_loss=recon_loss,
     )
 
+    # Merge level-specific aux data if available
+    if return_attention_weights:
+        for key in ["level_self_attention_weights", "level_cross_attention_weights",
+                    "level_self_entropy_maps", "level_cross_entropy_maps"]:
+            if key in entropy_aux:
+                aux[key] = entropy_aux[key]
+
     return total_loss, aux
