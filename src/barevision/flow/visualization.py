@@ -362,7 +362,7 @@ def log_visualizations(
     window_size: int = 16,
     num_levels: int = 3,
     flow_estimator=None,
-    flow_temperature: float = 0.15,
+    temperature: float = 0.2,
 ):
     """Generate and log visualization figures for hierarchical model.
 
@@ -387,7 +387,7 @@ def log_visualizations(
         window_size: Attention window size in pixels
         num_levels: Number of pyramid levels
         flow_estimator: FlowEstimator module (optional, for flow visualization)
-        flow_temperature: Temperature for attention softmax in flow estimation
+        temperature: Temperature for attention softmax
     """
     import gc
 
@@ -405,7 +405,7 @@ def log_visualizations(
 
             # Compute flow at coarsest level
             flow = model.compute_flow(
-                img1, img2, flow_estimator, temperature=flow_temperature
+                img1, img2, flow_estimator, temperature=temperature
             )
 
             # Get coarsest level dimensions

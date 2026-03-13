@@ -30,7 +30,7 @@ from barevision.utils.logging import JaxLogger
         "level_weight_decay",
         "lambda_entropy",
         "lambda_recon",
-        "flow_temperature",
+        "temperature",
     ),
 )
 def train_step(
@@ -45,7 +45,7 @@ def train_step(
     level_weight_decay: float = 2.0,
     lambda_entropy: float = 0.5,
     lambda_recon: float = 0.5,
-    flow_temperature: float = 0.15,
+    temperature: float = 0.2,
 ):
     """Execute single training step with gradient update.
 
@@ -59,7 +59,7 @@ def train_step(
 
         # Compute flow at coarsest level
         flow = model.compute_flow(
-            img1, img2, flow_estimator, temperature=flow_temperature
+            img1, img2, flow_estimator, temperature=temperature
         )
 
         # Get coarsest level embeddings for reconstruction
@@ -132,7 +132,7 @@ def run_epoch(
             model_settings.level_weight_decay,
             model_settings.lambda_entropy,
             model_settings.lambda_recon,
-            model_settings.flow_temperature,
+            model_settings.temperature,
         )
 
         if global_step % logging_settings.log_every_steps == 0:
@@ -159,7 +159,7 @@ def run_epoch(
                 model_settings.window_size,
                 model_settings.num_levels,
                 flow_estimator=flow_estimator,
-                flow_temperature=model_settings.flow_temperature,
+                temperature=model_settings.temperature,
             )
 
         global_step += 1

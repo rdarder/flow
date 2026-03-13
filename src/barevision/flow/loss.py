@@ -24,10 +24,6 @@ import jax.numpy as jnp
 
 from barevision.utils.grid import WindowGrid
 
-# Temperature for softmax scaling. Low temperature sharpens attention distributions.
-# Fixed at 0.05 for Phase 2 deep supervision.
-TEMPERATURE = 0.2
-
 
 def _compute_entropy(probabilities: jnp.ndarray) -> jnp.ndarray:
     """Compute entropy of a probability distribution.
@@ -44,6 +40,7 @@ def _compute_entropy(probabilities: jnp.ndarray) -> jnp.ndarray:
 
 def self_attention_entropy_loss_core(
     windows: jnp.ndarray,
+    temperature: float = 0.2,
 ) -> jnp.ndarray:
     """Compute self-attention entropy loss on a batch of windows.
 
@@ -56,6 +53,7 @@ def self_attention_entropy_loss_core(
 
     Args:
         windows: (B, H, W, D) batch of windows (already split and flattened)
+        temperature: Softmax temperature (default 0.2)
 
     Returns:
         (B, H, W) per-pixel loss (positive entropy)
@@ -70,7 +68,7 @@ def self_attention_entropy_loss_core(
     logits = flat_windows @ flat_windows.transpose(0, 2, 1)  # (B, N, N)
 
     # Softmax and entropy (temperature scales logits for sharper distributions)
-    attn_weights = jax.nn.softmax(logits / TEMPERATURE, axis=-1)
+    attn_weights = jax.nn.softmax(logits / temperature, axis=-1)
     entropy = _compute_entropy(attn_weights)
 
     # Return POSITIVE entropy (minimize entropy = encourage sharp/peaked attention)
@@ -79,7 +77,7 @@ def self_attention_entropy_loss_core(
 
 
 def cross_attention_entropy_loss_core(
-    windows1: jnp.ndarray, windows2: jnp.ndarray
+    windows1: jnp.ndarray, windows2: jnp.ndarray, temperature: float = 0.2
 ) -> jnp.ndarray:
     """Compute cross-attention entropy loss on a batch of windows.
 
@@ -88,6 +86,7 @@ def cross_attention_entropy_loss_core(
     Args:
         windows1: (B, H, W, D) batch of windows from frame 1
         windows2: (B, H, W, D) batch of windows from frame 2
+        temperature: Softmax temperature (default 0.2)
 
     Returns:
         (B, H, W) per-pixel loss (positive entropy)
@@ -103,7 +102,7 @@ def cross_attention_entropy_loss_core(
     logits = flat1 @ flat2.transpose(0, 2, 1)  # (B, N, N)
 
     # Softmax and entropy (temperature scales logits for sharper distributions)
-    attn_weights = jax.nn.softmax(logits / TEMPERATURE, axis=-1)
+    attn_weights = jax.nn.softmax(logits / temperature, axis=-1)
     entropy = _compute_entropy(attn_weights)
 
     # Reshape back to spatial grid: (B, H, W)
@@ -115,6 +114,7 @@ def compute_embedding_losses(
     emb2: jnp.ndarray,
     window_size: int = 16,
     lambda_entropy: float = 0.5,
+    temperature: float = 0.2,
 ) -> tuple[jnp.ndarray, dict]:
     """Compute combined self and cross attention losses.
 
@@ -130,6 +130,7 @@ def compute_embedding_losses(
         window_size: Size of attention windows (default 16)
         lambda_entropy: Cross-attention loss weight in [0, 1] (default 0.5 = equal weighting)
                        combined = (1 - lambda_entropy) * self_loss + lambda_entropy * cross_loss
+        temperature: Softmax temperature (default 0.2)
 
     Returns:
         Tuple of (combined_loss, aux_dict) where:
@@ -163,8 +164,8 @@ def compute_embedding_losses(
     flat_windows2 = windows2.reshape(B * num_windows, window_size, window_size, D)
 
     # Compute core losses
-    self_loss_flat = self_attention_entropy_loss_core(flat_windows1)
-    cross_loss_flat = cross_attention_entropy_loss_core(flat_windows1, flat_windows2)
+    self_loss_flat = self_attention_entropy_loss_core(flat_windows1, temperature=temperature)
+    cross_loss_flat = cross_attention_entropy_loss_core(flat_windows1, flat_windows2, temperature=temperature)
 
     # Reshape back to spatial grid: (B * num_windows, window_size, window_size) -> (B, H, W)
     def reshape_to_grid(loss_flat):
@@ -224,6 +225,7 @@ def compute_hierarchical_embedding_losses(
     window_size: int = 16,
     lambda_entropy: float = 0.5,
     level_weight_decay: float = 2.0,
+    temperature: float = 0.2,
 ) -> tuple[jnp.ndarray, dict]:
     """Compute compound embedding loss across all pyramid levels.
 
@@ -254,6 +256,7 @@ def compute_hierarchical_embedding_losses(
                        combined = (1 - lambda_entropy) * self_loss + lambda_entropy * cross_loss
         level_weight_decay: Weight multiplier per level (default 2.0)
                            Coarser levels get: weight = decay^level_index
+        temperature: Softmax temperature (default 0.2)
 
     Returns:
         Tuple of (total_loss, aux_dict) where:
@@ -312,9 +315,9 @@ def compute_hierarchical_embedding_losses(
         flat_windows2 = windows2.reshape(B * num_windows, window_size, window_size, D)
 
         # Compute core losses
-        self_loss_flat = self_attention_entropy_loss_core(flat_windows1)
+        self_loss_flat = self_attention_entropy_loss_core(flat_windows1, temperature=temperature)
         cross_loss_flat = cross_attention_entropy_loss_core(
-            flat_windows1, flat_windows2
+            flat_windows1, flat_windows2, temperature=temperature
         )
 
         # Reshape back to spatial grid: (B * num_windows, window_size, window_size) -> (B, H, W)
@@ -374,6 +377,7 @@ def compute_combined_loss(
     lambda_entropy: float = 0.5,
     level_weight_decay: float = 2.0,
     lambda_recon: float = 0.5,
+    temperature: float = 0.2,
 ) -> tuple[jnp.ndarray, dict]:
     """Compute combined entropy + reconstruction loss.
 
@@ -390,6 +394,7 @@ def compute_combined_loss(
         level_weight_decay: Weight multiplier per level (default 2.0)
         lambda_recon: Reconstruction loss weight in [0, 1] (default 0.5 = equal weighting)
                       total = (1 - lambda_recon) * entropy + lambda_recon * reconstruction
+        temperature: Softmax temperature (default 0.2)
 
     Returns:
         Tuple of (total_loss, aux_dict) where:
@@ -403,6 +408,7 @@ def compute_combined_loss(
         window_size=window_size,
         lambda_entropy=lambda_entropy,
         level_weight_decay=level_weight_decay,
+        temperature=temperature,
     )
 
     # Compute reconstruction loss

@@ -121,9 +121,9 @@ class ModelSettings:
         lambda_entropy: Cross-attention loss weight in [0, 1] (default 0.5 = equal weighting)
                        entropy_loss = (1 - lambda_entropy) * self_loss + lambda_entropy * cross_loss
         lambda_recon: Reconstruction loss weight in [0, 1] (default 0.5 = equal weighting)
-                     total = (1 - lambda_recon) * entropy + lambda_recon * reconstruction
+                      total = (1 - lambda_recon) * entropy + lambda_recon * reconstruction
         flow_hidden_dim: Flow estimator hidden dimension (default 24)
-        flow_temperature: Temperature for attention softmax in flow estimation (default 0.15)
+        temperature: Temperature for attention softmax (default 0.2)
     """
 
     window_size: int = 16
@@ -133,7 +133,7 @@ class ModelSettings:
     lambda_entropy: float = 0.5  # Equal weighting between self and cross entropy
     lambda_recon: float = 0.5  # Equal weighting between entropy and reconstruction
     flow_hidden_dim: int = 24  # Flow estimator hidden dimension
-    flow_temperature: float = 0.15  # Temperature for flow estimation attention
+    temperature: float = 0.2  # Temperature for attention softmax
 
     def __post_init__(self):
         if self.window_size < 1:
@@ -156,9 +156,9 @@ class ModelSettings:
             raise ValueError(
                 f"flow_hidden_dim must be >= 1, got {self.flow_hidden_dim}"
             )
-        if self.flow_temperature <= 0:
+        if self.temperature <= 0:
             raise ValueError(
-                f"flow_temperature must be > 0, got {self.flow_temperature}"
+                f"temperature must be > 0, got {self.temperature}"
             )
 
 
@@ -219,7 +219,7 @@ def create_smoke_test_settings() -> Settings:
             lambda_entropy=0.5,
             lambda_recon=0.5,
             flow_hidden_dim=24,
-            flow_temperature=0.15,
+            temperature=0.2,
         ),
         training=TrainingSettings(
             epochs=1,

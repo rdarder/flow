@@ -50,10 +50,6 @@ import jax
 import jax.numpy as jnp
 from flax import nnx
 
-# from barevision.flow.loss import TEMPERATURE
-# Use a larger temperature for vizualiation. this is a test.
-TEMPERATURE = 0.2
-
 # Global constants for blocks
 HIDDEN_CHANNELS = 32
 EMBED_DIM = 16
@@ -336,6 +332,7 @@ class HierarchicalEmbeddingModel(nnx.Module):
         window_size: int = 16,
         level_index: int = -1,
         pixel_indices: Optional[jnp.ndarray] = None,
+        temperature: float = 0.2,
     ) -> AttentionMaps:
         """Compute attention maps for visualization (not used in training loss).
 
@@ -351,6 +348,7 @@ class HierarchicalEmbeddingModel(nnx.Module):
             level_index: Which pyramid level to visualize (-1 for coarsest)
             pixel_indices: List of pixel indices within window to show attention maps for.
                           If None, picks 4 random pixels using a deterministic seed.
+            temperature: Softmax temperature (default 0.2)
 
         Returns:
             AttentionMaps dataclass containing all visualization data
@@ -451,13 +449,13 @@ class HierarchicalEmbeddingModel(nnx.Module):
 
         # Compute self-attention weights with temperature scaling
         self_attn_weights = jax.nn.softmax(
-            self_logits / TEMPERATURE, axis=-1
+            self_logits / temperature, axis=-1
         )  # (256, 256)
 
         # Compute cross-attention logits
         cross_logits = flat_emb1 @ flat_emb2.T  # (256, 256)
         cross_attn_weights = jax.nn.softmax(
-            cross_logits / TEMPERATURE, axis=-1
+            cross_logits / temperature, axis=-1
         )  # (256, 256)
 
         # Extract attention maps for selected pixels
