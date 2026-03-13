@@ -24,7 +24,7 @@ from barevision.utils.logging import JaxLogger
 
 @partial(
     nnx.jit,
-    static_argnames=("return_aux", "window_size", "level_weight_decay", "lambda_entropy", "lambda_recon", "temperature"),
+    static_argnames=("return_aux", "model_settings"),
 )
 def train_step(
     model,
@@ -33,29 +33,24 @@ def train_step(
     flow_optimizer,
     img1,
     img2,
+    model_settings: ModelSettings,
     return_aux: bool = False,
-    window_size: int = 16,
-    level_weight_decay: float = 2.0,
-    lambda_entropy: float = 0.5,
-    lambda_recon: float = 0.5,
-    temperature: float = 0.2,
 ):
     """Execute single training step with gradient update.
 
     Uses combined entropy + reconstruction loss across all pyramid levels.
 
-    Note: Individual static args are required for JAX JIT compilation.
-          JAX cannot handle dataclass arguments unless they are hashable (frozen without __post_init__).
-
     Args:
+        model_settings: Model configuration (window_size, temperatures, loss weights, etc.)
         return_aux: If True, return comprehensive auxiliary data for debugging/visualization.
                    When False, XLA eliminates aux computation as dead code.
-        window_size: Attention window size (from model_settings)
-        level_weight_decay: Loss weight decay per level (from model_settings)
-        lambda_entropy: Cross-attention loss weight (from model_settings)
-        lambda_recon: Reconstruction loss weight (from model_settings)
-        temperature: Softmax temperature for attention (from model_settings)
     """
+    # Extract values from settings group
+    window_size = model_settings.window_size
+    level_weight_decay = model_settings.level_weight_decay
+    lambda_entropy = model_settings.lambda_entropy
+    lambda_recon = model_settings.lambda_recon
+    temperature = model_settings.temperature
 
     def loss_fn(model, flow_estimator):
         # Get pyramid from both frames
@@ -147,12 +142,8 @@ def run_epoch(
             flow_optimizer,
             img1,
             img2,
+            model_settings,
             return_aux=should_return_aux,
-            window_size=model_settings.window_size,
-            level_weight_decay=model_settings.level_weight_decay,
-            lambda_entropy=model_settings.lambda_entropy,
-            lambda_recon=model_settings.lambda_recon,
-            temperature=model_settings.temperature,
         )
 
         if global_step % logging_settings.log_every_steps == 0:

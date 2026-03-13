@@ -108,7 +108,7 @@ class LoggingSettings:
         )
 
 
-@dataclass
+@dataclass(frozen=True)
 class ModelSettings:
     """Model architecture configuration.
 
