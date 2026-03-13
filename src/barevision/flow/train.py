@@ -24,14 +24,7 @@ from barevision.utils.logging import JaxLogger
 
 @partial(
     nnx.jit,
-    static_argnames=(
-        "return_aux",
-        "window_size",
-        "level_weight_decay",
-        "lambda_entropy",
-        "lambda_recon",
-        "temperature",
-    ),
+    static_argnames=("return_aux", "window_size", "level_weight_decay", "lambda_entropy", "lambda_recon", "temperature"),
 )
 def train_step(
     model,
@@ -51,9 +44,17 @@ def train_step(
 
     Uses combined entropy + reconstruction loss across all pyramid levels.
 
+    Note: Individual static args are required for JAX JIT compilation.
+          JAX cannot handle dataclass arguments unless they are hashable (frozen without __post_init__).
+
     Args:
         return_aux: If True, return comprehensive auxiliary data for debugging/visualization.
                    When False, XLA eliminates aux computation as dead code.
+        window_size: Attention window size (from model_settings)
+        level_weight_decay: Loss weight decay per level (from model_settings)
+        lambda_entropy: Cross-attention loss weight (from model_settings)
+        lambda_recon: Reconstruction loss weight (from model_settings)
+        temperature: Softmax temperature for attention (from model_settings)
     """
 
     def loss_fn(model, flow_estimator):
