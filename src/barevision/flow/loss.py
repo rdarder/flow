@@ -26,7 +26,7 @@ from barevision.utils.grid import WindowGrid
 
 # Temperature for softmax scaling. Low temperature sharpens attention distributions.
 # Fixed at 0.05 for Phase 2 deep supervision.
-TEMPERATURE = 0.05
+TEMPERATURE = 0.2
 
 
 def _compute_entropy(probabilities: jnp.ndarray) -> jnp.ndarray:

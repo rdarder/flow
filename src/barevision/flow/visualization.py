@@ -400,7 +400,7 @@ def log_visualizations(
         try:
             from barevision.flow.visualization_flow import (
                 flow_to_colorwheel,
-                create_flow_component_figure,
+                flow_to_arrows,
             )
 
             # Compute flow at coarsest level
@@ -415,15 +415,16 @@ def log_visualizations(
             # Reshape flow if needed (batch size 1)
             flow_viz = flow[0] if flow.shape[0] == 1 else flow.mean(axis=0)
 
-            # Convert to colorwheel
-            flow_rgb = flow_to_colorwheel(flow_viz, max_flow=1.0)
+            # Convert to colorwheel with enhanced visibility
+            # max_flow=0.3 makes small motions visible (flows >= 0.3 are fully saturated)
+            flow_rgb = flow_to_colorwheel(flow_viz, max_flow=0.3)
 
             # Log flow colorwheel visualization
-            logger.log_image("Flow/Predicted", flow_rgb, step)
+            logger.log_image("Flow/Predicted_Colorwheel", flow_rgb, step)
 
-            # Log flow component visualizations (X and Y as heatmaps)
-            flow_component_fig = create_flow_component_figure(flow_viz, metadata, step)
-            logger.log_image("Flow/Components_XY", flow_component_fig, step)
+            # Create and log arrow visualization
+            arrows_rgb = flow_to_arrows(flow_viz, max_flow=0.3, scale=2.0, grid_density=8)
+            logger.log_image("Flow/Predicted_Arrows", arrows_rgb, step)
         except Exception as e:
             # Silently skip flow visualization if it fails
             pass

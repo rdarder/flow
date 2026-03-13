@@ -52,7 +52,7 @@ from flax import nnx
 
 # from barevision.flow.loss import TEMPERATURE
 # Use a larger temperature for vizualiation. this is a test.
-TEMPERATURE = 1.0
+TEMPERATURE = 0.2
 
 # Global constants for blocks
 HIDDEN_CHANNELS = 32

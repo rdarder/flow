@@ -1,13 +1,12 @@
 """Flow visualization utilities.
 
-Converts optical flow fields to colorwheel images for visualization.
+Converts optical flow fields to colorwheel images and arrow visualizations.
 """
 
 import numpy as np
 import jax.numpy as jnp
 import matplotlib
 import matplotlib.pyplot as plt
-from matplotlib.colors import Normalize
 
 matplotlib.use("Agg")
 
@@ -72,22 +71,26 @@ def make_colorwheel() -> np.ndarray:
     return colorwheel
 
 
-def flow_to_colorwheel(flow: jnp.ndarray, max_flow: float = 1.0) -> np.ndarray:
+def flow_to_colorwheel(flow: jnp.ndarray, max_flow: float = 0.3) -> np.ndarray:
     """Convert flow field to RGB color image using standard colorwheel encoding.
 
     Flow convention: (u, v) = displacement in normalized coordinates [0, 1]
     where u = x displacement, v = y displacement.
 
+    Uses a non-linear saturation curve (square root) to make small motions
+    visible quickly while leveraging the full dynamic range.
+
     Args:
         flow: (H, W, 2) flow field in normalized coordinates
               Positive u = motion right, Positive v = motion down
-        max_flow: Maximum magnitude for saturation scaling (default 1.0)
+        max_flow: Maximum magnitude for saturation scaling (default 0.3)
+                  Flows >= max_flow will be fully saturated.
 
     Returns:
         rgb: (H, W, 3) RGB image (uint8)
         - Hue encodes direction (0-360°)
-        - Saturation encodes magnitude (clamped to max_flow)
-        - Value = 1.0 for all pixels
+        - Saturation encodes magnitude with non-linear scaling for visibility
+        - Full contrast: black for no motion, full color for max motion
     """
     # Convert JAX array to numpy
     flow_np = np.array(flow)
@@ -98,7 +101,6 @@ def flow_to_colorwheel(flow: jnp.ndarray, max_flow: float = 1.0) -> np.ndarray:
     num_bins = colorwheel.shape[0]
 
     # Compute flow magnitude and direction
-    # u = x component (column 0), v = y component (column 1)
     u = flow_np[..., 0]  # Positive = right
     v = flow_np[..., 1]  # Positive = down
 
@@ -106,165 +108,112 @@ def flow_to_colorwheel(flow: jnp.ndarray, max_flow: float = 1.0) -> np.ndarray:
     mag = np.sqrt(u**2 + v**2)
 
     # Compute direction (angle in radians)
-    # atan2(v, u) gives angle from positive x axis, counter-clockwise
-    # We want: 0° = right, 90° = down, 180° = left, 270° = up
-    # Standard atan2: 0 = right, +π/2 = up, π = left, -π/2 = down
-    # So we negate v to flip y-axis (image coordinates: y increases downward)
-    angle = np.arctan2(-v, u)  # Now: 0 = right, +π/2 = down, π = left, -π/2 = up
-
-    # Convert to [0, 2π)
-    angle = np.where(angle < 0, angle + 2 * np.pi, angle)
+    angle = np.arctan2(-v, u)  # Negate v for image coordinates (y increases downward)
+    angle = np.where(angle < 0, angle + 2 * np.pi, angle)  # Convert to [0, 2π)
 
     # Map angle to colorwheel bin [0, num_bins)
     bin_idx = np.floor(angle / (2 * np.pi) * num_bins).astype(np.int32)
     bin_idx = np.clip(bin_idx, 0, num_bins - 1)
 
-    # Compute saturation based on magnitude
-    # Clamp magnitude to max_flow for saturation
+    # Compute saturation with non-linear scaling
+    # Square root: fast initial growth, then diminishing returns
+    # This makes small motions visible while using full contrast range
     sat = np.clip(mag / max_flow, 0, 1)
+    sat = np.sqrt(sat)
 
-    # Look up color from colorwheel and apply saturation
+    # Apply saturation: black (no motion) to full color (max motion)
     rgb = np.zeros((H, W, 3), dtype=np.float32)
     for i in range(H):
         for j in range(W):
-            rgb[i, j] = colorwheel[bin_idx[i, j]].astype(np.float32) / 255.0
+            base_color = colorwheel[bin_idx[i, j]].astype(np.float32) / 255.0
+            rgb[i, j] = base_color * sat[i, j]
 
-    # Apply saturation (multiply by sat)
-    rgb = rgb * sat[..., np.newaxis]
-
-    # Apply value (we use V=1.0 always for now)
-    # Could darken for very small magnitudes if desired
-
-    # Convert to uint8
+    rgb = np.clip(rgb, 0, 1)
     rgb = (rgb * 255).astype(np.uint8)
 
     return rgb
 
 
-def flow_components_to_image(flow: jnp.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Convert flow field to separate X and Y component heatmaps.
+# Removed: flow_components_to_image and create_flow_component_figure
+# The X/Y component heatmaps didn't provide clear visualization
 
-    Flow convention: (u, v) = displacement in normalized coordinates [0, 1]
-    where u = x displacement (positive = right), v = y displacement (positive = down).
 
+def flow_to_arrows(
+    flow: jnp.ndarray,
+    max_flow: float = 0.3,
+    scale: float = 2.0,
+    grid_density: int = 8,
+) -> np.ndarray:
+    """Create arrow visualization of flow field.
+    
+    Draws arrows on a high-resolution canvas where:
+    - Arrow direction = flow direction
+    - Arrow length/thickness = flow magnitude (with non-linear scaling)
+    
     Args:
         flow: (H, W, 2) flow field in normalized coordinates
-
+        max_flow: Flow magnitude that produces maximum arrow length (default 0.3)
+        scale: Multiplier for arrow size (default 2.0)
+        grid_density: Number of arrows per dimension (default 8 for 8x8 grid)
+    
     Returns:
-        Tuple of (x_component_rgb, y_component_rgb):
-            - x_component_rgb: (H, W, 3) RGB heatmap of u component (red = right, blue = left)
-            - y_component_rgb: (H, W, 3) RGB heatmap of v component (red = down, blue = up)
-
-    Each component is auto-scaled to its own min/max range for visibility.
+        rgb: (512, 512, 3) RGB image (uint8) showing flow arrows
     """
     # Convert JAX array to numpy
     flow_np = np.array(flow)
-
-    u = flow_np[..., 0]  # X component (positive = right)
-    v = flow_np[..., 1]  # Y component (positive = down)
-
-    def component_to_rgb(component: np.ndarray) -> np.ndarray:
-        """Convert single component to RGB with red/blue diverging colormap."""
-        H, W = component.shape
-
-        # Find symmetric max for balanced color scale
-        abs_max = np.max(np.abs(component))
-        if abs_max < 1e-10:
-            # No motion - return neutral gray
-            return np.ones((H, W, 3), dtype=np.uint8) * 128
-
-        # Normalize to [-1, 1]
-        normalized = component / abs_max
-
-        # Create RGB image with clean diverging colormap:
-        # Red = positive (right/down), Blue = negative (left/up), White = zero
-        rgb = np.ones((H, W, 3), dtype=np.float32)  # Start with white
-
-        # For positive values: increase red, keep blue at 1
-        # For negative values: increase blue, keep red at 1
-        # This creates: red->white->blue gradient
-
-        pos_mask = normalized > 0
-        neg_mask = normalized < 0
-
-        # Positive: white -> red (decrease green and blue)
-        rgb[pos_mask, 1] = 1 - normalized[pos_mask]  # Green decreases
-        rgb[pos_mask, 2] = 1 - normalized[pos_mask]  # Blue decreases
-
-        # Negative: white -> blue (decrease red and green)
-        rgb[neg_mask, 0] = (
-            1 + normalized[neg_mask]
-        )  # Red decreases (normalized is negative)
-        rgb[neg_mask, 1] = 1 + normalized[neg_mask]  # Green decreases
-
-        # Convert to uint8
-        return (rgb * 255).astype(np.uint8)
-
-    x_rgb = component_to_rgb(u)
-    y_rgb = component_to_rgb(v)
-
-    return x_rgb, y_rgb
-
-
-def create_flow_component_figure(
-    flow: jnp.ndarray,
-    metadata: dict,
-    step: int,
-) -> np.ndarray:
-    """Create figure showing flow X and Y components as heatmaps.
-
-    Args:
-        flow: (H, W, 2) flow field in normalized coordinates
-        metadata: dict with frame_t, frame_tk, distance
-        step: Global step (used for title)
-
-    Returns:
-        rgb: (H_fig, W_fig, 3) RGB figure array (uint8)
-    """
-    flow_np = np.array(flow)
     H, W, _ = flow_np.shape
-
-    u = flow_np[..., 0]  # X component
-    v = flow_np[..., 1]  # Y component
-
-    # Get component images
-    x_rgb, y_rgb = flow_components_to_image(flow)
-
-    # Create figure
-    fig, axes = plt.subplots(1, 2, figsize=(12, 6), dpi=100)
-
-    frame_t = metadata.get("frame_t", 0)
-    frame_tk = metadata.get("frame_tk", 0)
-    distance = metadata.get("distance", 0)
-
-    # X component (left)
-    axes[0].imshow(x_rgb)
-    u_min, u_max = float(u.min()), float(u.max())
-    axes[0].set_title(
-        f"Flow X (U) | Frame {frame_t}→{frame_tk} (Δ{distance})\n"
-        f"Range: [{u_min:.3f}, {u_max:.3f}]",
-        fontsize=11,
+    
+    # Create high-resolution canvas
+    canvas_size = 512
+    fig, ax = plt.subplots(1, 1, figsize=(5, 5), dpi=100)
+    fig.set_size_inches(canvas_size / 100, canvas_size / 100, forward=True)
+    ax.set_xlim(0, W)
+    ax.set_ylim(H, 0)  # Invert y to match image coordinates
+    ax.set_aspect('equal')
+    ax.axis('off')
+    ax.set_facecolor('white')
+    
+    # Create grid for arrows (subsample if flow field is large)
+    step_y = max(1, H // grid_density)
+    step_x = max(1, W // grid_density)
+    
+    y_positions = np.arange(0, H, step_y)
+    x_positions = np.arange(0, W, step_x)
+    X, Y = np.meshgrid(x_positions, y_positions)
+    
+    # Sample flow at grid positions
+    U = flow_np[y_positions[:, np.newaxis], x_positions[np.newaxis, :], 0]  # x component
+    V = flow_np[y_positions[:, np.newaxis], x_positions[np.newaxis, :], 1]  # y component
+    
+    # Compute magnitude for scaling
+    mag = np.sqrt(U**2 + V**2)
+    
+    # Non-linear scaling for arrow length (sqrt for fast initial growth)
+    length_scale = scale * np.sqrt(np.clip(mag / max_flow, 0, 1))
+    
+    # Normalize direction vectors
+    with np.errstate(divide='ignore', invalid='ignore'):
+        U_norm = U / (mag + 1e-10)
+        V_norm = V / (mag + 1e-10)
+    
+    # Scale by length
+    U_scaled = U_norm * length_scale
+    V_scaled = V_norm * length_scale
+    
+    # Draw arrows using quiver
+    # Note: quiver in matplotlib uses (X, Y, U, V) where U,V are the arrow components
+    q = ax.quiver(
+        X, Y, U_scaled, V_scaled,
+        angles='xy', scale_units='xy', scale=1,
+        color='black', width=0.003, headwidth=4, headlength=5
     )
-    axes[0].axis("off")
-
-    # Y component (right)
-    axes[1].imshow(y_rgb)
-    v_min, v_max = float(v.min()), float(v.max())
-    axes[1].set_title(
-        f"Flow Y (V) | Frame {frame_t}→{frame_tk} (Δ{distance})\n"
-        f"Range: [{v_min:.3f}, {v_max:.3f}]",
-        fontsize=11,
-    )
-    axes[1].axis("off")
-
-    plt.tight_layout()
-
+    
     # Convert to RGB array
     fig.canvas.draw()
     width, height = fig.canvas.get_width_height()
     buf = fig.canvas.buffer_rgba()
     buffer = np.frombuffer(buf, dtype=np.uint8)
-    image_array = buffer.reshape(height, width, 4)[:, :, :3]
+    rgb = buffer.reshape(height, width, 4)[:, :, :3]
     plt.close(fig)
-
-    return image_array
+    
+    return rgb
