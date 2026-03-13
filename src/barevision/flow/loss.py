@@ -41,7 +41,8 @@ def _compute_entropy(probabilities: jnp.ndarray) -> jnp.ndarray:
 def self_attention_entropy_loss_core(
     windows: jnp.ndarray,
     temperature: float = 0.2,
-) -> jnp.ndarray:
+    return_attention_weights: bool = False,
+) -> tuple[jnp.ndarray, dict] | jnp.ndarray:
     """Compute self-attention entropy loss on a batch of windows.
 
     Pure math - no splitting, no dimension rearranging. Just the loss computation.
@@ -54,9 +55,13 @@ def self_attention_entropy_loss_core(
     Args:
         windows: (B, H, W, D) batch of windows (already split and flattened)
         temperature: Softmax temperature (default 0.2)
+        return_attention_weights: If True, return attention weights and entropy in aux dict
 
     Returns:
-        (B, H, W) per-pixel loss (positive entropy)
+        If return_attention_weights=False: (B, H, W) per-pixel loss
+        If return_attention_weights=True: Tuple of (loss, aux_dict) where aux_dict contains:
+            - attention_weights: (B, N, N) full attention matrix
+            - entropy_map: (B, H, W) per-pixel entropy
     """
     B, H, W, D = windows.shape
     N = H * W
@@ -71,14 +76,24 @@ def self_attention_entropy_loss_core(
     attn_weights = jax.nn.softmax(logits / temperature, axis=-1)
     entropy = _compute_entropy(attn_weights)
 
-    # Return POSITIVE entropy (minimize entropy = encourage sharp/peaked attention)
     # Reshape back to spatial grid: (B, H, W)
-    return entropy.reshape(B, H, W)
+    entropy_grid = entropy.reshape(B, H, W)
+
+    if return_attention_weights:
+        return entropy_grid, {
+            "attention_weights": attn_weights,
+            "entropy_map": entropy_grid,
+        }
+    else:
+        return entropy_grid
 
 
 def cross_attention_entropy_loss_core(
-    windows1: jnp.ndarray, windows2: jnp.ndarray, temperature: float = 0.2
-) -> jnp.ndarray:
+    windows1: jnp.ndarray,
+    windows2: jnp.ndarray,
+    temperature: float = 0.2,
+    return_attention_weights: bool = False,
+) -> tuple[jnp.ndarray, dict] | jnp.ndarray:
     """Compute cross-attention entropy loss on a batch of windows.
 
     Pure math - no splitting, no dimension rearranging. Just the loss computation.
@@ -87,9 +102,13 @@ def cross_attention_entropy_loss_core(
         windows1: (B, H, W, D) batch of windows from frame 1
         windows2: (B, H, W, D) batch of windows from frame 2
         temperature: Softmax temperature (default 0.2)
+        return_attention_weights: If True, return attention weights and entropy in aux dict
 
     Returns:
-        (B, H, W) per-pixel loss (positive entropy)
+        If return_attention_weights=False: (B, H, W) per-pixel loss
+        If return_attention_weights=True: Tuple of (loss, aux_dict) where aux_dict contains:
+            - attention_weights: (B, N, N) full attention matrix
+            - entropy_map: (B, H, W) per-pixel entropy
     """
     B, H, W, D = windows1.shape
     N = H * W
@@ -106,7 +125,15 @@ def cross_attention_entropy_loss_core(
     entropy = _compute_entropy(attn_weights)
 
     # Reshape back to spatial grid: (B, H, W)
-    return entropy.reshape(B, H, W)
+    entropy_grid = entropy.reshape(B, H, W)
+
+    if return_attention_weights:
+        return entropy_grid, {
+            "attention_weights": attn_weights,
+            "entropy_map": entropy_grid,
+        }
+    else:
+        return entropy_grid
 
 
 def compute_embedding_losses(
@@ -115,6 +142,7 @@ def compute_embedding_losses(
     window_size: int = 16,
     lambda_entropy: float = 0.5,
     temperature: float = 0.2,
+    return_attention_weights: bool = False,
 ) -> tuple[jnp.ndarray, dict]:
     """Compute combined self and cross attention losses.
 
@@ -131,11 +159,17 @@ def compute_embedding_losses(
         lambda_entropy: Cross-attention loss weight in [0, 1] (default 0.5 = equal weighting)
                        combined = (1 - lambda_entropy) * self_loss + lambda_entropy * cross_loss
         temperature: Softmax temperature (default 0.2)
+        return_attention_weights: If True, return attention weights and entropy maps per window
 
     Returns:
         Tuple of (combined_loss, aux_dict) where:
             - combined_loss: scalar combined loss value (normalized to [0, 1])
             - aux_dict: {'self_loss': scalar, 'cross_loss': scalar}
+                       If return_attention_weights=True, also includes:
+                       - 'self_attention_weights': list of (B, N, N) per window
+                       - 'cross_attention_weights': list of (B, N, N) per window
+                       - 'self_entropy_maps': list of (B, H, W) per window
+                       - 'cross_entropy_maps': list of (B, H, W) per window
 
     Raises:
         ValueError: If H or W is not divisible by window_size
@@ -164,8 +198,22 @@ def compute_embedding_losses(
     flat_windows2 = windows2.reshape(B * num_windows, window_size, window_size, D)
 
     # Compute core losses
-    self_loss_flat = self_attention_entropy_loss_core(flat_windows1, temperature=temperature)
-    cross_loss_flat = cross_attention_entropy_loss_core(flat_windows1, flat_windows2, temperature=temperature)
+    self_result = self_attention_entropy_loss_core(
+        flat_windows1, temperature=temperature, return_attention_weights=return_attention_weights
+    )
+    cross_result = cross_attention_entropy_loss_core(
+        flat_windows1, flat_windows2, temperature=temperature, return_attention_weights=return_attention_weights
+    )
+
+    # Extract loss and aux data
+    self_aux = None
+    cross_aux = None
+    if return_attention_weights:
+        self_loss_flat, self_aux = self_result
+        cross_loss_flat, cross_aux = cross_result
+    else:
+        self_loss_flat = self_result
+        cross_loss_flat = cross_result
 
     # Reshape back to spatial grid: (B * num_windows, window_size, window_size) -> (B, H, W)
     def reshape_to_grid(loss_flat):
@@ -190,6 +238,12 @@ def compute_embedding_losses(
         self_loss=self_loss,
         cross_loss=cross_loss,
     )
+
+    if return_attention_weights:
+        aux["self_attention_weights"] = self_aux["attention_weights"]  # type: ignore
+        aux["cross_attention_weights"] = cross_aux["attention_weights"]  # type: ignore
+        aux["self_entropy_maps"] = self_aux["entropy_map"]  # type: ignore
+        aux["cross_entropy_maps"] = cross_aux["entropy_map"]  # type: ignore
 
     return combined, aux
 
@@ -226,6 +280,7 @@ def compute_hierarchical_embedding_losses(
     lambda_entropy: float = 0.5,
     level_weight_decay: float = 2.0,
     temperature: float = 0.2,
+    return_attention_weights: bool = False,
 ) -> tuple[jnp.ndarray, dict]:
     """Compute compound embedding loss across all pyramid levels.
 
@@ -257,6 +312,7 @@ def compute_hierarchical_embedding_losses(
         level_weight_decay: Weight multiplier per level (default 2.0)
                            Coarser levels get: weight = decay^level_index
         temperature: Softmax temperature (default 0.2)
+        return_attention_weights: If True, return attention weights and entropy maps per level
 
     Returns:
         Tuple of (total_loss, aux_dict) where:
@@ -264,6 +320,11 @@ def compute_hierarchical_embedding_losses(
             - aux_dict: {'self_loss': scalar, 'cross_loss': scalar,
                         'level_losses': list of per-level weighted losses,
                         'level_weights': list of weight per level}
+                       If return_attention_weights=True, also includes per-level:
+                       - 'self_attention_weights': list of (B, N, N) per level
+                       - 'cross_attention_weights': list of (B, N, N) per level
+                       - 'self_entropy_maps': list of (B, H, W) per level
+                       - 'cross_entropy_maps': list of (B, H, W) per level
 
     Raises:
         ValueError: If pyramid levels don't match or crops result in zero-sized windows
@@ -277,6 +338,12 @@ def compute_hierarchical_embedding_losses(
     total_loss = jnp.array(0.0)
     total_self_loss = jnp.array(0.0)
     total_cross_loss = jnp.array(0.0)
+
+    # Aux data storage per level (only populated if return_attention_weights=True)
+    level_self_attn = []
+    level_cross_attn = []
+    level_self_entropy = []
+    level_cross_entropy = []
 
     # Theoretical maximum entropy for a window: log(N) where N = window_size²
     # This normalizes entropy to [0, 1] range
@@ -315,10 +382,22 @@ def compute_hierarchical_embedding_losses(
         flat_windows2 = windows2.reshape(B * num_windows, window_size, window_size, D)
 
         # Compute core losses
-        self_loss_flat = self_attention_entropy_loss_core(flat_windows1, temperature=temperature)
-        cross_loss_flat = cross_attention_entropy_loss_core(
-            flat_windows1, flat_windows2, temperature=temperature
+        self_result = self_attention_entropy_loss_core(
+            flat_windows1, temperature=temperature, return_attention_weights=return_attention_weights
         )
+        cross_result = cross_attention_entropy_loss_core(
+            flat_windows1, flat_windows2, temperature=temperature, return_attention_weights=return_attention_weights
+        )
+
+        # Extract loss and aux data
+        self_aux = None
+        cross_aux = None
+        if return_attention_weights:
+            self_loss_flat, self_aux = self_result
+            cross_loss_flat, cross_aux = cross_result
+        else:
+            self_loss_flat = self_result
+            cross_loss_flat = cross_result
 
         # Reshape back to spatial grid: (B * num_windows, window_size, window_size) -> (B, H, W)
         def reshape_to_grid(loss_flat):
@@ -351,6 +430,13 @@ def compute_hierarchical_embedding_losses(
         total_cross_loss += cross_loss_level * level_weight
         total_loss += level_loss_weighted
 
+        # Aggregate aux data per level if requested
+        if return_attention_weights and self_aux is not None and cross_aux is not None:
+            level_self_attn.append(self_aux["attention_weights"])
+            level_cross_attn.append(cross_aux["attention_weights"])
+            level_self_entropy.append(self_aux["entropy_map"])
+            level_cross_entropy.append(cross_aux["entropy_map"])
+
     # Normalize by total weight to maintain [0, 1] range regardless of num_levels
     total_weight = sum(level_weights)
     total_loss = total_loss / total_weight
@@ -365,6 +451,12 @@ def compute_hierarchical_embedding_losses(
         level_weights=level_weights,
     )
 
+    if return_attention_weights:
+        aux["level_self_attention_weights"] = level_self_attn
+        aux["level_cross_attention_weights"] = level_cross_attn
+        aux["level_self_entropy_maps"] = level_self_entropy
+        aux["level_cross_entropy_maps"] = level_cross_entropy
+
     return total_loss, aux
 
 
@@ -378,6 +470,7 @@ def compute_combined_loss(
     level_weight_decay: float = 2.0,
     lambda_recon: float = 0.5,
     temperature: float = 0.2,
+    return_attention_weights: bool = False,
 ) -> tuple[jnp.ndarray, dict]:
     """Compute combined entropy + reconstruction loss.
 
@@ -395,11 +488,13 @@ def compute_combined_loss(
         lambda_recon: Reconstruction loss weight in [0, 1] (default 0.5 = equal weighting)
                       total = (1 - lambda_recon) * entropy + lambda_recon * reconstruction
         temperature: Softmax temperature (default 0.2)
+        return_attention_weights: If True, return attention weights and entropy maps
 
     Returns:
         Tuple of (total_loss, aux_dict) where:
             - total_loss: scalar combined loss
             - aux_dict: {'self_loss', 'cross_loss', 'entropy_loss', 'reconstruction_loss'}
+                       If return_attention_weights=True, also includes level-specific attention data
     """
     # Compute entropy loss
     entropy_loss, entropy_aux = compute_hierarchical_embedding_losses(
@@ -409,6 +504,7 @@ def compute_combined_loss(
         lambda_entropy=lambda_entropy,
         level_weight_decay=level_weight_decay,
         temperature=temperature,
+        return_attention_weights=return_attention_weights,
     )
 
     # Compute reconstruction loss

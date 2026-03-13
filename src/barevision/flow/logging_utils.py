@@ -183,15 +183,21 @@ def log_gradient_statistics(
 def log_metrics(logger: JaxLogger, loss, aux, step: int):
     """Log loss metrics to TensorBoard."""
     logger.log_scalar("Loss/train_step", float(loss), step)
-    logger.log_scalar("Loss/self_entropy", float(aux["self_loss"]), step)
-    logger.log_scalar("Loss/cross_entropy", float(aux["cross_loss"]), step)
+    
+    # Handle nested aux structure (from return_aux=True) or flat structure
+    loss_aux = aux.get("loss", aux) if isinstance(aux, dict) else {}
+    
+    if "self_loss" in loss_aux:
+        logger.log_scalar("Loss/self_entropy", float(loss_aux["self_loss"]), step)
+    if "cross_loss" in loss_aux:
+        logger.log_scalar("Loss/cross_entropy", float(loss_aux["cross_loss"]), step)
 
     # Log reconstruction loss if available (flow estimation)
-    if "reconstruction_loss" in aux:
+    if "reconstruction_loss" in loss_aux:
         logger.log_scalar(
-            "Loss/reconstruction", float(aux["reconstruction_loss"]), step
+            "Loss/reconstruction", float(loss_aux["reconstruction_loss"]), step
         )
-        logger.log_scalar("Loss/entropy", float(aux["entropy_loss"]), step)
+        logger.log_scalar("Loss/entropy", float(loss_aux["entropy_loss"]), step)
 
 
 def log_diagnostics(logger: JaxLogger, model, img1, step: int, window_size: int = 16):
@@ -217,10 +223,13 @@ def format_progress_line(
     # Start with basic info
     parts = [f"Epoch {epoch} | Step {step} | Loss: {loss:.4f}"]
 
+    # Handle nested aux structure
+    loss_aux = aux.get("loss", aux) if isinstance(aux, dict) else {}
+    
     # Add loss breakdown if available
-    if aux is not None and "entropy_loss" in aux and "reconstruction_loss" in aux:
-        entropy = float(aux["entropy_loss"])
-        recon = float(aux["reconstruction_loss"])
+    if loss_aux and "entropy_loss" in loss_aux and "reconstruction_loss" in loss_aux:
+        entropy = float(loss_aux["entropy_loss"])
+        recon = float(loss_aux["reconstruction_loss"])
         parts.append(f"Entropy: {entropy:.4f} | Recon: {recon:.4f}")
 
     parts.append(f"{steps_per_sec:.1f} steps/sec")

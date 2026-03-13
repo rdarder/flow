@@ -26,6 +26,7 @@ from barevision.utils.logging import JaxLogger
     nnx.jit,
     static_argnames=(
         "logging",
+        "return_aux",
         "window_size",
         "level_weight_decay",
         "lambda_entropy",
@@ -41,6 +42,7 @@ def train_step(
     img1,
     img2,
     logging: bool = False,
+    return_aux: bool = False,
     window_size: int = 16,
     level_weight_decay: float = 2.0,
     lambda_entropy: float = 0.5,
@@ -50,6 +52,10 @@ def train_step(
     """Execute single training step with gradient update.
 
     Uses combined entropy + reconstruction loss across all pyramid levels.
+
+    Args:
+        return_aux: If True, return comprehensive auxiliary data for debugging/visualization.
+                   When False, XLA eliminates aux computation as dead code.
     """
 
     def loss_fn(model, flow_estimator):
@@ -79,15 +85,29 @@ def train_step(
             lambda_entropy=lambda_entropy,
             level_weight_decay=level_weight_decay,
             lambda_recon=lambda_recon,
+            temperature=temperature,
+            return_attention_weights=return_aux,
         )
 
     # Get gradients for both model and flow_estimator
-    (loss, aux), (model_grads, flow_grads) = nnx.value_and_grad(
+    (loss, loss_aux), (model_grads, flow_grads) = nnx.value_and_grad(
         loss_fn, has_aux=True, argnums=(0, 1)
     )(model, flow_estimator)
 
-    if not logging:
-        aux = {}  # drop so jit can trace it as not being used.
+    # Build comprehensive aux structure when requested
+    aux = {}
+    if return_aux:
+        # Re-compute pyramid for aux (will be used by visualization)
+        pyramid1 = model(img1)
+        pyramid2 = model(img2)
+        
+        aux = {
+            "model": {
+                "pyramid1": pyramid1,
+                "pyramid2": pyramid2,
+            },
+            "loss": loss_aux,
+        }
 
     # Update both model and flow estimator
     optimizer.update(model, model_grads)
@@ -120,6 +140,9 @@ def run_epoch(
     epoch_start = time.time()
 
     for step, (img1, img2, metadata) in enumerate(loader):
+        # Determine if we should return aux data (for logging or visualization)
+        should_return_aux = logging_settings.should_log_something(global_step)
+        
         loss, aux = train_step(
             model,
             flow_estimator,
@@ -127,12 +150,13 @@ def run_epoch(
             flow_optimizer,
             img1,
             img2,
-            logging_settings.should_log_something(global_step),
-            model_settings.window_size,
-            model_settings.level_weight_decay,
-            model_settings.lambda_entropy,
-            model_settings.lambda_recon,
-            model_settings.temperature,
+            logging=logging_settings.should_log_something(global_step),
+            return_aux=should_return_aux,
+            window_size=model_settings.window_size,
+            level_weight_decay=model_settings.level_weight_decay,
+            lambda_entropy=model_settings.lambda_entropy,
+            lambda_recon=model_settings.lambda_recon,
+            temperature=model_settings.temperature,
         )
 
         if global_step % logging_settings.log_every_steps == 0:
@@ -154,12 +178,11 @@ def run_epoch(
                 model,
                 img1[0:1],
                 img2[0:1],
-                {},
+                metadata,
                 global_step,
                 model_settings.window_size,
                 model_settings.num_levels,
-                flow_estimator=flow_estimator,
-                temperature=model_settings.temperature,
+                aux_data=aux,
             )
 
         global_step += 1

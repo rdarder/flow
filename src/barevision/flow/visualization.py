@@ -20,7 +20,7 @@ from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 from matplotlib.patches import Rectangle
 
-from barevision.flow.model import AttentionMaps, HierarchicalEmbeddingModel
+from barevision.flow.model import HierarchicalEmbeddingModel
 from barevision.utils.grid import WindowGrid
 from barevision.utils.logging import JaxLogger
 
@@ -361,8 +361,7 @@ def log_visualizations(
     step: int,
     window_size: int = 16,
     num_levels: int = 3,
-    flow_estimator=None,
-    temperature: float = 0.2,
+    aux_data: dict | None = None,
 ):
     """Generate and log visualization figures for hierarchical model.
 
@@ -372,8 +371,8 @@ def log_visualizations(
     - Levels are logged separately for inspection
 
     Pipeline:
-    1. Compute pyramid and get dimensions for each level
-    2. For each level: select random window, compute attention maps
+    1. Get pyramid from aux_data (computed during training)
+    2. For each level: select random window, extract attention from aux
     3. Generate frame/grid and attention maps figures per level
     4. Log to TensorBoard with level-specific tags
 
@@ -386,27 +385,28 @@ def log_visualizations(
         step: Global step for logging
         window_size: Attention window size in pixels
         num_levels: Number of pyramid levels
-        flow_estimator: FlowEstimator module (optional, for flow visualization)
-        temperature: Temperature for attention softmax
+        aux_data: Auxiliary data from train_step containing pyramid and attention maps
     """
     import gc
 
-    # Get pyramid to determine dimensions for each level
-    pyramid1 = model(img1)
-    pyramid2 = model(img2)
+    # Get pyramid from aux_data
+    if aux_data is None or "model" not in aux_data:
+        # Fallback: compute pyramid if aux not provided
+        pyramid1 = model(img1)
+        pyramid2 = model(img2)
+    else:
+        pyramid1 = aux_data["model"]["pyramid1"]
+        pyramid2 = aux_data["model"]["pyramid2"]
 
-    # Log flow visualization if flow_estimator is provided
-    if flow_estimator is not None:
+    # Log flow visualization if available in aux_data
+    if aux_data is not None and "flow" in aux_data:
         try:
             from barevision.flow.visualization_flow import (
                 flow_to_colorwheel,
                 flow_to_arrows,
             )
 
-            # Compute flow at coarsest level
-            flow = model.compute_flow(
-                img1, img2, flow_estimator, temperature=temperature
-            )
+            flow = aux_data["flow"]
 
             # Get coarsest level dimensions
             flow_coarse = pyramid1[-1]
@@ -456,14 +456,40 @@ def log_visualizations(
             img2[0], (H_emb, W_emb, 3), method="bilinear"
         )
 
-        # Call model to get attention maps at this level
-        attention_data = model.compute_attention_maps(
-            img1=img1,
-            img2=img2,
-            window_indices=window_indices,
-            window_size=window_size,
-            level_index=level_idx,
-        )
+        # Extract attention data from aux if available
+        if aux_data is not None and "loss" in aux_data:
+            loss_aux = aux_data["loss"]
+            # Get level-specific attention data
+            self_attn_list = loss_aux.get("level_self_attention_weights", None)
+            cross_attn_list = loss_aux.get("level_cross_attention_weights", None)
+            
+            if self_attn_list is not None and len(self_attn_list) > level_idx:
+                # Extract window data using visualization_attention module
+                from barevision.flow.visualization_attention import (
+                    extract_window_data_for_viz,
+                )
+                
+                viz_data = extract_window_data_for_viz(
+                    self_attention_weights=self_attn_list[level_idx],
+                    cross_attention_weights=cross_attn_list[level_idx],
+                    self_entropy_map=loss_aux.get("level_self_entropy_maps", [None])[level_idx],
+                    cross_entropy_map=loss_aux.get("level_cross_entropy_maps", [None])[level_idx],
+                    window_indices=window_indices,
+                    num_windows_h=num_windows_h,
+                    num_windows_w=num_windows_w,
+                    window_size=window_size,
+                    pixel_selection_seed=step + level_idx * 1000,
+                )
+                
+                self_attn_np = viz_data["self_attention_maps"]
+                cross_attn_np = viz_data["cross_attention_maps"]
+                pixel_positions_np = viz_data["pixel_positions"]
+            else:
+                # Fallback: skip attention maps if not available
+                continue
+        else:
+            # No aux data available, skip this level
+            continue
 
         # Convert JAX arrays to numpy for visualization
         img1_np = np.array(img1_downscaled)
@@ -488,10 +514,6 @@ def log_visualizations(
             ]
         )
 
-        self_attn_np = np.array(attention_data.self_attention)
-        cross_attn_np = np.array(attention_data.cross_attention)
-        pixel_positions_np = np.array(attention_data.pixel_positions)
-
         # 1. Frame with grid (showing downscaled frames with level-specific grid)
         fig_frame = create_frame_with_grid_figure(
             img1_np, img2_np, metadata, window_size, highlighted_window=window_indices
@@ -512,10 +534,6 @@ def log_visualizations(
             distance=metadata.get("distance", 0),
         )
         logger.log_figure(f"Level{level_idx}/Attention_Maps", fig_attn, step)
-
-        # Clean up level-specific data
-        del attention_data
-        gc.collect()
 
     # Clean up pyramid references
     del pyramid1, pyramid2
