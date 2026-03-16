@@ -60,11 +60,11 @@ def test_loss_returns_attention_weights():
 
 
 def test_visualization_attention_extraction():
-    """Test that visualization_attention module can extract window data."""
-    from barevision.flow.utils.visualization_attention import extract_window_data_for_viz
+    """Test that window attention extraction works correctly."""
+    from barevision.flow.training.visualization import _extract_window_attention_data
     
     # Create attention weights for a level with 3x3 windows
-    # The loss function returns attention per window: (B*num_windows, window_size^2, window_size^2)
+    # The loss function returns attention per window: (num_windows, window_size^2, window_size^2)
     num_windows_h, num_windows_w = 3, 3
     num_windows = num_windows_h * num_windows_w
     window_size = 16
@@ -76,7 +76,7 @@ def test_visualization_attention_extraction():
     cross_attn = jr.uniform(key, (num_windows, window_N, window_N))
     
     # Extract window at position (1, 1)
-    viz_data = extract_window_data_for_viz(
+    viz_data = _extract_window_attention_data(
         self_attention_weights=self_attn,
         cross_attention_weights=cross_attn,
         window_indices=(1, 1),

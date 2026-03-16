@@ -14,7 +14,86 @@ from barevision.flow.embeddings.visualization import (
     create_attention_maps_figure,
 )
 from barevision.flow.matching.visualization import flow_to_arrows, flow_to_colorwheel
-from barevision.flow.utils.visualization_attention import extract_window_data_for_viz
+
+
+def _select_random_pixels(
+    window_size: int,
+    num_pixels: int = 4,
+    seed: int = 0,
+) -> jnp.ndarray:
+    """Select random pixel indices within a window."""
+    N = window_size * window_size
+    key = jax.random.PRNGKey(seed)
+    return jax.random.choice(key, N, shape=(num_pixels,), replace=False)
+
+
+def _compute_pixel_positions(
+    pixel_indices: jnp.ndarray,
+    window_size: int,
+) -> jnp.ndarray:
+    """Compute (y, x) positions for pixel indices within a window."""
+    pixel_y = pixel_indices // window_size
+    pixel_x = pixel_indices % window_size
+    return jnp.stack([pixel_y, pixel_x], axis=-1)
+
+
+def _extract_pixel_attention_maps(
+    attention_weights: jnp.ndarray,
+    pixel_indices: jnp.ndarray,
+    window_size: int,
+) -> jnp.ndarray:
+    """Extract attention maps for specific pixels within a window.
+
+    Requires batched input (3D). Fails if given 2D input.
+    """
+    assert attention_weights.ndim == 3, f"Expected batched input (3D), got {attention_weights.ndim}D"
+    
+    B, N, _ = attention_weights.shape
+    selected_attn = attention_weights[:, pixel_indices, :]
+    selected_attn = selected_attn.reshape(B, -1, window_size, window_size)
+    return selected_attn
+
+
+def _extract_window_attention_data(
+    self_attention_weights: jnp.ndarray,
+    cross_attention_weights: jnp.ndarray,
+    window_indices: tuple[int, int],
+    num_windows_h: int,
+    num_windows_w: int,
+    window_size: int = 16,
+    pixel_selection_seed: int = 0,
+    num_pixels: int = 4,
+) -> dict:
+    """Extract attention data for visualizing a specific window.
+
+    Validates window indices are in bounds.
+    """
+    # Validate window indices
+    assert 0 <= window_indices[0] < num_windows_h, f"window row {window_indices[0]} >= num_windows_h {num_windows_h}"
+    assert 0 <= window_indices[1] < num_windows_w, f"window col {window_indices[1]} >= num_windows_w {num_windows_w}"
+    
+    # Select random pixels
+    pixel_indices = _select_random_pixels(window_size, num_pixels, pixel_selection_seed)
+
+    # Calculate flat window index and extract
+    window_idx = window_indices[0] * num_windows_w + window_indices[1]
+    window_self_attn = self_attention_weights[window_idx]
+    window_cross_attn = cross_attention_weights[window_idx]
+
+    # Add batch dimension for extraction
+    window_self_attn = window_self_attn[jnp.newaxis, :, :]
+    window_cross_attn = window_cross_attn[jnp.newaxis, :, :]
+
+    # Extract and remove batch dimension
+    self_attn_maps = _extract_pixel_attention_maps(window_self_attn, pixel_indices, window_size)[0]
+    cross_attn_maps = _extract_pixel_attention_maps(window_cross_attn, pixel_indices, window_size)[0]
+
+    return {
+        "self_attention_maps": np.array(self_attn_maps),
+        "cross_attention_maps": np.array(cross_attn_maps),
+        "pixel_positions": np.array(_compute_pixel_positions(pixel_indices, window_size)),
+        "seed_used": pixel_selection_seed,
+    }
 
 
 def log_visualizations(
@@ -83,7 +162,7 @@ def log_visualizations(
             cross_attn_list = loss_aux.get("level_cross_attention_weights", None)
 
             if self_attn_list is not None and len(self_attn_list) > level_idx:
-                viz_data = extract_window_data_for_viz(
+                viz_data = _extract_window_attention_data(
                     self_attention_weights=self_attn_list[level_idx],
                     cross_attention_weights=cross_attn_list[level_idx],
                     window_indices=window_indices,
