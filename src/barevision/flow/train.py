@@ -17,7 +17,7 @@ from barevision.flow.settings import (
     create_smoke_test_settings,
 )
 from barevision.flow.video_dataset import create_dataloader
-from barevision.flow.visualization import log_visualizations
+from barevision.flow.training.visualization import log_visualizations
 from barevision.utils.logging import JaxLogger
 
 
@@ -60,7 +60,7 @@ def train_step(
         warped = warp_embeddings(emb1_coarse, flow)
         
         # Compute loss
-        return compute_loss(
+        loss, loss_aux = compute_loss(
             pyramid1,
             pyramid2,
             warped_embeddings=warped,
@@ -72,6 +72,20 @@ def train_step(
             temperature=model_settings.temperature,
             return_attention_weights=return_aux,
         )
+        
+        # Build aux structure
+        aux = {}
+        if return_aux:
+            aux = {
+                "model": {
+                    "pyramid1": pyramid1,
+                    "pyramid2": pyramid2,
+                    "flow": flow,
+                },
+                "loss": loss_aux,
+            }
+        
+        return loss, aux
     
     # Compute loss and gradients
     (loss, aux), grads = nnx.value_and_grad(loss_fn, has_aux=True)(model)
@@ -130,16 +144,20 @@ def run_epoch(
             )
 
         if global_step % logging_settings.log_visualizations_every_steps == 0:
+            # Get pyramids and flow from aux_data
+            pyramid1 = aux["model"]["pyramid1"]
+            pyramid2 = aux["model"]["pyramid2"]
+            flow = aux["model"].get("flow", None)
+            
             log_visualizations(
                 logger,
-                model,
-                img1[0:1],
-                img2[0:1],
-                metadata[0],  # Take first batch element
-                global_step,
-                model_settings.window_size,
-                model_settings.num_levels,
+                pyramid1,
+                pyramid2,
+                flow,
                 aux_data=aux,
+                step=global_step,
+                window_size=model_settings.window_size,
+                num_levels=model_settings.num_levels,
             )
 
         global_step += 1

@@ -1,0 +1,128 @@
+"""Visualization for optical flow training.
+
+Orchestrates visualization from embeddings and matching packages.
+"""
+
+from typing import Dict, List, Optional
+
+import jax
+import jax.numpy as jnp
+import matplotlib.pyplot as plt
+import numpy as np
+
+from barevision.flow.embeddings.visualization import (
+    create_attention_maps_figure,
+    create_frame_with_grid_figure,
+)
+from barevision.flow.matching.visualization import flow_to_arrows, flow_to_colorwheel
+from barevision.flow.utils.visualization_attention import extract_window_data_for_viz
+
+
+def log_visualizations(
+    logger,
+    pyramid1: List[jnp.ndarray],
+    pyramid2: List[jnp.ndarray],
+    flow: Optional[jnp.ndarray],
+    aux_data: Optional[Dict],
+    step: int,
+    window_size: int = 16,
+    num_levels: int = 3,
+):
+    """Generate and log visualization figures for optical flow training.
+
+    Orchestrates visualization from both embeddings and matching packages:
+    - Embeddings: attention maps, grid overlays for each pyramid level
+    - Matching: flow field colorwheel and arrows
+
+    Args:
+        logger: JaxLogger instance for TensorBoard logging
+        pyramid1: List of embedding pyramids for frame 1
+        pyramid2: List of embedding pyramids for frame 2
+        flow: (B, H, W, 2) predicted flow field (optional)
+        aux_data: Auxiliary data from training step (optional)
+        step: Global step for logging
+        window_size: Attention window size in pixels
+        num_levels: Number of pyramid levels
+    """
+    import gc
+
+    # Log flow visualization if available
+    if flow is not None:
+        flow_viz = np.array(flow[0]) if flow.shape[0] == 1 else np.array(flow.mean(axis=0))
+
+        # Colorwheel visualization
+        flow_rgb = flow_to_colorwheel(flow_viz, max_flow=0.3)
+        logger.log_image("Flow/Predicted_Colorwheel", flow_rgb, step)
+
+        # Arrow visualization
+        arrows_rgb = flow_to_arrows(flow_viz, max_flow=0.3, scale=2.0, grid_density=8)
+        logger.log_image("Flow/Predicted_Arrows", arrows_rgb, step)
+
+    # Log visualizations for each pyramid level
+    for level_idx in range(num_levels):
+        level_emb = pyramid1[level_idx]
+        B, H_emb, W_emb, _ = level_emb.shape
+
+        # Calculate number of windows at this level
+        num_windows_h = H_emb // window_size
+        num_windows_w = W_emb // window_size
+
+        # Skip levels that are too small
+        if num_windows_h == 0 or num_windows_w == 0:
+            continue
+
+        # Select random window at this level
+        rng = np.random.default_rng(seed=step + level_idx * 1000)
+        window_row = int(rng.integers(0, num_windows_h))
+        window_col = int(rng.integers(0, num_windows_w))
+        window_indices = (window_row, window_col)
+
+        # Extract attention data from aux if available
+        if aux_data is not None and "loss" in aux_data:
+            loss_aux = aux_data["loss"]
+            self_attn_list = loss_aux.get("level_self_attention_weights", None)
+            cross_attn_list = loss_aux.get("level_cross_attention_weights", None)
+
+            if self_attn_list is not None and len(self_attn_list) > level_idx:
+                viz_data = extract_window_data_for_viz(
+                    self_attention_weights=self_attn_list[level_idx],
+                    cross_attention_weights=cross_attn_list[level_idx],
+                    self_entropy_map=loss_aux.get("level_self_entropy_maps", [None])[level_idx],
+                    cross_entropy_map=loss_aux.get("level_cross_entropy_maps", [None])[level_idx],
+                    window_indices=window_indices,
+                    num_windows_h=num_windows_h,
+                    num_windows_w=num_windows_w,
+                    window_size=window_size,
+                    pixel_selection_seed=step + level_idx * 1000,
+                )
+
+                # Convert embeddings to numpy for visualization
+                img1_downscaled = jax.image.resize(
+                    pyramid1[level_idx][0], (H_emb, W_emb, 3), method="bilinear"
+                )
+
+                # Extract window crop
+                emb_h_start = window_row * window_size
+                emb_w_start = window_col * window_size
+                window_crop = np.array(
+                    img1_downscaled[
+                        emb_h_start : emb_h_start + window_size,
+                        emb_w_start : emb_w_start + window_size,
+                        :,
+                    ]
+                )
+
+                # Create attention maps figure
+                fig_attn = create_attention_maps_figure(
+                    self_attention_maps=viz_data["self_attention_maps"],
+                    cross_attention_maps=viz_data["cross_attention_maps"],
+                    pixel_positions=viz_data["pixel_positions"],
+                    window_crop=window_crop,
+                    seed_used=viz_data["seed_used"],
+                )
+
+                logger.log_figure(f"Level{level_idx}/Attention_Maps", fig_attn, step)
+                plt.close(fig_attn)
+
+    # Clean up
+    gc.collect()
