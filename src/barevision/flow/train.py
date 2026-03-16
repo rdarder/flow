@@ -7,8 +7,8 @@ import optax
 import tyro
 from flax import nnx
 
-from barevision.flow.optical_flow.model import Model as OpticalFlowModel
-from barevision.flow.optical_flow.losses import compute_training_loss
+from barevision.flow.training.model import Model as OpticalFlowModel
+from barevision.flow.training.losses import compute_loss
 from barevision.flow.embeddings.model import count_parameters
 from barevision.flow.logging_utils import log_progress, print_footer, print_header
 from barevision.flow.settings import (
@@ -55,12 +55,12 @@ def train_step(
         emb2_coarse = pyramid2[-1]
         
         # Warp Frame 1 embeddings
-        from barevision.flow.flow_estimator.losses import warp_embeddings
+        from barevision.flow.matching.losses import warp_embeddings
         
         warped = warp_embeddings(emb1_coarse, flow)
         
         # Compute loss
-        return compute_training_loss(
+        return compute_loss(
             pyramid1,
             pyramid2,
             warped_embeddings=warped,

@@ -5,7 +5,7 @@ import jax.numpy as jnp
 import numpy as np
 from flax import nnx
 
-from barevision.flow.flow_estimator import (
+from barevision.flow.matching import (
     AttentionCentroids,
     FlowEstimator,
     create_source_position_grid,

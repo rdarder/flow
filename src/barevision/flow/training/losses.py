@@ -1,6 +1,6 @@
-"""Optical flow training: combines embedding pyramid with flow estimation.
+"""Combined training loss for optical flow.
 
-Full training objective combining entropy loss and reconstruction loss.
+Combines embedding entropy loss with flow reconstruction loss.
 """
 
 from typing import Tuple
@@ -8,10 +8,10 @@ from typing import Tuple
 import jax.numpy as jnp
 
 from barevision.flow.embeddings.losses import compute_hierarchical_entropy_loss
-from barevision.flow.flow_estimator.losses import warp_embeddings, reconstruction_loss_core
+from barevision.flow.matching.losses import warp_embeddings, reconstruction_loss_core
 
 
-def compute_training_loss(
+def compute_loss(
     pyramid1,
     pyramid2,
     warped_embeddings,

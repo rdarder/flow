@@ -20,7 +20,7 @@ from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 from matplotlib.patches import Rectangle
 
-from barevision.flow.optical_flow.model import Model as OpticalFlowModel
+from barevision.flow.training.model import Model as OpticalFlowModel
 from barevision.utils.grid import WindowGrid
 from barevision.utils.logging import JaxLogger
 

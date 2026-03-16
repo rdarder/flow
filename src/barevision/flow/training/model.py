@@ -1,4 +1,4 @@
-"""Optical flow model: combines embedding pyramid with flow estimation.
+"""Optical flow model: combines embedding pyramid with flow matching.
 
 End-to-end model for optical flow estimation.
 """
@@ -10,7 +10,7 @@ import jax.numpy as jnp
 from flax import nnx
 
 from barevision.flow.embeddings.model import HierarchicalEmbeddingModel
-from barevision.flow.flow_estimator.model import (
+from barevision.flow.matching.model import (
     FlowEstimator,
     AttentionCentroids,
     create_source_position_grid,
@@ -20,7 +20,7 @@ from barevision.flow.flow_estimator.model import (
 class Model(nnx.Module):
     """End-to-end optical flow model.
 
-    Combines hierarchical embedding pyramid with flow estimation.
+    Combines hierarchical embedding pyramid with flow matching.
     Both components are trained jointly.
 
     Architecture:
