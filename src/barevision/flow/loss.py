@@ -531,3 +531,73 @@ def compute_combined_loss(
                 aux[key] = entropy_aux[key]
 
     return total_loss, aux
+
+
+def optical_flow_training_loss(
+    model,
+    img1: jnp.ndarray,
+    img2: jnp.ndarray,
+    model_settings,
+    return_aux: bool = False,
+) -> tuple[jnp.ndarray, dict]:
+    """Compute full training objective for optical flow model.
+
+    Orchestrates the complete training pipeline:
+    1. Forward pass through OpticalFlowModel to get flow and pyramids
+    2. Warp Frame 1 embeddings using predicted flow
+    3. Compute combined entropy + reconstruction loss
+
+    This is the main training objective - minimizes both embedding entropy
+    (for unique, sharp features) and reconstruction error (for accurate flow).
+
+    Args:
+        model: OpticalFlowModel (combines embeddings + flow estimation)
+        img1: Frame 1 (B, H, W, 3)
+        img2: Frame 2 (B, H, W, 3)
+        model_settings: Model configuration (window_size, temperatures, loss weights, etc.)
+        return_aux: If True, return comprehensive auxiliary data for debugging/visualization
+
+    Returns:
+        Tuple of (loss, aux_dict) where aux contains pyramids and loss metrics if requested
+    """
+    from barevision.flow.optical_flow_model import OpticalFlowModel
+    from barevision.flow.reconstruction_loss import warp_embeddings
+
+    # Get embeddings and flow in single forward pass
+    flow, pyramid1, pyramid2 = model(
+        img1, img2, temperature=model_settings.temperature
+    )
+
+    # Get coarsest level embeddings for reconstruction
+    emb1_coarse = pyramid1[-1]
+    emb2_coarse = pyramid2[-1]
+
+    # Warp Frame 1 embeddings using predicted flow
+    warped = warp_embeddings(emb1_coarse, flow)
+
+    # Compute combined loss
+    loss, loss_aux = compute_combined_loss(
+        pyramid1,
+        pyramid2,
+        warped_embeddings=warped,
+        target_embeddings=emb2_coarse,
+        window_size=model_settings.window_size,
+        lambda_entropy=model_settings.lambda_entropy,
+        level_weight_decay=model_settings.level_weight_decay,
+        lambda_recon=model_settings.lambda_recon,
+        temperature=model_settings.temperature,
+        return_attention_weights=return_aux,
+    )
+
+    # Build aux structure
+    aux = {}
+    if return_aux:
+        aux = {
+            "model": {
+                "pyramid1": pyramid1,
+                "pyramid2": pyramid2,
+            },
+            "loss": loss_aux,
+        }
+
+    return loss, aux

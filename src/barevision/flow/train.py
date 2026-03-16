@@ -3,16 +3,14 @@
 import time
 from functools import partial
 
-import jax.numpy as jnp
 import optax
 import tyro
 from flax import nnx
 
-from barevision.flow.loss import compute_combined_loss
+from barevision.flow.loss import compute_combined_loss, optical_flow_training_loss
 from barevision.flow.logging_utils import log_progress, print_footer, print_header
 from barevision.flow.optical_flow_model import OpticalFlowModel
 from barevision.flow.model import count_parameters
-from barevision.flow.reconstruction_loss import warp_embeddings
 from barevision.flow.settings import (
     ModelSettings,
     Settings,
@@ -21,67 +19,6 @@ from barevision.flow.settings import (
 from barevision.flow.video_dataset import create_dataloader
 from barevision.flow.visualization import log_visualizations
 from barevision.utils.logging import JaxLogger
-
-
-def compute_loss(
-    model: OpticalFlowModel,
-    img1: jnp.ndarray,
-    img2: jnp.ndarray,
-    model_settings: ModelSettings,
-    return_aux: bool = False,
-) -> tuple[jnp.ndarray, dict]:
-    """Compute training loss for optical flow model.
-
-    Computes combined entropy + reconstruction loss across all pyramid levels.
-
-    Args:
-        model: OpticalFlowModel (combines embeddings + flow estimation)
-        img1: Frame 1 (B, H, W, 3)
-        img2: Frame 2 (B, H, W, 3)
-        model_settings: Model configuration (window_size, temperatures, loss weights, etc.)
-        return_aux: If True, return comprehensive auxiliary data for debugging/visualization
-
-    Returns:
-        Tuple of (loss, aux_dict) where aux contains pyramids and loss metrics if requested
-    """
-    # Get embeddings and flow in single forward pass
-    flow, pyramid1, pyramid2 = model(
-        img1, img2, temperature=model_settings.temperature
-    )
-
-    # Get coarsest level embeddings for reconstruction
-    emb1_coarse = pyramid1[-1]
-    emb2_coarse = pyramid2[-1]
-
-    # Warp Frame 1 embeddings using predicted flow
-    warped = warp_embeddings(emb1_coarse, flow)
-
-    # Compute combined loss
-    loss, loss_aux = compute_combined_loss(
-        pyramid1,
-        pyramid2,
-        warped_embeddings=warped,
-        target_embeddings=emb2_coarse,
-        window_size=model_settings.window_size,
-        lambda_entropy=model_settings.lambda_entropy,
-        level_weight_decay=model_settings.level_weight_decay,
-        lambda_recon=model_settings.lambda_recon,
-        temperature=model_settings.temperature,
-        return_attention_weights=return_aux,
-    )
-
-    # Build aux structure
-    aux = {}
-    if return_aux:
-        aux = {
-            "model": {
-                "pyramid1": pyramid1,
-                "pyramid2": pyramid2,
-            },
-            "loss": loss_aux,
-        }
-
-    return loss, aux
 
 
 @partial(
@@ -110,7 +47,7 @@ def train_step(
         Tuple of (loss, aux_dict)
     """
     # Compute loss and gradients
-    (loss, aux), grads = nnx.value_and_grad(compute_loss, has_aux=True)(
+    (loss, aux), grads = nnx.value_and_grad(optical_flow_training_loss, has_aux=True)(
         model, img1, img2, model_settings, return_aux
     )
 
