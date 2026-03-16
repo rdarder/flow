@@ -101,7 +101,6 @@ class VideoFrameDataset:
         """
         num_videos = len(all_videos)
         num_train = int(num_videos * self.train_ratio)  # Round down for train
-        num_val = num_videos - num_train  # Remainder for val
 
         # Use JAX PRNG for reproducible shuffling
         key = jr.PRNGKey(self.seed)
@@ -210,72 +209,6 @@ class VideoFrameDataset:
         img_array = np.array(img).astype(np.float32) / 255.0
 
         return img_array
-
-    def get_video_stats(self) -> dict:
-        """Get statistics about the dataset.
-
-        Returns:
-            Dict with video names, frame counts, and pair counts
-        """
-        stats = {"videos": {}, "total_pairs": len(self.frame_pairs)}
-
-        for pair in self.frame_pairs:
-            if pair.video_name not in stats["videos"]:
-                stats["videos"][pair.video_name] = {"frames": 0, "pairs": 0}
-            stats["videos"][pair.video_name]["pairs"] += 1
-
-        # Count unique frames per video
-        for video_name in self.videos:
-            video_path = os.path.join(self.data_root, video_name)
-            if os.path.isdir(video_path):
-                frames = [
-                    f for f in os.listdir(video_path) if f.endswith((".jpg", ".png"))
-                ]
-                if video_name in stats["videos"]:
-                    stats["videos"][video_name]["frames"] = len(frames)
-
-        return stats
-
-
-def create_train_val_datasets(
-    data_root: Optional[str] = None,
-    max_frame_distance: int = 5,
-    img_size: Tuple[int, int] = (190, 190),
-    seed: int = 42,
-    train_ratio: float = 0.85,
-) -> Tuple[VideoFrameDataset, VideoFrameDataset]:
-    """Create train and validation datasets.
-
-    Args:
-        data_root: Root directory containing video subdirectories.
-                  If None, uses project's datasets/frames directory.
-        max_frame_distance: Maximum temporal distance for frame pairs
-        img_size: Target image size (height, width)
-        seed: Random seed for reproducible train/val split
-        train_ratio: Ratio of videos for training (default 0.85 = 85%)
-
-    Returns:
-        Tuple of (train_dataset, val_dataset)
-    """
-    train_dataset = VideoFrameDataset(
-        data_root=data_root,
-        split="train",
-        max_frame_distance=max_frame_distance,
-        img_size=img_size,
-        seed=seed,
-        train_ratio=train_ratio,
-    )
-
-    val_dataset = VideoFrameDataset(
-        data_root=data_root,
-        split="val",
-        max_frame_distance=max_frame_distance,
-        img_size=img_size,
-        seed=seed,
-        train_ratio=train_ratio,
-    )
-
-    return train_dataset, val_dataset
 
 
 def _shuffle_indices(

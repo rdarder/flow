@@ -122,11 +122,9 @@ def log_gradient_statistics(
     from flax.nnx import State
 
     try:
-        # Get optimizer state which contains gradients
-        opt_state = nnx.state(optimizer)
+        # Get model state for parameter statistics
         model_state = nnx.state(model, nnx.Param)
 
-        grad_stats = {}
         param_stats = {}
 
         def process_state_recursive(state_obj, path=""):

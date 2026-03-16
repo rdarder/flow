@@ -94,11 +94,6 @@ def flow_to_arrows(
     u = flow[y_grid, x_grid, 0] * scale * W
     v = -flow[y_grid, x_grid, 1] * scale * H  # Negative because y is inverted in images
 
-    # Normalize arrow colors by magnitude
-    mag = np.sqrt(u**2 + v**2)
-    mag_max = mag.max()
-    colors = mag / (mag_max + 1e-8)
-
     # Plot arrows
     ax.quiver(
         x_grid, y_grid, u, v,

@@ -12,7 +12,6 @@ import numpy as np
 
 from barevision.flow.embeddings.visualization import (
     create_attention_maps_figure,
-    create_frame_with_grid_figure,
 )
 from barevision.flow.matching.visualization import flow_to_arrows, flow_to_colorwheel
 from barevision.flow.utils.visualization_attention import extract_window_data_for_viz
@@ -87,8 +86,6 @@ def log_visualizations(
                 viz_data = extract_window_data_for_viz(
                     self_attention_weights=self_attn_list[level_idx],
                     cross_attention_weights=cross_attn_list[level_idx],
-                    self_entropy_map=loss_aux.get("level_self_entropy_maps", [None])[level_idx],
-                    cross_entropy_map=loss_aux.get("level_cross_entropy_maps", [None])[level_idx],
                     window_indices=window_indices,
                     num_windows_h=num_windows_h,
                     num_windows_w=num_windows_w,

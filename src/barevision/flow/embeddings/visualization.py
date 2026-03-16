@@ -1,6 +1,6 @@
 """Visualization utilities for embedding model.
 
-Generates figures for embedding statistics and attention maps.
+Generates figures for attention maps.
 """
 
 import matplotlib.pyplot as plt
@@ -11,37 +11,6 @@ from barevision.flow.embeddings.losses import (
     cross_attention_entropy_loss_core,
 )
 from barevision.utils.grid import WindowGrid
-
-
-def create_frame_with_grid_figure(
-    frame: np.ndarray,
-    window_size: int = 16,
-    alpha: float = 0.3,
-) -> plt.Figure:
-    """Create figure showing input frame with 16×16 window grid overlay.
-
-    Args:
-        frame: (H, W, 3) RGB frame
-        window_size: Window size in pixels
-        alpha: Grid line transparency
-
-    Returns:
-        Matplotlib figure
-    """
-    H, W, _ = frame.shape
-    fig, ax = plt.subplots(1, 1, figsize=(8, 8))
-    ax.imshow(frame)
-
-    # Draw grid lines
-    for y in range(0, H, window_size):
-        ax.axhline(y, color='white', alpha=alpha, linewidth=0.5)
-    for x in range(0, W, window_size):
-        ax.axvline(x, color='white', alpha=alpha, linewidth=0.5)
-
-    ax.set_xticks([])
-    ax.set_yticks([])
-    ax.set_title(f'Frame with {window_size}×{window_size} grid')
-    return fig
 
 
 def create_attention_maps_figure(
@@ -91,21 +60,3 @@ def create_attention_maps_figure(
 
     plt.tight_layout()
     return fig
-
-
-def compute_embedding_statistics(embeddings: np.ndarray) -> dict:
-    """Compute statistics for embedding tensor.
-
-    Args:
-        embeddings: (B, H, W, D) embedding tensor
-
-    Returns:
-        Dictionary with mean, std, min, max, sparsity
-    """
-    return {
-        'mean': float(embeddings.mean()),
-        'std': float(embeddings.std()),
-        'min': float(embeddings.min()),
-        'max': float(embeddings.max()),
-        'sparsity': float((np.abs(embeddings) < 0.01).mean()),
-    }

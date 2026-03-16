@@ -9,38 +9,6 @@ import jax.numpy as jnp
 import numpy as np
 
 
-def extract_window_attention(
-    attention_weights: jnp.ndarray,
-    window_indices: tuple[int, int],
-    window_size: int,
-    num_windows_h: int,
-    num_windows_w: int,
-) -> jnp.ndarray:
-    """Extract attention weights for a specific window from flattened attention matrix.
-
-    Args:
-        attention_weights: (B, N, N) attention matrix where N = num_windows * window_size^2
-        window_indices: (row, col) of window to extract
-        window_size: Size of each window in pixels
-        num_windows_h: Number of windows vertically
-        num_windows_w: Number of windows horizontally
-
-    Returns:
-        (B, window_size^2, window_size^2) attention weights for the specified window
-    """
-    B, N, _ = attention_weights.shape
-    window_idx = window_indices[0] * num_windows_w + window_indices[1]
-
-    # Calculate indices for this window
-    start_idx = window_idx * (window_size * window_size)
-    end_idx = start_idx + (window_size * window_size)
-
-    # Extract submatrix for this window
-    window_attn = attention_weights[:, start_idx:end_idx, start_idx:end_idx]
-
-    return window_attn
-
-
 def extract_pixel_attention_maps(
     attention_weights: jnp.ndarray,
     pixel_indices: jnp.ndarray,
@@ -68,34 +36,6 @@ def extract_pixel_attention_maps(
         selected_attn = selected_attn.reshape(B, -1, window_size, window_size)
 
     return selected_attn
-
-
-def extract_window_entropy(
-    entropy_map: jnp.ndarray,
-    window_indices: tuple[int, int],
-    window_size: int,
-    num_windows_h: int,
-    num_windows_w: int,
-) -> jnp.ndarray:
-    """Extract entropy map for a specific window from full spatial entropy.
-
-    Args:
-        entropy_map: (B, H, W) full entropy map
-        window_indices: (row, col) of window to extract
-        window_size: Size of each window in pixels
-        num_windows_h: Number of windows vertically
-        num_windows_w: Number of windows horizontally
-
-    Returns:
-        (B, window_size, window_size) entropy for the specified window
-    """
-    row, col = window_indices
-    h_start = row * window_size
-    h_end = h_start + window_size
-    w_start = col * window_size
-    w_end = w_start + window_size
-
-    return entropy_map[:, h_start:h_end, w_start:w_end]
 
 
 def select_random_pixels(
@@ -139,8 +79,6 @@ def compute_pixel_positions(
 def extract_window_data_for_viz(
     self_attention_weights: jnp.ndarray,
     cross_attention_weights: jnp.ndarray,
-    self_entropy_map: jnp.ndarray,
-    cross_entropy_map: jnp.ndarray,
     window_indices: tuple[int, int],
     num_windows_h: int,
     num_windows_w: int,
@@ -151,13 +89,11 @@ def extract_window_data_for_viz(
     """Extract all attention data needed for visualizing a specific window.
 
     This is the main entry point for visualization. It extracts attention maps
-    and entropy for a selected window and selected pixels within that window.
+    for a selected window and selected pixels within that window.
 
     Args:
         self_attention_weights: (B*num_windows, window_size^2, window_size^2) self-attention per window
         cross_attention_weights: (B*num_windows, window_size^2, window_size^2) cross-attention per window
-        self_entropy_map: (B, H, W) self-entropy for the level
-        cross_entropy_map: (B, H, W) cross-entropy for the level
         window_indices: (row, col) of window to visualize
         num_windows_h: Number of windows vertically at this level
         num_windows_w: Number of windows horizontally at this level
