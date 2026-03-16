@@ -11,8 +11,8 @@ import numpy as np
 from barevision.utils.logging import JaxLogger
 from barevision.utils.grid import WindowGrid
 from barevision.flow.embeddings.losses import (
-    self_attention_entropy_loss_core,
-    cross_attention_entropy_loss_core,
+    self_attention_entropy_loss,
+    cross_attention_entropy_loss,
 )
 
 
@@ -45,8 +45,8 @@ def log_attention_statistics(
     flat_windows = windows.reshape(B * num_windows, window_size, window_size, D)
 
     # Compute entropies (both return positive values)
-    self_entropy = self_attention_entropy_loss_core(flat_windows)
-    cross_entropy = cross_attention_entropy_loss_core(flat_windows, flat_windows)
+    self_entropy = self_attention_entropy_loss(flat_windows)
+    cross_entropy = cross_attention_entropy_loss(flat_windows, flat_windows)
 
     # Log histograms
     logger.log_histogram(
@@ -179,10 +179,10 @@ def log_gradient_statistics(
 def log_metrics(logger: JaxLogger, loss, aux, step: int):
     """Log loss metrics to TensorBoard."""
     logger.log_scalar("Loss/train_step", float(loss), step)
-    
+
     # Handle nested aux structure (from return_aux=True) or flat structure
     loss_aux = aux.get("loss", aux) if isinstance(aux, dict) else {}
-    
+
     if "self_loss" in loss_aux:
         logger.log_scalar("Loss/self_entropy", float(loss_aux["self_loss"]), step)
     if "cross_loss" in loss_aux:
@@ -205,11 +205,11 @@ def log_diagnostics(logger: JaxLogger, model, img1, step: int, window_size: int 
 
     # Get pyramid and use coarsest level
     # Support both OpticalFlowModel and HierarchicalEmbeddingModel
-    if hasattr(model, 'extract_embeddings'):
+    if hasattr(model, "extract_embeddings"):
         pyramid = model.extract_embeddings(img1)
     else:
         pyramid = model(img1)
-    
+
     embeddings = pyramid[-1]  # Coarsest level
     log_embedding_statistics(logger, embeddings, step)
     log_attention_statistics(logger, embeddings, step, window_size)
@@ -226,7 +226,7 @@ def format_progress_line(
 
     # Handle nested aux structure
     loss_aux = aux.get("loss", aux) if isinstance(aux, dict) else {}
-    
+
     # Add loss breakdown if available
     if loss_aux and "entropy_loss" in loss_aux and "reconstruction_loss" in loss_aux:
         entropy = float(loss_aux["entropy_loss"])

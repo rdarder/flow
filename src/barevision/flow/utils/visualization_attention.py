@@ -17,23 +17,21 @@ def extract_pixel_attention_maps(
     """Extract attention maps for specific pixels within a window.
 
     Args:
-        attention_weights: (window_size^2, window_size^2) or (B, window_size^2, window_size^2) attention matrix
+        attention_weights: (B, window_size^2, window_size^2) attention matrix for batch of windows
         pixel_indices: (num_pixels,) indices of pixels to extract maps for
         window_size: Size of window in pixels
 
     Returns:
-        (num_pixels, window_size, window_size) or (B, num_pixels, window_size, window_size) attention maps
+        (B, num_pixels, window_size, window_size) attention maps
+
+    Raises:
+        AssertionError: If attention_weights is not batched (must be 3D)
     """
-    if attention_weights.ndim == 2:
-        # No batch dimension
-        N, _ = attention_weights.shape
-        selected_attn = attention_weights[pixel_indices, :]  # (num_pixels, N)
-        selected_attn = selected_attn.reshape(-1, window_size, window_size)
-    else:
-        # Has batch dimension
-        B, N, _ = attention_weights.shape
-        selected_attn = attention_weights[:, pixel_indices, :]  # (B, num_pixels, N)
-        selected_attn = selected_attn.reshape(B, -1, window_size, window_size)
+    assert attention_weights.ndim == 3, f"Expected batched input (3D), got {attention_weights.ndim}D"
+    
+    B, N, _ = attention_weights.shape
+    selected_attn = attention_weights[:, pixel_indices, :]  # (B, num_pixels, N)
+    selected_attn = selected_attn.reshape(B, -1, window_size, window_size)
 
     return selected_attn
 
@@ -122,9 +120,13 @@ def extract_window_data_for_viz(
     window_self_attn = self_attention_weights[window_idx]
     window_cross_attn = cross_attention_weights[window_idx]
 
+    # Add batch dimension for extract_pixel_attention_maps (requires 3D input)
+    window_self_attn = window_self_attn[jnp.newaxis, :, :]  # (1, window_size^2, window_size^2)
+    window_cross_attn = window_cross_attn[jnp.newaxis, :, :]
+
     # Extract pixel-specific attention maps
     self_attn_maps = extract_pixel_attention_maps(
-        window_self_attn,  # (window_size^2, window_size^2)
+        window_self_attn,
         pixel_indices,
         window_size,
     )
@@ -133,6 +135,10 @@ def extract_window_data_for_viz(
         pixel_indices,
         window_size,
     )
+
+    # Remove batch dimension from results
+    self_attn_maps = self_attn_maps[0]  # (num_pixels, window_size, window_size)
+    cross_attn_maps = cross_attn_maps[0]
 
     # Compute pixel positions
     pixel_positions = compute_pixel_positions(pixel_indices, window_size)

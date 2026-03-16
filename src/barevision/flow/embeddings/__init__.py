@@ -10,8 +10,8 @@ from barevision.flow.embeddings.model import (
     count_parameters,
 )
 from barevision.flow.embeddings.losses import (
-    self_attention_entropy_loss_core,
-    cross_attention_entropy_loss_core,
+    self_attention_entropy_loss,
+    cross_attention_entropy_loss,
     compute_window_attention_losses,
     compute_hierarchical_entropy_loss,
     crop_to_grid_aligned,
@@ -22,8 +22,8 @@ __all__ = [
     "StemBlock",
     "StandardBlock",
     "count_parameters",
-    "self_attention_entropy_loss_core",
-    "cross_attention_entropy_loss_core",
+    "self_attention_entropy_loss",
+    "cross_attention_entropy_loss",
     "compute_window_attention_losses",
     "compute_hierarchical_entropy_loss",
     "crop_to_grid_aligned",

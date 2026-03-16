@@ -6,8 +6,8 @@ import jax.random as jr
 import pytest
 
 from barevision.flow.embeddings.losses import (
-    self_attention_entropy_loss_core,
-    cross_attention_entropy_loss_core,
+    self_attention_entropy_loss,
+    cross_attention_entropy_loss,
     compute_window_attention_losses,
     compute_hierarchical_entropy_loss,
     crop_to_grid_aligned,
@@ -20,14 +20,14 @@ class TestSelfAttentionEntropyLossCore:
     def test_output_shape(self):
         """Test that output shape matches input spatial dimensions."""
         windows = jr.normal(jr.PRNGKey(0), (2, 16, 16, 16))  # (B, H, W, D)
-        loss = self_attention_entropy_loss_core(windows)
+        loss = self_attention_entropy_loss(windows)
 
         assert loss.shape == (2, 16, 16), f"Expected (2, 16, 16), got {loss.shape}"
 
     def test_finite_values(self):
         """Test that all values are finite."""
         windows = jr.normal(jr.PRNGKey(0), (4, 16, 16, 16))
-        loss = self_attention_entropy_loss_core(windows)
+        loss = self_attention_entropy_loss(windows)
 
         assert jnp.isfinite(loss).all(), "Loss contains NaN/Inf"
 
@@ -35,7 +35,7 @@ class TestSelfAttentionEntropyLossCore:
         """Test that gradients flow."""
 
         def loss_fn(w):
-            return self_attention_entropy_loss_core(w).mean()
+            return self_attention_entropy_loss(w).mean()
 
         windows = jr.normal(jr.PRNGKey(0), (2, 16, 16, 16))
         grad = jax.grad(loss_fn)(windows)
@@ -52,7 +52,7 @@ class TestCrossAttentionEntropyLossCore:
         """Test that output shape matches input spatial dimensions."""
         windows1 = jr.normal(jr.PRNGKey(0), (2, 16, 16, 16))
         windows2 = jr.normal(jr.PRNGKey(1), (2, 16, 16, 16))
-        loss = cross_attention_entropy_loss_core(windows1, windows2)
+        loss = cross_attention_entropy_loss(windows1, windows2)
 
         assert loss.shape == (2, 16, 16)
 
@@ -60,7 +60,7 @@ class TestCrossAttentionEntropyLossCore:
         """Test that all values are finite."""
         windows1 = jr.normal(jr.PRNGKey(0), (4, 16, 16, 16))
         windows2 = jr.normal(jr.PRNGKey(1), (4, 16, 16, 16))
-        loss = cross_attention_entropy_loss_core(windows1, windows2)
+        loss = cross_attention_entropy_loss(windows1, windows2)
 
         assert jnp.isfinite(loss).all()
 
@@ -68,7 +68,7 @@ class TestCrossAttentionEntropyLossCore:
         """Cross-attention entropy is always non-negative."""
         windows1 = jr.normal(jr.PRNGKey(0), (2, 16, 16, 16))
         windows2 = jr.normal(jr.PRNGKey(1), (2, 16, 16, 16))
-        loss = cross_attention_entropy_loss_core(windows1, windows2)
+        loss = cross_attention_entropy_loss(windows1, windows2)
 
         assert (loss >= 0).all()
 
@@ -76,7 +76,7 @@ class TestCrossAttentionEntropyLossCore:
         """Test that gradients flow through both inputs."""
 
         def loss_fn(w1, w2):
-            return cross_attention_entropy_loss_core(w1, w2).mean()
+            return cross_attention_entropy_loss(w1, w2).mean()
 
         windows1 = jr.normal(jr.PRNGKey(0), (2, 16, 16, 16))
         windows2 = jr.normal(jr.PRNGKey(1), (2, 16, 16, 16))
@@ -442,7 +442,11 @@ class TestHierarchicalLossIntegration:
         from flax import nnx
 
         model = HierarchicalEmbeddingModel(
-            hidden_dim=32, embed_dim=16, num_groups=8, num_levels=3, rngs=nnx.Rngs(jr.PRNGKey(0))
+            hidden_dim=32,
+            embed_dim=16,
+            num_groups=8,
+            num_levels=3,
+            rngs=nnx.Rngs(jr.PRNGKey(0)),
         )
 
         # Input size for 3 levels targeting 16×16 at coarsest

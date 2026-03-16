@@ -40,7 +40,7 @@ def _compute_entropy(probabilities: jnp.ndarray) -> jnp.ndarray:
     return -jnp.sum(probabilities * jnp.log(probabilities + eps), axis=-1)
 
 
-def self_attention_entropy_loss_core(
+def self_attention_entropy_loss(
     windows: jnp.ndarray,
     temperature: float = 0.2,
     return_attention_weights: bool = False,
@@ -90,7 +90,7 @@ def self_attention_entropy_loss_core(
         return entropy_grid
 
 
-def cross_attention_entropy_loss_core(
+def cross_attention_entropy_loss(
     windows1: jnp.ndarray,
     windows2: jnp.ndarray,
     temperature: float = 0.2,
@@ -178,7 +178,9 @@ def compute_window_attention_losses(
         raise ValueError(f"Width {W} not divisible by window_size {window_size}")
 
     # Validate shapes match
-    assert emb2.shape == emb1.shape, f"emb2 shape {emb2.shape} != emb1 shape {emb1.shape}"
+    assert (
+        emb2.shape == emb1.shape
+    ), f"emb2 shape {emb2.shape} != emb1 shape {emb1.shape}"
 
     # Split into windows
     grid = WindowGrid(window_size=window_size)
@@ -191,11 +193,16 @@ def compute_window_attention_losses(
     flat_windows2 = windows2.reshape(B * num_windows, window_size, window_size, D)
 
     # Compute core losses
-    self_result = self_attention_entropy_loss_core(
-        flat_windows1, temperature=temperature, return_attention_weights=return_attention_weights
+    self_result = self_attention_entropy_loss(
+        flat_windows1,
+        temperature=temperature,
+        return_attention_weights=return_attention_weights,
     )
-    cross_result = cross_attention_entropy_loss_core(
-        flat_windows1, flat_windows2, temperature=temperature, return_attention_weights=return_attention_weights
+    cross_result = cross_attention_entropy_loss(
+        flat_windows1,
+        flat_windows2,
+        temperature=temperature,
+        return_attention_weights=return_attention_weights,
     )
 
     # Extract loss and aux data
@@ -211,13 +218,19 @@ def compute_window_attention_losses(
     # Reshape back to spatial grid
     def reshape_to_grid(loss_flat):
         loss = loss_flat.reshape(B, num_windows, window_size, window_size)
-        loss = loss.reshape(B, H // window_size, W // window_size, window_size, window_size)
+        loss = loss.reshape(
+            B, H // window_size, W // window_size, window_size, window_size
+        )
         loss = loss.transpose(0, 1, 3, 2, 4)
         return loss.reshape(B, H, W)
 
     # Mean and normalize
-    self_loss = reshape_to_grid(self_loss_flat).mean() / jnp.log(window_size * window_size)
-    cross_loss = reshape_to_grid(cross_loss_flat).mean() / jnp.log(window_size * window_size)
+    self_loss = reshape_to_grid(self_loss_flat).mean() / jnp.log(
+        window_size * window_size
+    )
+    cross_loss = reshape_to_grid(cross_loss_flat).mean() / jnp.log(
+        window_size * window_size
+    )
 
     combined = (1 - lambda_entropy) * self_loss + lambda_entropy * cross_loss
 
@@ -232,7 +245,9 @@ def compute_window_attention_losses(
     return combined, aux
 
 
-def crop_to_grid_aligned(feature_map: jnp.ndarray, window_size: int = 16) -> jnp.ndarray:
+def crop_to_grid_aligned(
+    feature_map: jnp.ndarray, window_size: int = 16
+) -> jnp.ndarray:
     """Crop feature map to dimensions divisible by window_size.
 
     Phase 2: Ensures each pyramid level can be cleanly split into windows.
@@ -342,11 +357,16 @@ def compute_hierarchical_entropy_loss(
         flat_windows2 = windows2.reshape(B * num_windows, window_size, window_size, D)
 
         # Compute core losses
-        self_result = self_attention_entropy_loss_core(
-            flat_windows1, temperature=temperature, return_attention_weights=return_attention_weights
+        self_result = self_attention_entropy_loss(
+            flat_windows1,
+            temperature=temperature,
+            return_attention_weights=return_attention_weights,
         )
-        cross_result = cross_attention_entropy_loss_core(
-            flat_windows1, flat_windows2, temperature=temperature, return_attention_weights=return_attention_weights
+        cross_result = cross_attention_entropy_loss(
+            flat_windows1,
+            flat_windows2,
+            temperature=temperature,
+            return_attention_weights=return_attention_weights,
         )
 
         # Extract loss and aux data
@@ -362,7 +382,9 @@ def compute_hierarchical_entropy_loss(
         # Reshape back to spatial grid
         def reshape_to_grid(loss_flat):
             loss = loss_flat.reshape(B, num_windows, window_size, window_size)
-            loss = loss.reshape(B, num_windows_h, num_windows_w, window_size, window_size)
+            loss = loss.reshape(
+                B, num_windows_h, num_windows_w, window_size, window_size
+            )
             loss = loss.transpose(0, 1, 3, 2, 4)
             return loss.reshape(B, H, W)
 
@@ -371,7 +393,9 @@ def compute_hierarchical_entropy_loss(
         cross_loss_level = reshape_to_grid(cross_loss_flat).mean() / max_entropy
 
         # Per-level combined loss
-        level_loss_unweighted = (1 - lambda_entropy) * self_loss_level + lambda_entropy * cross_loss_level
+        level_loss_unweighted = (
+            1 - lambda_entropy
+        ) * self_loss_level + lambda_entropy * cross_loss_level
         level_loss_weighted = level_loss_unweighted * level_weight
 
         level_losses.append(level_loss_weighted)
