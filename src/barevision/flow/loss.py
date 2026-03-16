@@ -1,20 +1,25 @@
-"""Loss functions for self-supervised embedding training.
+"""Loss functions for optical flow training.
 
-Simple entropy minimization for both self and cross attention:
-- Self-attention: minimize entropy → sharp peak at self (natural advantage: q·q = ||q||²)
-  This encourages UNIQUE embeddings (no other pixel competes with self)
-- Cross-attention: minimize entropy → sharp peak at match location
-  This encourages CONFIDENT matching
+Organization (top to bottom: coarse-grained to fine-grained):
+1. optical_flow_training_loss: Full training objective (model forward + loss)
+2. compute_flow_reconstruction_loss: Entropy + reconstruction loss combination
+3. compute_hierarchical_entropy_loss: Multi-level pyramid entropy loss
+4. compute_window_attention_losses: Single-level window-based attention loss
+5. cross_attention_entropy_loss_core: Core cross-attention entropy math
+6. self_attention_entropy_loss_core: Core self-attention entropy math
+7. _compute_entropy: Utility function
+8. crop_to_grid_aligned: Utility function
 
-Design:
-- Core functions: Pure math on (B, H, W, D) batches - no splitting, no vmap
-- Wrapper functions: Handle window splitting, dimension rearranging, calling core, aggregating results
+Loss hierarchy:
+- Self-attention: minimize entropy → sharp peak at self (encourages UNIQUE embeddings)
+- Cross-attention: minimize entropy → sharp peak at match (encourages CONFIDENT matching)
+- Reconstruction: minimize L2 distance between warped F1 and true F2 embeddings
 
 Phase 2 (Deep Supervision):
 - Applies entropy loss at ALL pyramid levels simultaneously
 - Crops each level to grid-aligned dimensions (divisible by window_size)
 - Applies level weight decay (coarser levels get higher weight)
-- Averages loss per-level first, then sums across levels
+- Normalizes entropy by theoretical maximum to [0, 1] range
 """
 
 from typing import List, Tuple
@@ -136,7 +141,7 @@ def cross_attention_entropy_loss_core(
         return entropy_grid
 
 
-def compute_embedding_losses(
+def compute_window_attention_losses(
     emb1: jnp.ndarray,
     emb2: jnp.ndarray,
     window_size: int = 16,
@@ -144,7 +149,7 @@ def compute_embedding_losses(
     temperature: float = 0.2,
     return_attention_weights: bool = False,
 ) -> tuple[jnp.ndarray, dict]:
-    """Compute combined self and cross attention losses.
+    """Compute combined self and cross attention losses for a single pyramid level.
 
     Handles window splitting and returns scalar loss values.
     Fails explicitly if input resolution is not aligned with window_size.
@@ -273,7 +278,7 @@ def crop_to_grid_aligned(
     return feature_map[:, :crop_h, :crop_w, :]
 
 
-def compute_hierarchical_embedding_losses(
+def compute_hierarchical_entropy_loss(
     pyramid1: List[jnp.ndarray],
     pyramid2: List[jnp.ndarray],
     window_size: int = 16,
@@ -282,7 +287,7 @@ def compute_hierarchical_embedding_losses(
     temperature: float = 0.2,
     return_attention_weights: bool = False,
 ) -> tuple[jnp.ndarray, dict]:
-    """Compute compound embedding loss across all pyramid levels.
+    """Compute compound entropy loss across all pyramid levels.
 
     Phase 2 Deep Supervision:
     1. Crops each level to grid-aligned dimensions (divisible by window_size)
@@ -460,7 +465,7 @@ def compute_hierarchical_embedding_losses(
     return total_loss, aux
 
 
-def compute_combined_loss(
+def compute_flow_reconstruction_loss(
     pyramid1,
     pyramid2,
     warped_embeddings,
@@ -472,7 +477,7 @@ def compute_combined_loss(
     temperature: float = 0.2,
     return_attention_weights: bool = False,
 ) -> tuple[jnp.ndarray, dict]:
-    """Compute combined entropy + reconstruction loss.
+    """Compute combined entropy + reconstruction loss for optical flow training.
 
     total = (1 - lambda_recon) * entropy_loss + lambda_recon * reconstruction_loss
 
@@ -497,7 +502,7 @@ def compute_combined_loss(
                        If return_attention_weights=True, also includes level-specific attention data
     """
     # Compute entropy loss
-    entropy_loss, entropy_aux = compute_hierarchical_embedding_losses(
+    entropy_loss, entropy_aux = compute_hierarchical_entropy_loss(
         pyramid1,
         pyramid2,
         window_size=window_size,
@@ -576,7 +581,7 @@ def optical_flow_training_loss(
     warped = warp_embeddings(emb1_coarse, flow)
 
     # Compute combined loss
-    loss, loss_aux = compute_combined_loss(
+    loss, loss_aux = compute_flow_reconstruction_loss(
         pyramid1,
         pyramid2,
         warped_embeddings=warped,

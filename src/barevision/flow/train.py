@@ -7,7 +7,7 @@ import optax
 import tyro
 from flax import nnx
 
-from barevision.flow.loss import compute_combined_loss, optical_flow_training_loss
+from barevision.flow.loss import optical_flow_training_loss
 from barevision.flow.logging_utils import log_progress, print_footer, print_header
 from barevision.flow.optical_flow_model import OpticalFlowModel
 from barevision.flow.model import count_parameters

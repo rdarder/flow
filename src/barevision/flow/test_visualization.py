@@ -63,7 +63,7 @@ def test_attention_maps_figure():
 
 def test_loss_returns_attention_weights():
     """Test that loss functions return attention weights when requested."""
-    from barevision.flow.loss import compute_hierarchical_embedding_losses
+    from barevision.flow.loss import compute_hierarchical_entropy_loss
     
     # Create simple pyramid
     key = jr.PRNGKey(0)
@@ -71,14 +71,14 @@ def test_loss_returns_attention_weights():
     pyramid2 = [jr.normal(key, (2, 48 - i * 4, 48 - i * 4, 16)) for i in range(3)]
     
     # Test without attention weights (default)
-    loss, aux = compute_hierarchical_embedding_losses(
+    loss, aux = compute_hierarchical_entropy_loss(
         pyramid1, pyramid2, return_attention_weights=False
     )
     assert "self_loss" in aux
     assert "level_self_attention_weights" not in aux
     
     # Test with attention weights
-    loss, aux = compute_hierarchical_embedding_losses(
+    loss, aux = compute_hierarchical_entropy_loss(
         pyramid1, pyramid2, return_attention_weights=True
     )
     assert "self_loss" in aux

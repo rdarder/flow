@@ -9,7 +9,7 @@ from barevision.flow.model import (
     HierarchicalEmbeddingModel,
     count_parameters,
 )
-from barevision.flow.loss import compute_embedding_losses
+from barevision.flow.loss import compute_window_attention_losses
 
 __version__ = "0.1.0"
 
@@ -17,5 +17,5 @@ __all__ = [
     "OpticalFlowModel",
     "HierarchicalEmbeddingModel",
     "count_parameters",
-    "compute_embedding_losses",
+    "compute_window_attention_losses",
 ]
