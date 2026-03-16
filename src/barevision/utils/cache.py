@@ -36,7 +36,3 @@ def setup_jax_compilation_cache(project_name: str = "barevision") -> None:
 
     # Enable persistent cache (optional but recommended)
     jax.config.update("jax_persistent_cache_min_entry_size_bytes", 1024)  # 1KB minimum
-
-
-# Auto-setup when module is imported
-setup_jax_compilation_cache()
