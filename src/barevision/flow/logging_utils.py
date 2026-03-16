@@ -26,8 +26,8 @@ def log_attention_statistics(
     """Log attention entropy distributions for diagnostic monitoring.
 
     Tracks:
-    - Self-attention entropy: should be HIGH (tolerate ambiguity within frame)
-    - Cross-attention entropy: should be LOW (find precise matches across frames)
+    - Self-attention entropy: training minimizes this (encourage unique embeddings where only self dominates)
+    - Cross-attention entropy: training minimizes this (encourage confident cross-frame matching)
 
     Args:
         logger: JaxLogger instance
@@ -44,10 +44,8 @@ def log_attention_statistics(
     num_windows = (H // window_size) * (W // window_size)
     flat_windows = windows.reshape(B * num_windows, window_size, window_size, D)
 
-    # Compute entropies
-    self_entropy = -self_attention_entropy_loss_core(
-        flat_windows
-    )  # Positive = higher entropy
+    # Compute entropies (both return positive values)
+    self_entropy = self_attention_entropy_loss_core(flat_windows)
     cross_entropy = cross_attention_entropy_loss_core(flat_windows, flat_windows)
 
     # Log histograms
