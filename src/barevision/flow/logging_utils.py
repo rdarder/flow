@@ -208,7 +208,12 @@ def log_diagnostics(logger: JaxLogger, model, img1, step: int, window_size: int 
     log_gradient_statistics(logger, None, model, step)
 
     # Get pyramid and use coarsest level
-    pyramid = model(img1)
+    # Support both OpticalFlowModel and HierarchicalEmbeddingModel
+    if hasattr(model, 'extract_embeddings'):
+        pyramid = model.extract_embeddings(img1)
+    else:
+        pyramid = model(img1)
+    
     embeddings = pyramid[-1]  # Coarsest level
     log_embedding_statistics(logger, embeddings, step)
     log_attention_statistics(logger, embeddings, step, window_size)
@@ -280,9 +285,8 @@ def print_footer():
 
 
 def print_header(settings):
-    """Print training configuration header."""
     print("=" * 60)
-    print("HIERARCHICAL EMBEDDING TRAINING")
+    print("OPTICAL FLOW TRAINING")
     print("=" * 60)
     print()
     print(f"Pyramid levels: {settings.model.num_levels}")

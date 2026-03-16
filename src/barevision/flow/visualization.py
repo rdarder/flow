@@ -354,7 +354,7 @@ def create_attention_maps_figure(
 
 def log_visualizations(
     logger: JaxLogger,
-    model: HierarchicalEmbeddingModel,
+    model,  # OpticalFlowModel or HierarchicalEmbeddingModel
     img1: jnp.ndarray,
     img2: jnp.ndarray,
     metadata: dict,
@@ -378,7 +378,7 @@ def log_visualizations(
 
     Args:
         logger: JaxLogger instance for TensorBoard logging
-        model: Hierarchical embedding model
+        model: OpticalFlowModel or HierarchicalEmbeddingModel (only used if aux_data is None)
         img1: Frame 1 (1, H, W, 3)
         img2: Frame 2 (1, H, W, 3)
         metadata: dict with video_name, frame_t, frame_tk, distance
@@ -392,8 +392,13 @@ def log_visualizations(
     # Get pyramid from aux_data
     if aux_data is None or "model" not in aux_data:
         # Fallback: compute pyramid if aux not provided
-        pyramid1 = model(img1)
-        pyramid2 = model(img2)
+        # Support both OpticalFlowModel and HierarchicalEmbeddingModel
+        if hasattr(model, 'extract_embeddings'):
+            pyramid1 = model.extract_embeddings(img1)
+            pyramid2 = model.extract_embeddings(img2)
+        else:
+            pyramid1 = model(img1)
+            pyramid2 = model(img2)
     else:
         pyramid1 = aux_data["model"]["pyramid1"]
         pyramid2 = aux_data["model"]["pyramid2"]

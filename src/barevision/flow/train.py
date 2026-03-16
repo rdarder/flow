@@ -1,4 +1,4 @@
-"""Training script for embedding model with flow estimation."""
+"""Training script for optical flow model."""
 
 import time
 from functools import partial
@@ -9,8 +9,8 @@ from flax import nnx
 
 from barevision.flow.loss import compute_combined_loss
 from barevision.flow.logging_utils import log_progress, print_footer, print_header
-from barevision.flow.model import HierarchicalEmbeddingModel, count_parameters
-from barevision.flow.flow_estimator import FlowEstimator
+from barevision.flow.optical_flow_model import OpticalFlowModel
+from barevision.flow.model import count_parameters
 from barevision.flow.reconstruction_loss import warp_embeddings
 from barevision.flow.settings import (
     ModelSettings,
@@ -27,10 +27,8 @@ from barevision.utils.logging import JaxLogger
     static_argnames=("return_aux", "model_settings"),
 )
 def train_step(
-    model,
-    flow_estimator,
+    model: OpticalFlowModel,
     optimizer,
-    flow_optimizer,
     img1,
     img2,
     model_settings: ModelSettings,
@@ -41,6 +39,8 @@ def train_step(
     Uses combined entropy + reconstruction loss across all pyramid levels.
 
     Args:
+        model: OpticalFlowModel (combines embeddings + flow estimation)
+        optimizer: Single optimizer for all model parameters
         model_settings: Model configuration (window_size, temperatures, loss weights, etc.)
         return_aux: If True, return comprehensive auxiliary data for debugging/visualization.
                    When False, XLA eliminates aux computation as dead code.
@@ -52,15 +52,9 @@ def train_step(
     lambda_recon = model_settings.lambda_recon
     temperature = model_settings.temperature
 
-    def loss_fn(model, flow_estimator):
-        # Get pyramid from both frames
-        pyramid1 = model(img1)
-        pyramid2 = model(img2)
-
-        # Compute flow at coarsest level
-        flow = model.compute_flow(
-            img1, img2, flow_estimator, temperature=temperature
-        )
+    def loss_fn(model):
+        # Get embeddings and flow in single forward pass
+        flow, pyramid1, pyramid2 = model(img1, img2, temperature=temperature)
 
         # Get coarsest level embeddings for reconstruction
         emb1_coarse = pyramid1[-1]
@@ -96,14 +90,13 @@ def train_step(
 
         return loss, aux
 
-    # Get gradients for both model and flow_estimator
-    (loss, aux), (model_grads, flow_grads) = nnx.value_and_grad(
-        loss_fn, has_aux=True, argnums=(0, 1)
-    )(model, flow_estimator)
+    # Get gradients
+    (loss, aux), grads = nnx.value_and_grad(
+        loss_fn, has_aux=True
+    )(model)
 
-    # Update both model and flow estimator
-    optimizer.update(model, model_grads)
-    flow_optimizer.update(flow_estimator, flow_grads)
+    # Update model (single optimizer for all parameters)
+    optimizer.update(model, grads)
 
     return loss, aux
 
@@ -111,10 +104,8 @@ def train_step(
 def run_epoch(
     epoch,
     global_step,
-    model,
-    flow_estimator,
+    model: OpticalFlowModel,
     optimizer,
-    flow_optimizer,
     logger,
     dataset_settings,
     model_settings,
@@ -137,9 +128,7 @@ def run_epoch(
         
         loss, aux = train_step(
             model,
-            flow_estimator,
             optimizer,
-            flow_optimizer,
             img1,
             img2,
             model_settings,
@@ -189,22 +178,16 @@ def train(settings: Settings):
         run_name_prefix=settings.logging.run_name_prefix,
     )
 
-    # Create embedding model
-    model = HierarchicalEmbeddingModel(
+    # Create optical flow model (combines embeddings + flow estimation)
+    model = OpticalFlowModel(
         embed_dim=settings.model.embed_dim,
-        in_channels=3,
         num_levels=settings.model.num_levels,
-        rngs=nnx.Rngs(0),
-    )
-
-    # Create flow estimator
-    flow_estimator = FlowEstimator(
+        flow_hidden_dim=settings.model.flow_hidden_dim,
         window_size=settings.model.window_size,
-        hidden_dim=settings.model.flow_hidden_dim,
         rngs=nnx.Rngs(0),
     )
 
-    # Create optimizers for both models
+    # Single optimizer for all parameters
     optimizer = nnx.Optimizer(
         model,
         optax.chain(
@@ -214,21 +197,13 @@ def train(settings: Settings):
         wrt=nnx.Param,
     )
 
-    flow_optimizer = nnx.Optimizer(
-        flow_estimator,
-        optax.chain(
-            optax.clip_by_global_norm(1.0),
-            optax.adam(settings.training.learning_rate),
-        ),
-        wrt=nnx.Param,
-    )
-
     # Count parameters
-    model_params = count_parameters(model)
-    flow_params = count_parameters(flow_estimator)
-    print(f"Embedding model parameters: {model_params}")
+    total_params = count_parameters(model)
+    embed_params = count_parameters(model.embedding_model)
+    flow_params = count_parameters(model.flow_estimator)
+    print(f"Embedding model parameters: {embed_params}")
     print(f"Flow estimator parameters: {flow_params}")
-    print(f"Total parameters: {model_params + flow_params}\n")
+    print(f"Total parameters: {total_params}\n")
 
     global_step = 0
     for epoch in range(settings.training.epochs):
@@ -236,9 +211,7 @@ def train(settings: Settings):
             epoch,
             global_step,
             model,
-            flow_estimator,
             optimizer,
-            flow_optimizer,
             logger,
             settings.dataset,
             settings.model,
@@ -247,7 +220,7 @@ def train(settings: Settings):
 
     logger.close()
     print_footer()
-    return model, flow_estimator
+    return model
 
 
 def main():
