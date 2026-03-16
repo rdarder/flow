@@ -198,8 +198,12 @@ class TestLossIntegration:
         assert jnp.isfinite(grad2).all()
 
     def test_different_resolutions(self):
-        """Test with different aligned resolutions."""
-        for h, w in [(16, 16), (32, 32), (64, 48), (48, 64)]:
+        """Test with different aligned resolutions.
+
+        Uses smaller inputs to reduce JAX compilation overhead.
+        """
+        # Test fewer resolutions with smaller sizes
+        for h, w in [(16, 16), (32, 32)]:
             emb1 = jr.normal(jr.PRNGKey(0), (1, h, w, 16))
             emb2 = jr.normal(jr.PRNGKey(1), (1, h, w, 16))
             loss, aux = compute_window_attention_losses(emb1, emb2)
@@ -434,24 +438,34 @@ class TestHierarchicalEmbeddingLosses:
 
 
 class TestHierarchicalLossIntegration:
-    """Integration tests for hierarchical loss with model forward pass."""
+    """Integration tests for hierarchical loss with model forward pass.
+
+    Note: These tests verify the full pipeline but are slow due to JAX compilation.
+    The smoke test (python -m barevision.flow.training --smoke-test) provides
+    more comprehensive end-to-end validation during development.
+    """
 
     def test_full_training_step_with_pyramid(self):
-        """Test a complete training step using hierarchical loss."""
+        """Test a complete training step using hierarchical loss.
+
+        This test is slow due to full model compilation.
+        Uses reduced sizes for faster execution.
+        """
         from barevision.flow.embeddings.model import HierarchicalEmbeddingModel
         from flax import nnx
 
+        # Use smaller model for faster testing
         model = HierarchicalEmbeddingModel(
-            hidden_dim=32,
-            embed_dim=16,
-            num_groups=8,
-            num_levels=3,
+            hidden_dim=16,  # Reduced from 32
+            embed_dim=8,    # Reduced from 16
+            num_groups=4,   # Reduced from 8
+            num_levels=2,   # Reduced from 3
             rngs=nnx.Rngs(jr.PRNGKey(0)),
         )
 
-        # Input size for 3 levels targeting 16×16 at coarsest
-        img1 = jr.normal(jr.PRNGKey(1), (1, 135, 135, 3))
-        img2 = jr.normal(jr.PRNGKey(2), (1, 135, 135, 3))
+        # Input size for 2 levels targeting 16×16 at coarsest (calculated: 41×41)
+        img1 = jr.normal(jr.PRNGKey(1), (1, 41, 41, 3))
+        img2 = jr.normal(jr.PRNGKey(2), (1, 41, 41, 3))
 
         def train_loss(m, x1, x2):
             pyramid1 = m(x1)

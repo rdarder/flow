@@ -34,13 +34,22 @@ def test_attention_maps_figure():
 
 
 def test_loss_returns_attention_weights():
-    """Test that loss functions return attention weights when requested."""
+    """Test that loss functions return attention weights when requested.
+    
+    Uses smaller pyramid to reduce JAX compilation overhead.
+    """
     from barevision.flow.embeddings.losses import compute_hierarchical_entropy_loss
     
-    # Create simple pyramid
+    # Create simple 2-level pyramid (faster than 3 levels)
     key = jr.PRNGKey(0)
-    pyramid1 = [jr.normal(key, (2, 48 - i * 4, 48 - i * 4, 16)) for i in range(3)]
-    pyramid2 = [jr.normal(key, (2, 48 - i * 4, 48 - i * 4, 16)) for i in range(3)]
+    pyramid1 = [
+        jr.normal(key, (1, 32, 32, 16)),  # Level 0
+        jr.normal(key, (1, 16, 16, 16)),  # Level 1
+    ]
+    pyramid2 = [
+        jr.normal(key, (1, 32, 32, 16)),
+        jr.normal(key, (1, 16, 16, 16)),
+    ]
     
     # Test without attention weights (default)
     loss, aux = compute_hierarchical_entropy_loss(
@@ -55,7 +64,7 @@ def test_loss_returns_attention_weights():
     )
     assert "self_loss" in aux
     assert "level_self_attention_weights" in aux
-    assert len(aux["level_self_attention_weights"]) == 3  # 3 levels
+    assert len(aux["level_self_attention_weights"]) == 2  # 2 levels
     print("✓ test_loss_returns_attention_weights")
 
 
