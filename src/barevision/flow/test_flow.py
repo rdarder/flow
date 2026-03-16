@@ -10,10 +10,8 @@ from barevision.flow.flow_estimator import (
     FlowEstimator,
     create_source_position_grid,
     flow_to_dense,
-)
-from barevision.flow.reconstruction_loss import (
-    reconstruction_loss_core,
     warp_embeddings,
+    reconstruction_loss_core,
 )
 
 
@@ -93,7 +91,7 @@ def test_flow_estimator_parameters():
     """Flow estimator has expected parameter count."""
     flow_estimator = FlowEstimator(window_size=16, hidden_dim=24, rngs=nnx.Rngs(0))
 
-    from barevision.flow.model import count_parameters
+    from barevision.flow.embeddings.model import count_parameters
 
     params = count_parameters(flow_estimator)
 

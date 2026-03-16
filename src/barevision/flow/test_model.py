@@ -4,11 +4,13 @@ import jax.numpy as jnp
 import jax.random as jr
 from flax import nnx
 
-from barevision.flow.model import (
+from barevision.flow.embeddings.model import (
     HierarchicalEmbeddingModel,
     StemBlock,
     StandardBlock,
     count_parameters,
+)
+from barevision.flow.embeddings.model import (
     calculate_required_input_size,
     calculate_coarse_output_size,
 )

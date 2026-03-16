@@ -1,6 +1,6 @@
-"""Minimal flow estimator for coarsest level.
+"""Flow estimation from attention centroids.
 
-Predicts optical flow from attention centroid positions.
+Predicts optical flow from self/cross attention centroid positions.
 """
 
 import jax
@@ -14,8 +14,7 @@ class AttentionCentroids(nnx.Module):
     Input: self_attn (B, N, N), cross_attn (B, N, N) where N = H*W
     Output: (self_cx, self_cy, cross_cx, cross_cy) all normalized [0,1]
 
-    The centroid is computed as the center-of-mass of attention weights,
-    where each position's contribution is weighted by its attention value.
+    The centroid is computed as the center-of-mass of attention weights.
     """
 
     def __init__(self, window_size: int = 16, *, rngs: nnx.Rngs):
@@ -23,13 +22,11 @@ class AttentionCentroids(nnx.Module):
 
         Args:
             window_size: Size of attention window (default 16)
-            rngs: NNX RNGs (not used, but required for consistency)
+            rngs: NNX RNGs
         """
         self.window_size = window_size
 
-        # Pre-compute normalized coordinate grid (window_size, window_size, 2)
-        # where values range from 0 to 1 in both axes
-        # This is a static buffer, not a parameter
+        # Pre-compute normalized coordinate grid
         y, x = jnp.meshgrid(
             jnp.arange(window_size, dtype=jnp.float32),
             jnp.arange(window_size, dtype=jnp.float32),
@@ -49,8 +46,8 @@ class AttentionCentroids(nnx.Module):
         """Compute centroids for self and cross attention maps.
 
         Args:
-            self_attn: (B, N, N) self-attention weights where N = H*W
-            cross_attn: (B, N, N) cross-attention weights where N = H*W
+            self_attn: (B, N, N) self-attention weights
+            cross_attn: (B, N, N) cross-attention weights
 
         Returns:
             centroids: (B, N, 4) = [self_cx, self_cy, cross_cx, cross_cy] per query pixel
@@ -59,31 +56,14 @@ class AttentionCentroids(nnx.Module):
         H = W = self.window_size
 
         # Reshape attention maps to spatial format
-        # (B, N, N) -> (B, N, H, W) where N queries each attend to H*W positions
         self_attn_spatial = self_attn.reshape(B, N, H, W)
         cross_attn_spatial = cross_attn.reshape(B, N, H, W)
 
         # Compute centroid for each query pixel
-        # Centroid = sum over spatial positions of (attention_weight * normalized_coord)
-        # self_attn_spatial: (B, N, H, W)
-        # norm_coords: (H, W, 2)
-        # Result: (B, N, 2) for each attention type
-
-        # For self attention
-        self_cx = jnp.sum(
-            self_attn_spatial * self.norm_coords[..., 0], axis=(2, 3)
-        )  # (B, N)
-        self_cy = jnp.sum(
-            self_attn_spatial * self.norm_coords[..., 1], axis=(2, 3)
-        )  # (B, N)
-
-        # For cross attention
-        cross_cx = jnp.sum(
-            cross_attn_spatial * self.norm_coords[..., 0], axis=(2, 3)
-        )  # (B, N)
-        cross_cy = jnp.sum(
-            cross_attn_spatial * self.norm_coords[..., 1], axis=(2, 3)
-        )  # (B, N)
+        self_cx = jnp.sum(self_attn_spatial * self.norm_coords[..., 0], axis=(2, 3))
+        self_cy = jnp.sum(self_attn_spatial * self.norm_coords[..., 1], axis=(2, 3))
+        cross_cx = jnp.sum(cross_attn_spatial * self.norm_coords[..., 0], axis=(2, 3))
+        cross_cy = jnp.sum(cross_attn_spatial * self.norm_coords[..., 1], axis=(2, 3))
 
         # Stack: (B, N, 4)
         centroids = jnp.stack([self_cx, self_cy, cross_cx, cross_cy], axis=-1)
@@ -104,7 +84,7 @@ class FlowEstimator(nnx.Module):
         """Initialize flow estimator.
 
         Args:
-            window_size: Size of attention window (used for coordinate grid)
+            window_size: Size of attention window
             hidden_dim: Hidden layer dimension (default 24)
             rngs: NNX RNGs for parameter initialization
         """
@@ -122,11 +102,10 @@ class FlowEstimator(nnx.Module):
 
         Args:
             src_pos: (B, N, 2) normalized source coordinates [x, y]
-            centroids: (B, N, 4) from AttentionCentroids [self_cx, self_cy, cross_cx, cross_cy]
+            centroids: (B, N, 4) from AttentionCentroids
 
         Returns:
             flow: (B, N, 2) predicted flow [u, v] in normalized coordinates
-                  where (u, v) = where source pixel moves to in target frame
         """
         # Concatenate inputs: (B, N, 6)
         x = jnp.concatenate([src_pos, centroids], axis=-1)

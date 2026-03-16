@@ -41,7 +41,7 @@ class DatasetSettings:
         Returns:
             (height, width) tuple for input images
         """
-        from barevision.flow.model import calculate_required_input_size
+        from barevision.flow.embeddings.model import calculate_required_input_size
 
         # Target coarse dimension: grid_size × window_size
         target_coarse_dim = self.coarse_grid_size * self.window_size

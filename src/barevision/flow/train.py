@@ -7,10 +7,10 @@ import optax
 import tyro
 from flax import nnx
 
-from barevision.flow.loss import optical_flow_training_loss
+from barevision.flow.optical_flow.model import Model as OpticalFlowModel
+from barevision.flow.optical_flow.losses import compute_training_loss
+from barevision.flow.embeddings.model import count_parameters
 from barevision.flow.logging_utils import log_progress, print_footer, print_header
-from barevision.flow.optical_flow_model import OpticalFlowModel
-from barevision.flow.model import count_parameters
 from barevision.flow.settings import (
     ModelSettings,
     Settings,
@@ -46,10 +46,35 @@ def train_step(
     Returns:
         Tuple of (loss, aux_dict)
     """
+    def loss_fn(model):
+        # Forward pass
+        flow, pyramid1, pyramid2 = model(img1, img2, temperature=model_settings.temperature)
+        
+        # Get coarsest level embeddings
+        emb1_coarse = pyramid1[-1]
+        emb2_coarse = pyramid2[-1]
+        
+        # Warp Frame 1 embeddings
+        from barevision.flow.flow_estimator.losses import warp_embeddings
+        
+        warped = warp_embeddings(emb1_coarse, flow)
+        
+        # Compute loss
+        return compute_training_loss(
+            pyramid1,
+            pyramid2,
+            warped_embeddings=warped,
+            target_embeddings=emb2_coarse,
+            window_size=model_settings.window_size,
+            lambda_entropy=model_settings.lambda_entropy,
+            level_weight_decay=model_settings.level_weight_decay,
+            lambda_recon=model_settings.lambda_recon,
+            temperature=model_settings.temperature,
+            return_attention_weights=return_aux,
+        )
+    
     # Compute loss and gradients
-    (loss, aux), grads = nnx.value_and_grad(optical_flow_training_loss, has_aux=True)(
-        model, img1, img2, model_settings, return_aux
-    )
+    (loss, aux), grads = nnx.value_and_grad(loss_fn, has_aux=True)(model)
 
     # Update model
     optimizer.update(model, grads)

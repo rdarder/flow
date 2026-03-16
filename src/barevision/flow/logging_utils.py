@@ -10,7 +10,7 @@ import numpy as np
 
 from barevision.utils.logging import JaxLogger
 from barevision.utils.grid import WindowGrid
-from barevision.flow.loss import (
+from barevision.flow.embeddings.losses import (
     self_attention_entropy_loss_core,
     cross_attention_entropy_loss_core,
 )

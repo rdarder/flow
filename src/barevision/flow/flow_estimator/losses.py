@@ -14,19 +14,17 @@ def warp_embeddings(embeddings: jnp.ndarray, flow: jnp.ndarray) -> jnp.ndarray:
     Flow convention: (u, v) = where F1 pixel moves TO in F2
 
     For each pixel (y, x) in the output (F2 coordinate frame), we sample from
-    the input (F1) at position (y - v, x - u). This is backward warping / pull warp.
+    the input (F1) at position (y - v, x - u). This is backward warping.
 
     Args:
         embeddings: (B, H, W, D) Frame 1 embeddings
         flow: (B, H, W, 2) flow field in normalized coordinates [0, 1]
-              where (u, v) represents displacement as fraction of image dimensions
 
     Returns:
         warped: (B, H, W, D) Frame 1 embeddings sampled at F2 coordinates
     """
     B, H, W, D = embeddings.shape
 
-    # Function to warp a single (H, W, D) image with (H, W, 2) flow
     def warp_single(emb, fl):
         # emb: (H, W, D), fl: (H, W, 2)
 
@@ -44,7 +42,7 @@ def warp_embeddings(embeddings: jnp.ndarray, flow: jnp.ndarray) -> jnp.ndarray:
         x_src = x_dest - fl_pixels[..., 0]  # (H, W)
         y_src = y_dest - fl_pixels[..., 1]  # (H, W)
 
-        # Warp each channel - map_coordinates expects tuple of coordinate arrays
+        # Warp each channel
         warped_ch = []
         for d in range(D):
             ch = map_coordinates(emb[..., d], (y_src, x_src), order=1, mode="nearest")

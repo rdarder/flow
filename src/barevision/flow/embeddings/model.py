@@ -35,18 +35,10 @@ Decoupled Cascade Design:
     - Receptive field expands before projection to embedding space
     - GELU activation preserves more gradient flow than ReLU
     - No activation on embeddings before L2 normalization
-
-Parameters: ~4,560 total
-    - Stem Block: Dense 3×3 (3→32) = 3*32*9=864 + Grouped 3×3 (8g, 32→32) = 32*4*9=1152
-                  + 1×1 (32→16) = 528 + Downsample 3×3 (8g, 32→32) = 1152 = 3,696
-    - Standard Block: Grouped 3×3 (8g, 32→32) = 1152 + 1×1 (32→16) = 528 + Downsample = 1152 = 2,832
-    - Last Standard Block: 1152 + 528 = 1,680 (no downsample)
 """
 
-from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
-import jax
 import jax.numpy as jnp
 from flax import nnx
 
@@ -74,9 +66,9 @@ class StemBlock(nnx.Module):
         """Initialize StemBlock.
 
         Args:
-            hidden_dim: Hidden feature dimension (default 32)
-            embed_dim: Output embedding dimension (default 16)
-            num_groups: Number of groups for grouped convolutions (default 8)
+            hidden_dim: Hidden feature dimension
+            embed_dim: Output embedding dimension
+            num_groups: Number of groups for grouped convolutions
             rngs: NNX RNGs for parameter initialization
         """
         self.hidden_dim = hidden_dim
@@ -84,14 +76,13 @@ class StemBlock(nnx.Module):
         self.num_groups = num_groups
 
         # Conv1: Dense 3×3, stride=1, RGB (3 ch) → hidden_dim ch
-        # No feature groups since 3 input channels isn't divisible by num_groups
         self.conv1 = nnx.Conv(
             in_features=3,
             out_features=hidden_dim,
             kernel_size=(3, 3),
             strides=(1, 1),
             padding="VALID",
-            feature_group_count=1,  # Dense convolution
+            feature_group_count=1,
             rngs=rngs,
         )
         self.norm1 = nnx.GroupNorm(
@@ -112,7 +103,7 @@ class StemBlock(nnx.Module):
             num_groups=num_groups // 2, num_features=hidden_dim, rngs=rngs
         )
 
-        # Branch A: 1×1 Conv for embedding projection (hidden_dim → embed_dim)
+        # Branch A: 1×1 Conv for embedding projection
         self.embed_conv = nnx.Conv(
             in_features=hidden_dim,
             out_features=embed_dim,
@@ -121,7 +112,7 @@ class StemBlock(nnx.Module):
             rngs=rngs,
         )
 
-        # Branch B: 3×3 Conv for downsampling (hidden_dim → hidden_dim)
+        # Branch B: 3×3 Conv for downsampling
         self.downsample_conv = nnx.Conv(
             in_features=hidden_dim,
             out_features=hidden_dim,
@@ -139,9 +130,7 @@ class StemBlock(nnx.Module):
             x: Input tensor of shape (B, H, W, 3)
 
         Returns:
-            Tuple of (embedding, downsampled_output):
-                - embedding: (B, H-4, W-4, embed_dim) L2-normalized
-                - downsampled_output: (B, (H-7)//2, (W-7)//2, 32)
+            Tuple of (embedding, downsampled_output)
         """
         # First convolution: dense 3×3, expands RF to 9 pixels
         x = self.conv1(x)
@@ -152,16 +141,15 @@ class StemBlock(nnx.Module):
         x = self.conv2(x)
         x = self.norm2(x)
         x = nnx.gelu(x)
-        rich_features = x  # (B, H-4, W-4, 32)
+        rich_features = x
 
         # Branch A: Embedding projection
-        embedding = self.embed_conv(rich_features)  # (B, H-4, W-4, embed_dim)
-        # L2 normalization (no activation before norm)
+        embedding = self.embed_conv(rich_features)
         norm = jnp.linalg.norm(embedding, axis=-1, keepdims=True)
         embedding = embedding / (norm + 1e-8)
 
         # Branch B: Downsampling
-        downsampled = self.downsample_conv(rich_features)  # (B, (H-7)//2, (W-7)//2, 32)
+        downsampled = self.downsample_conv(rich_features)
 
         return embedding, downsampled
 
@@ -190,9 +178,9 @@ class StandardBlock(nnx.Module):
         """Initialize StandardBlock.
 
         Args:
-            hidden_dim: Hidden feature dimension (default 32)
-            embed_dim: Output embedding dimension (default 16)
-            num_groups: Number of groups for grouped convolutions (default 8)
+            hidden_dim: Hidden feature dimension
+            embed_dim: Output embedding dimension
+            num_groups: Number of groups for grouped convolutions
             is_last_level: If True, skip downsampling branch
             rngs: NNX RNGs for parameter initialization
         """
@@ -201,7 +189,7 @@ class StandardBlock(nnx.Module):
         self.num_groups = num_groups
         self.is_last_level = is_last_level
 
-        # Conv1: Grouped 3×3, stride=1, hidden_dim ch → hidden_dim ch
+        # Conv1: Grouped 3×3, stride=1
         self.conv1 = nnx.Conv(
             in_features=hidden_dim,
             out_features=hidden_dim,
@@ -215,7 +203,7 @@ class StandardBlock(nnx.Module):
             num_groups=num_groups // 2, num_features=hidden_dim, rngs=rngs
         )
 
-        # Branch A: 1×1 Conv for embedding projection (hidden_dim → embed_dim)
+        # Branch A: 1×1 Conv for embedding projection
         self.embed_conv = nnx.Conv(
             in_features=hidden_dim,
             out_features=embed_dim,
@@ -240,22 +228,19 @@ class StandardBlock(nnx.Module):
         """Forward pass through StandardBlock.
 
         Args:
-            x: Input tensor of shape (B, H, W, 32)
+            x: Input tensor of shape (B, H, W, hidden_dim)
 
         Returns:
-            Tuple of (embedding, downsampled_output or None):
-                - embedding: (B, H-2, W-2, embed_dim) L2-normalized
-                - downsampled_output: (B, (H-5)//2, (W-5)//2, 32) or None
+            Tuple of (embedding, downsampled_output or None)
         """
-        # Feature extraction: grouped 3×3, expands RF by 2 pixels
+        # Feature extraction: grouped 3×3
         x = self.conv1(x)
         x = self.norm1(x)
         x = nnx.gelu(x)
-        rich_features = x  # (B, H-2, W-2, 32)
+        rich_features = x
 
         # Branch A: Embedding projection
-        embedding = self.embed_conv(rich_features)  # (B, H-2, W-2, embed_dim)
-        # L2 normalization (no activation before norm)
+        embedding = self.embed_conv(rich_features)
         norm = jnp.linalg.norm(embedding, axis=-1, keepdims=True)
         embedding = embedding / (norm + 1e-8)
 
@@ -299,9 +284,7 @@ class HierarchicalEmbeddingModel(nnx.Module):
         self.num_groups = num_groups
         self.num_levels = num_levels
 
-        # Build pyramid levels using nnx.List for proper module tracking
-        # Level 0: StemBlock (RGB input, two stacked convs)
-        # Levels 1 to N-1: StandardBlock (feature input, single conv)
+        # Build pyramid levels
         self.blocks = nnx.List()
 
         # StemBlock for Level 0
@@ -336,33 +319,17 @@ class HierarchicalEmbeddingModel(nnx.Module):
         Returns:
             List of feature maps, one per level.
             Each level has shape (B, H_l, W_l, embed_dim)
-            where H_l, W_l shrink at each level due to VALID padding.
         """
         feature_maps = []
 
-        # Iterate through all blocks
         for i, block in enumerate(self.blocks):
             embedding, downsampled = block(x)
             feature_maps.append(embedding)
 
-            # Pass downsampled output to next block (if not last)
             if i < len(self.blocks) - 1:
                 x = downsampled
 
         return feature_maps
-
-
-def _compute_entropy(probabilities: jnp.ndarray) -> jnp.ndarray:
-    """Compute entropy of a probability distribution.
-
-    Args:
-        probabilities: (..., N) array where last dimension sums to 1
-
-    Returns:
-        Entropy values with shape (...)
-    """
-    eps = 1e-10
-    return -jnp.sum(probabilities * jnp.log(probabilities + eps), axis=-1)
 
 
 def count_parameters(model: nnx.Module) -> int:
@@ -403,41 +370,10 @@ def calculate_required_input_size(
     kernel_size: int = 3,
     stride: int = 2,
 ) -> int:
-    """Calculate required input image size to achieve target coarse dimension.
-
-    Works backwards from the target coarse-level spatial dimension through
-    the pyramid to determine the exact input size needed.
-
-    For the Decoupled Cascade architecture with VALID padding:
-    - Standard Block FE reverse: Adds 2 pixels (from Conv1 3×3)
-    - Stem Block FE reverse: Adds 4 pixels (from Conv1 + Conv2 3×3)
-    - Downsample reverse: (size - 1) * stride + kernel_size
-
-    Args:
-        target_coarse_dim: Target spatial dimension at coarsest level
-                          (e.g., 48 for 3×3 grid of 16×16 windows)
-        num_levels: Number of pyramid levels
-        kernel_size: Convolution kernel size (default 3)
-        stride: Downsampling stride (default 2)
-
-    Returns:
-        Required input image dimension (height and width are same)
-
-    Example:
-        For 3 levels targeting 16×16 at coarsest (L2):
-        L2 drops 2 → 18
-        L1 downsample reversed → (18-1)*2 + 3 = 37
-        L1 drops 2 → 39
-        L0 downsample reversed → (39-1)*2 + 3 = 79
-        L0 drops 4 → 83
-        Result: 83×83 input required
-    """
+    """Calculate required input image size to achieve target coarse dimension."""
     size = target_coarse_dim
-    # Walk backward from top level (num_levels - 1) down to 0
     for i in reversed(range(num_levels)):
-        # Reverse the Feature Extraction drop (Stem drops 4, Standard drops 2)
         size += 4 if i == 0 else 2
-        # Reverse the downsample that fed into this level (only if there is a level below it)
         if i > 0:
             size = (size - 1) * stride + kernel_size
     return size
@@ -449,28 +385,10 @@ def calculate_coarse_output_size(
     kernel_size: int = 3,
     stride: int = 2,
 ) -> int:
-    """Calculate coarse-level output size for a given input.
-
-    Forward calculation through the pyramid.
-
-    For the Decoupled Cascade architecture with VALID padding:
-    - Feature Extraction drop: Stem drops 4, Standard drops 2
-    - Downsample: (size - kernel_size) // stride + 1
-
-    Args:
-        input_dim: Input image dimension
-        num_levels: Number of pyramid levels
-        kernel_size: Convolution kernel size (default 3)
-        stride: Downsampling stride (default 2)
-
-    Returns:
-        Spatial dimension at coarsest level
-    """
+    """Calculate coarse-level output size for a given input."""
     size = input_dim
     for i in range(num_levels):
-        # Apply Feature Extraction drop
         size -= 4 if i == 0 else 2
-        # Apply Downsample (if not the last level)
         if i < num_levels - 1:
             size = (size - kernel_size) // stride + 1
     return size

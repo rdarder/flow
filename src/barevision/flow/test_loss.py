@@ -5,7 +5,7 @@ import jax.numpy as jnp
 import jax.random as jr
 import pytest
 
-from barevision.flow.loss import (
+from barevision.flow.embeddings.losses import (
     self_attention_entropy_loss_core,
     cross_attention_entropy_loss_core,
     compute_window_attention_losses,
@@ -438,7 +438,7 @@ class TestHierarchicalLossIntegration:
 
     def test_full_training_step_with_pyramid(self):
         """Test a complete training step using hierarchical loss."""
-        from barevision.flow.model import HierarchicalEmbeddingModel
+        from barevision.flow.embeddings.model import HierarchicalEmbeddingModel
         from flax import nnx
 
         model = HierarchicalEmbeddingModel(

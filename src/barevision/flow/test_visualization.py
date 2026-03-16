@@ -7,7 +7,7 @@ import numpy as np
 import jax.random as jr
 from flax import nnx
 
-from barevision.flow.model import HierarchicalEmbeddingModel
+from barevision.flow.embeddings.model import HierarchicalEmbeddingModel
 from barevision.flow.visualization import (
     create_frame_with_grid_figure,
     create_attention_maps_figure,
@@ -63,7 +63,7 @@ def test_attention_maps_figure():
 
 def test_loss_returns_attention_weights():
     """Test that loss functions return attention weights when requested."""
-    from barevision.flow.loss import compute_hierarchical_entropy_loss
+    from barevision.flow.embeddings.losses import compute_hierarchical_entropy_loss
     
     # Create simple pyramid
     key = jr.PRNGKey(0)
