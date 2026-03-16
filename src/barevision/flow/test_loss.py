@@ -8,8 +8,8 @@ import pytest
 from barevision.flow.loss import (
     self_attention_entropy_loss_core,
     cross_attention_entropy_loss_core,
-    compute_embedding_losses,
-    compute_hierarchical_embedding_losses,
+    compute_window_attention_losses,
+    compute_hierarchical_entropy_loss,
     crop_to_grid_aligned,
 )
 
@@ -95,7 +95,7 @@ class TestCombinedLoss:
         """Test that combined loss returns scalar values."""
         emb1 = jr.normal(jr.PRNGKey(0), (2, 32, 32, 16))
         emb2 = jr.normal(jr.PRNGKey(1), (2, 32, 32, 16))
-        loss, aux = compute_embedding_losses(emb1, emb2)
+        loss, aux = compute_window_attention_losses(emb1, emb2)
 
         assert jnp.isscalar(loss) or loss.shape == ()
         assert jnp.isscalar(aux["self_loss"]) or aux["self_loss"].shape == ()
@@ -105,7 +105,7 @@ class TestCombinedLoss:
         """Test that combined loss is finite."""
         emb1 = jr.normal(jr.PRNGKey(0), (2, 32, 32, 16))
         emb2 = jr.normal(jr.PRNGKey(1), (2, 32, 32, 16))
-        loss, aux = compute_embedding_losses(emb1, emb2)
+        loss, aux = compute_window_attention_losses(emb1, emb2)
 
         assert jnp.isfinite(loss)
         assert jnp.isfinite(aux["self_loss"])
@@ -117,7 +117,7 @@ class TestCombinedLoss:
         emb2 = jr.normal(jr.PRNGKey(1), (1, 31, 32, 16))
 
         with pytest.raises(ValueError, match="Height.*not divisible"):
-            compute_embedding_losses(emb1, emb2)
+            compute_window_attention_losses(emb1, emb2)
 
     def test_misaligned_width_fails(self):
         """Test that misaligned width raises ValueError."""
@@ -125,7 +125,7 @@ class TestCombinedLoss:
         emb2 = jr.normal(jr.PRNGKey(1), (1, 32, 33, 16))
 
         with pytest.raises(ValueError, match="Width.*not divisible"):
-            compute_embedding_losses(emb1, emb2)
+            compute_window_attention_losses(emb1, emb2)
 
     def test_shape_mismatch_fails(self):
         """Test that mismatched shapes raise assertion."""
@@ -133,13 +133,13 @@ class TestCombinedLoss:
         emb2 = jr.normal(jr.PRNGKey(1), (1, 32, 32, 8))  # Different D
 
         with pytest.raises(AssertionError):
-            compute_embedding_losses(emb1, emb2)
+            compute_window_attention_losses(emb1, emb2)
 
     def test_gradient_flow(self):
         """Test gradients flow through combined loss."""
 
         def loss_fn(e1, e2):
-            loss, _ = compute_embedding_losses(e1, e2)
+            loss, _ = compute_window_attention_losses(e1, e2)
             return loss
 
         emb1 = jr.normal(jr.PRNGKey(0), (1, 32, 32, 16))
@@ -156,13 +156,13 @@ class TestCombinedLoss:
         emb1 = jr.normal(jr.PRNGKey(0), (1, 32, 32, 16))
         emb2 = jr.normal(jr.PRNGKey(1), (1, 32, 32, 16))
 
-        loss1, aux1 = compute_embedding_losses(
+        loss1, aux1 = compute_window_attention_losses(
             emb1, emb2, lambda_entropy=0.0
         )  # Self only
-        loss2, aux2 = compute_embedding_losses(
+        loss2, aux2 = compute_window_attention_losses(
             emb1, emb2, lambda_entropy=1.0
         )  # Cross only
-        loss3, aux3 = compute_embedding_losses(
+        loss3, aux3 = compute_window_attention_losses(
             emb1, emb2, lambda_entropy=0.5
         )  # Equal mix
 
@@ -187,7 +187,7 @@ class TestLossIntegration:
         emb2 = jr.normal(jr.PRNGKey(1), (B, H, W, D))
 
         def train_loss(e1, e2):
-            loss, _ = compute_embedding_losses(e1, e2)
+            loss, _ = compute_window_attention_losses(e1, e2)
             return loss
 
         loss = train_loss(emb1, emb2)
@@ -202,7 +202,7 @@ class TestLossIntegration:
         for h, w in [(16, 16), (32, 32), (64, 48), (48, 64)]:
             emb1 = jr.normal(jr.PRNGKey(0), (1, h, w, 16))
             emb2 = jr.normal(jr.PRNGKey(1), (1, h, w, 16))
-            loss, aux = compute_embedding_losses(emb1, emb2)
+            loss, aux = compute_window_attention_losses(emb1, emb2)
             assert jnp.isscalar(loss) or loss.shape == ()
             assert jnp.isfinite(loss)
 
@@ -248,7 +248,7 @@ class TestHierarchicalEmbeddingLosses:
         pyramid1 = [jr.normal(jr.PRNGKey(0), (1, 64, 64, 16))]
         pyramid2 = [jr.normal(jr.PRNGKey(1), (1, 64, 64, 16))]
 
-        loss, aux = compute_hierarchical_embedding_losses(pyramid1, pyramid2)
+        loss, aux = compute_hierarchical_entropy_loss(pyramid1, pyramid2)
 
         assert jnp.isfinite(loss)
         assert jnp.isfinite(aux["self_loss"])
@@ -268,7 +268,7 @@ class TestHierarchicalEmbeddingLosses:
             jr.normal(jr.PRNGKey(5), (1, 16, 16, 16)),
         ]
 
-        loss, aux = compute_hierarchical_embedding_losses(pyramid1, pyramid2)
+        loss, aux = compute_hierarchical_entropy_loss(pyramid1, pyramid2)
 
         assert jnp.isfinite(loss)
         assert len(aux["level_losses"]) == 3
@@ -289,7 +289,7 @@ class TestHierarchicalEmbeddingLosses:
             jr.normal(jr.PRNGKey(5), (1, 16, 16, 16)),
         ]
 
-        loss, aux = compute_hierarchical_embedding_losses(pyramid1, pyramid2)
+        loss, aux = compute_hierarchical_entropy_loss(pyramid1, pyramid2)
 
         assert jnp.isfinite(loss)
         assert len(aux["level_losses"]) == 3
@@ -298,7 +298,7 @@ class TestHierarchicalEmbeddingLosses:
         """Test that gradients flow through all pyramid levels."""
 
         def loss_fn(p1, p2):
-            loss, _ = compute_hierarchical_embedding_losses(p1, p2)
+            loss, _ = compute_hierarchical_entropy_loss(p1, p2)
             return loss
 
         pyramid1 = [
@@ -337,7 +337,7 @@ class TestHierarchicalEmbeddingLosses:
             jr.normal(jr.PRNGKey(5), (1, 16, 16, 16)),
         ]
 
-        loss, aux = compute_hierarchical_embedding_losses(pyramid1, pyramid2)
+        loss, aux = compute_hierarchical_entropy_loss(pyramid1, pyramid2)
 
         # Each level should contribute to the total loss
         level_losses = aux["level_losses"]
@@ -365,7 +365,7 @@ class TestHierarchicalEmbeddingLosses:
         ]
 
         with pytest.raises(ValueError, match="Pyramid level mismatch"):
-            compute_hierarchical_embedding_losses(pyramid1, pyramid2)
+            compute_hierarchical_entropy_loss(pyramid1, pyramid2)
 
     def test_level_weight_decay(self):
         """Test that level weight decay correctly weights coarser levels higher."""
@@ -381,7 +381,7 @@ class TestHierarchicalEmbeddingLosses:
         ]
 
         # Default decay=2.0
-        loss, aux = compute_hierarchical_embedding_losses(pyramid1, pyramid2)
+        loss, aux = compute_hierarchical_entropy_loss(pyramid1, pyramid2)
 
         # Check weights are correct
         assert aux["level_weights"] == [1.0, 2.0, 4.0]
@@ -406,7 +406,7 @@ class TestHierarchicalEmbeddingLosses:
         ]
 
         # Custom decay=3.0: weights should be [1, 3, 9]
-        loss, aux = compute_hierarchical_embedding_losses(
+        loss, aux = compute_hierarchical_entropy_loss(
             pyramid1, pyramid2, level_weight_decay=3.0
         )
 
@@ -426,7 +426,7 @@ class TestHierarchicalEmbeddingLosses:
         ]
 
         # decay=1.0: all levels get equal weight
-        loss, aux = compute_hierarchical_embedding_losses(
+        loss, aux = compute_hierarchical_entropy_loss(
             pyramid1, pyramid2, level_weight_decay=1.0
         )
 
@@ -442,7 +442,7 @@ class TestHierarchicalLossIntegration:
         from flax import nnx
 
         model = HierarchicalEmbeddingModel(
-            embed_dim=16, in_channels=3, num_levels=3, rngs=nnx.Rngs(jr.PRNGKey(0))
+            hidden_dim=32, embed_dim=16, num_groups=8, num_levels=3, rngs=nnx.Rngs(jr.PRNGKey(0))
         )
 
         # Input size for 3 levels targeting 16×16 at coarsest
@@ -452,7 +452,7 @@ class TestHierarchicalLossIntegration:
         def train_loss(m, x1, x2):
             pyramid1 = m(x1)
             pyramid2 = m(x2)
-            loss, _ = compute_hierarchical_embedding_losses(pyramid1, pyramid2)
+            loss, _ = compute_hierarchical_entropy_loss(pyramid1, pyramid2)
             return loss
 
         loss = train_loss(model, img1, img2)

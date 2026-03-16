@@ -19,7 +19,7 @@ class TestStemBlock:
 
     def test_stem_output_shapes(self):
         """Test StemBlock returns correct shapes."""
-        model = StemBlock(embed_dim=16, rngs=nnx.Rngs(jr.PRNGKey(0)))
+        model = StemBlock(hidden_dim=32, embed_dim=16, num_groups=8, rngs=nnx.Rngs(jr.PRNGKey(0)))
         x = jnp.ones((1, 83, 83, 3))  # Example input
         embedding, downsampled = model(x)
 
@@ -32,7 +32,7 @@ class TestStemBlock:
         """Test gradients flow through StemBlock."""
         from jax import grad
 
-        model = StemBlock(embed_dim=16, rngs=nnx.Rngs(jr.PRNGKey(0)))
+        model = StemBlock(hidden_dim=32, embed_dim=16, num_groups=8, rngs=nnx.Rngs(jr.PRNGKey(0)))
         x = jnp.ones((1, 83, 83, 3))
 
         def loss_fn(m, inp):
@@ -55,7 +55,7 @@ class TestStandardBlock:
     def test_standard_block_output_shapes(self):
         """Test StandardBlock returns correct shapes."""
         model = StandardBlock(
-            embed_dim=16, is_last_level=False, rngs=nnx.Rngs(jr.PRNGKey(0))
+            hidden_dim=32, embed_dim=16, num_groups=8, is_last_level=False, rngs=nnx.Rngs(jr.PRNGKey(0))
         )
         x = jnp.ones((1, 39, 39, 32))  # From Stem downsample
         embedding, downsampled = model(x)
@@ -69,7 +69,7 @@ class TestStandardBlock:
     def test_standard_block_last_level(self):
         """Test StandardBlock at last level returns None for downsample."""
         model = StandardBlock(
-            embed_dim=16, is_last_level=True, rngs=nnx.Rngs(jr.PRNGKey(0))
+            hidden_dim=32, embed_dim=16, num_groups=8, is_last_level=True, rngs=nnx.Rngs(jr.PRNGKey(0))
         )
         x = jnp.ones((1, 18, 18, 32))
         embedding, downsampled = model(x)
@@ -86,7 +86,7 @@ class TestHierarchicalEmbeddingModel:
     def test_pyramid_output(self):
         """Test that model returns list of feature maps."""
         model = HierarchicalEmbeddingModel(
-            embed_dim=16, in_channels=3, num_levels=3, rngs=nnx.Rngs(jr.PRNGKey(0))
+            hidden_dim=32, embed_dim=16, num_groups=8, num_levels=3, rngs=nnx.Rngs(jr.PRNGKey(0))
         )
         # For 3 levels targeting 16×16 at coarsest: input must be 83×83
         x = jnp.ones((1, 83, 83, 3))
@@ -128,7 +128,7 @@ class TestHierarchicalEmbeddingModel:
     def test_single_level(self):
         """Test model with single level."""
         model = HierarchicalEmbeddingModel(
-            embed_dim=16, in_channels=3, num_levels=1, rngs=nnx.Rngs(jr.PRNGKey(0))
+            hidden_dim=32, embed_dim=16, num_groups=8, num_levels=1, rngs=nnx.Rngs(jr.PRNGKey(0))
         )
         # For 1 level (Stem only) targeting any size: input drops 4
         x = jnp.ones((1, 20, 20, 3))
@@ -142,7 +142,7 @@ class TestHierarchicalEmbeddingModel:
     def test_batch_processing(self):
         """Test batch processing."""
         model = HierarchicalEmbeddingModel(
-            embed_dim=16, in_channels=3, num_levels=3, rngs=nnx.Rngs(jr.PRNGKey(0))
+            hidden_dim=32, embed_dim=16, num_groups=8, num_levels=3, rngs=nnx.Rngs(jr.PRNGKey(0))
         )
         x = jnp.ones((4, 83, 83, 3))
         pyramid = model(x)
@@ -154,7 +154,7 @@ class TestHierarchicalEmbeddingModel:
     def test_parameter_count(self):
         """Test parameter counting with new Decoupled Cascade architecture."""
         model = HierarchicalEmbeddingModel(
-            embed_dim=16, in_channels=3, num_levels=3, rngs=nnx.Rngs(jr.PRNGKey(0))
+            hidden_dim=32, embed_dim=16, num_groups=8, num_levels=3, rngs=nnx.Rngs(jr.PRNGKey(0))
         )
         param_count = count_parameters(model)
 
@@ -188,7 +188,7 @@ class TestHierarchicalEmbeddingModel:
         from jax import grad
 
         model = HierarchicalEmbeddingModel(
-            embed_dim=16, in_channels=3, num_levels=3, rngs=nnx.Rngs(jr.PRNGKey(0))
+            hidden_dim=32, embed_dim=16, num_groups=8, num_levels=3, rngs=nnx.Rngs(jr.PRNGKey(0))
         )
         x = jnp.ones((1, 83, 83, 3))
 

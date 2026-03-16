@@ -135,8 +135,13 @@ def train(settings: Settings):
     )
 
     # Create optical flow model (combines embeddings + flow estimation)
+    # Architecture constants:
+    # - hidden_dim=32: intermediate feature dimension in convolution blocks
+    # - num_groups=8: grouped convolution groups (32/8 = 4 channels per group)
     model = OpticalFlowModel(
+        hidden_dim=32,
         embed_dim=settings.model.embed_dim,
+        num_groups=8,
         num_levels=settings.model.num_levels,
         flow_hidden_dim=settings.model.flow_hidden_dim,
         window_size=settings.model.window_size,

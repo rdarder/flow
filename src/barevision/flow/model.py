@@ -50,11 +50,6 @@ import jax
 import jax.numpy as jnp
 from flax import nnx
 
-# Global constants for blocks
-HIDDEN_CHANNELS = 32
-EMBED_DIM = 16
-NUM_GROUPS = 8  # For grouped convolutions (32/8 = 4 ch/group)
-
 
 class StemBlock(nnx.Module):
     """Root block of the pyramid (Level 0 only).
@@ -64,24 +59,35 @@ class StemBlock(nnx.Module):
 
     Input: (B, H, W, 3) RGB
     Returns: (embedding, downsampled_output)
-        - embedding: (B, H-4, W-4, 16) L2-normalized
-        - downsampled_output: (B, (H-7)//2, (W-7)//2, 32)
+        - embedding: (B, H-4, W-4, embed_dim) L2-normalized
+        - downsampled_output: (B, (H-7)//2, (W-7)//2, hidden_dim)
     """
 
-    def __init__(self, embed_dim: int = EMBED_DIM, *, rngs: nnx.Rngs):
+    def __init__(
+        self,
+        hidden_dim: int,
+        embed_dim: int,
+        num_groups: int,
+        *,
+        rngs: nnx.Rngs,
+    ):
         """Initialize StemBlock.
 
         Args:
+            hidden_dim: Hidden feature dimension (default 32)
             embed_dim: Output embedding dimension (default 16)
+            num_groups: Number of groups for grouped convolutions (default 8)
             rngs: NNX RNGs for parameter initialization
         """
+        self.hidden_dim = hidden_dim
         self.embed_dim = embed_dim
+        self.num_groups = num_groups
 
-        # Conv1: Dense 3×3, stride=1, RGB (3 ch) → 32 ch
-        # No feature groups since 3 input channels isn't divisible by 8
+        # Conv1: Dense 3×3, stride=1, RGB (3 ch) → hidden_dim ch
+        # No feature groups since 3 input channels isn't divisible by num_groups
         self.conv1 = nnx.Conv(
             in_features=3,
-            out_features=HIDDEN_CHANNELS,
+            out_features=hidden_dim,
             kernel_size=(3, 3),
             strides=(1, 1),
             padding="VALID",
@@ -89,41 +95,40 @@ class StemBlock(nnx.Module):
             rngs=rngs,
         )
         self.norm1 = nnx.GroupNorm(
-            num_groups=4, num_features=HIDDEN_CHANNELS, rngs=rngs
+            num_groups=num_groups // 2, num_features=hidden_dim, rngs=rngs
         )
 
-        # Conv2: Grouped 3×3, stride=1, 32 ch → 32 ch
-        # 8 groups, 4 ch/group input, 4 ch/group output
+        # Conv2: Grouped 3×3, stride=1, hidden_dim ch → hidden_dim ch
         self.conv2 = nnx.Conv(
-            in_features=HIDDEN_CHANNELS,
-            out_features=HIDDEN_CHANNELS,
+            in_features=hidden_dim,
+            out_features=hidden_dim,
             kernel_size=(3, 3),
             strides=(1, 1),
             padding="VALID",
-            feature_group_count=NUM_GROUPS,
+            feature_group_count=num_groups,
             rngs=rngs,
         )
         self.norm2 = nnx.GroupNorm(
-            num_groups=4, num_features=HIDDEN_CHANNELS, rngs=rngs
+            num_groups=num_groups // 2, num_features=hidden_dim, rngs=rngs
         )
 
-        # Branch A: 1×1 Conv for embedding projection (32 → embed_dim)
+        # Branch A: 1×1 Conv for embedding projection (hidden_dim → embed_dim)
         self.embed_conv = nnx.Conv(
-            in_features=HIDDEN_CHANNELS,
+            in_features=hidden_dim,
             out_features=embed_dim,
             kernel_size=(1, 1),
             padding="VALID",
             rngs=rngs,
         )
 
-        # Branch B: 3×3 Conv for downsampling (32 → 32)
+        # Branch B: 3×3 Conv for downsampling (hidden_dim → hidden_dim)
         self.downsample_conv = nnx.Conv(
-            in_features=HIDDEN_CHANNELS,
-            out_features=HIDDEN_CHANNELS,
+            in_features=hidden_dim,
+            out_features=hidden_dim,
             kernel_size=(3, 3),
             strides=(2, 2),
             padding="VALID",
-            feature_group_count=NUM_GROUPS,
+            feature_group_count=num_groups,
             rngs=rngs,
         )
 
@@ -167,42 +172,52 @@ class StandardBlock(nnx.Module):
     Uses a single 3×3 convolution (inherits receptive field from previous levels)
     before splitting into embedding and downsampling branches.
 
-    Input: (B, H, W, 32)
+    Input: (B, H, W, hidden_dim)
     Returns: (embedding, downsampled_output or None)
-        - embedding: (B, H-2, W-2, 16) L2-normalized
-        - downsampled_output: (B, (H-5)//2, (W-5)//2, 32) or None if last level
+        - embedding: (B, H-2, W-2, embed_dim) L2-normalized
+        - downsampled_output: (B, (H-5)//2, (W-5)//2, hidden_dim) or None if last level
     """
 
     def __init__(
-        self, embed_dim: int = EMBED_DIM, is_last_level: bool = False, *, rngs: nnx.Rngs
+        self,
+        hidden_dim: int,
+        embed_dim: int,
+        num_groups: int,
+        is_last_level: bool = False,
+        *,
+        rngs: nnx.Rngs,
     ):
         """Initialize StandardBlock.
 
         Args:
+            hidden_dim: Hidden feature dimension (default 32)
             embed_dim: Output embedding dimension (default 16)
+            num_groups: Number of groups for grouped convolutions (default 8)
             is_last_level: If True, skip downsampling branch
             rngs: NNX RNGs for parameter initialization
         """
+        self.hidden_dim = hidden_dim
         self.embed_dim = embed_dim
+        self.num_groups = num_groups
         self.is_last_level = is_last_level
 
-        # Conv1: Grouped 3×3, stride=1, 32 ch → 32 ch
+        # Conv1: Grouped 3×3, stride=1, hidden_dim ch → hidden_dim ch
         self.conv1 = nnx.Conv(
-            in_features=HIDDEN_CHANNELS,
-            out_features=HIDDEN_CHANNELS,
+            in_features=hidden_dim,
+            out_features=hidden_dim,
             kernel_size=(3, 3),
             strides=(1, 1),
             padding="VALID",
-            feature_group_count=NUM_GROUPS,
+            feature_group_count=num_groups,
             rngs=rngs,
         )
         self.norm1 = nnx.GroupNorm(
-            num_groups=4, num_features=HIDDEN_CHANNELS, rngs=rngs
+            num_groups=num_groups // 2, num_features=hidden_dim, rngs=rngs
         )
 
-        # Branch A: 1×1 Conv for embedding projection (32 → embed_dim)
+        # Branch A: 1×1 Conv for embedding projection (hidden_dim → embed_dim)
         self.embed_conv = nnx.Conv(
-            in_features=HIDDEN_CHANNELS,
+            in_features=hidden_dim,
             out_features=embed_dim,
             kernel_size=(1, 1),
             padding="VALID",
@@ -212,12 +227,12 @@ class StandardBlock(nnx.Module):
         # Branch B: 3×3 Conv for downsampling (only if not last level)
         if not is_last_level:
             self.downsample_conv = nnx.Conv(
-                in_features=HIDDEN_CHANNELS,
-                out_features=HIDDEN_CHANNELS,
+                in_features=hidden_dim,
+                out_features=hidden_dim,
                 kernel_size=(3, 3),
                 strides=(2, 2),
                 padding="VALID",
-                feature_group_count=NUM_GROUPS,
+                feature_group_count=num_groups,
                 rngs=rngs,
             )
 
@@ -257,28 +272,31 @@ class HierarchicalEmbeddingModel(nnx.Module):
 
     Uses Decoupled Cascade architecture: stacked stride=1 convolutions build
     structural understanding before splitting into embedding and downsampling
-    branches. Produces 16-dimensional embeddings at multiple scales optimized
-    for attention-based matching. Uses valid convolutions only (no padding).
+    branches. Produces embeddings at multiple scales optimized for attention-based
+    matching. Uses valid convolutions only (no padding).
     """
 
     def __init__(
         self,
-        embed_dim: int = EMBED_DIM,
-        in_channels: int = 3,
-        num_levels: int = 3,
+        hidden_dim: int,
+        embed_dim: int,
+        num_groups: int,
+        num_levels: int,
         *,
         rngs: nnx.Rngs,
     ):
         """Initialize the hierarchical embedding model.
 
         Args:
-            embed_dim: Output embedding dimension per level (default 16)
-            in_channels: Number of input channels (3 for RGB)
-            num_levels: Number of pyramid levels (default 3)
+            hidden_dim: Hidden feature dimension for intermediate convolutions
+            embed_dim: Output embedding dimension per level
+            num_groups: Number of groups for grouped convolutions
+            num_levels: Number of pyramid levels
             rngs: NNX RNGs for parameter initialization
         """
+        self.hidden_dim = hidden_dim
         self.embed_dim = embed_dim
-        self.in_channels = in_channels
+        self.num_groups = num_groups
         self.num_levels = num_levels
 
         # Build pyramid levels using nnx.List for proper module tracking
@@ -287,14 +305,23 @@ class HierarchicalEmbeddingModel(nnx.Module):
         self.blocks = nnx.List()
 
         # StemBlock for Level 0
-        self.blocks.append(StemBlock(embed_dim=embed_dim, rngs=rngs))
+        self.blocks.append(
+            StemBlock(
+                hidden_dim=hidden_dim,
+                embed_dim=embed_dim,
+                num_groups=num_groups,
+                rngs=rngs,
+            )
+        )
 
         # StandardBlocks for Levels 1 to N-1
         for i in range(1, num_levels):
             is_last = i == num_levels - 1
             self.blocks.append(
                 StandardBlock(
+                    hidden_dim=hidden_dim,
                     embed_dim=embed_dim,
+                    num_groups=num_groups,
                     is_last_level=is_last,
                     rngs=rngs,
                 )

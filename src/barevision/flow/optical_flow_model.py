@@ -24,17 +24,21 @@ class OpticalFlowModel(nnx.Module):
 
     def __init__(
         self,
-        embed_dim: int = 16,
-        num_levels: int = 3,
-        flow_hidden_dim: int = 24,
-        window_size: int = 16,
+        hidden_dim: int,
+        embed_dim: int,
+        num_groups: int,
+        num_levels: int,
+        flow_hidden_dim: int,
+        window_size: int,
         *,
         rngs: nnx.Rngs,
     ):
         """Initialize optical flow model.
 
         Args:
+            hidden_dim: Hidden feature dimension for intermediate convolutions
             embed_dim: Embedding dimension per level
+            num_groups: Number of groups for grouped convolutions
             num_levels: Number of pyramid levels
             flow_hidden_dim: Flow estimator hidden dimension
             window_size: Attention window size
@@ -42,8 +46,9 @@ class OpticalFlowModel(nnx.Module):
         """
         # Embedding pyramid (can be used standalone)
         self.embedding_model = HierarchicalEmbeddingModel(
+            hidden_dim=hidden_dim,
             embed_dim=embed_dim,
-            in_channels=3,
+            num_groups=num_groups,
             num_levels=num_levels,
             rngs=rngs,
         )
