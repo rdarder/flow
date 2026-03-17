@@ -180,6 +180,28 @@ class TrainingSettings:
 
 
 @dataclass
+class CheckpointSettings:
+    """Checkpoint configuration for model persistence.
+
+    Attributes:
+        every_steps: Save checkpoint every N steps (0 to disable periodic checkpointing)
+        location: Base directory for checkpoints (default "checkpoints")
+                  Final path will be {location}/{run_name}/
+        save_final: Whether to save a final checkpoint when training completes
+    """
+
+    every_steps: int = 100
+    location: str = "checkpoints"
+    save_final: bool = True
+
+    def __post_init__(self):
+        if self.every_steps < 0:
+            raise ValueError(f"every_steps must be >= 0, got {self.every_steps}")
+        if not self.location:
+            raise ValueError("location cannot be empty")
+
+
+@dataclass
 class Settings:
     """Complete experiment configuration.
 
@@ -194,6 +216,7 @@ class Settings:
     model: ModelSettings
     training: TrainingSettings
     logging: LoggingSettings
+    checkpoint: CheckpointSettings
     smoke_test: bool = False
 
 
@@ -228,6 +251,11 @@ def create_smoke_test_settings() -> Settings:
             run_name_prefix="smoke_test",
             log_every_steps=1,  # Log everything every step in smoke test
             log_visualizations_every_steps=1,  # Log visualizations every step in smoke test
+        ),
+        checkpoint=CheckpointSettings(
+            every_steps=0,  # Disable periodic checkpointing in smoke test
+            location="checkpoints",
+            save_final=False,  # Don't save final checkpoint in smoke test
         ),
         smoke_test=False,  # Already applied by caller
     )

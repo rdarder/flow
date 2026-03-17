@@ -23,6 +23,7 @@ class JaxLogger:
         self,
         log_dir: str = "runs",
         run_name_prefix: str = "barevision",
+        run_name: str | None = None,
         strict: bool = False,
     ):
         """Initialize logger with automatic run naming.
@@ -30,9 +31,11 @@ class JaxLogger:
         Args:
             log_dir: Directory for TensorBoard logs
             run_name_prefix: Prefix for run name (e.g., "barevision" -> "barevision_20240225_123045")
+            run_name: Optional explicit run name. If None, auto-generated from prefix + timestamp
             strict: If True, raise exceptions on logging errors instead of printing warnings
         """
-        run_name = f"{run_name_prefix}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        if run_name is None:
+            run_name = f"{run_name_prefix}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         log_path = os.path.join(log_dir, run_name)
         self.writer = SummaryWriter(log_path)
         self.log_dir = log_path

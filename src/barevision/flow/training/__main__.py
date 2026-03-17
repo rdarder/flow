@@ -10,7 +10,12 @@ from flax import nnx
 from barevision.flow.training.model import Model as OpticalFlowModel
 from barevision.flow.training.losses import compute_loss
 from barevision.flow.embeddings.model import count_parameters
-from barevision.flow.logging_utils import log_progress, print_footer, print_header
+from barevision.flow.logging_utils import (
+    log_progress,
+    log_diagnostics,
+    print_footer,
+    print_header,
+)
 from barevision.flow.settings import (
     ModelSettings,
     Settings,
@@ -18,6 +23,7 @@ from barevision.flow.settings import (
 )
 from barevision.flow.video_dataset import create_dataloader
 from barevision.flow.training.visualization import log_visualizations
+from barevision.flow.checkpoint_utils import generate_run_name, save_checkpoint
 from barevision.utils.logging import JaxLogger
 
 
@@ -105,15 +111,14 @@ def run_epoch(
     model: OpticalFlowModel,
     optimizer,
     logger,
-    dataset_settings,
-    model_settings,
-    logging_settings,
+    settings: Settings,
+    run_name: str,
 ):
     # Compute deterministic seed for this epoch
-    epoch_seed = dataset_settings.seed + epoch
+    epoch_seed = settings.dataset.seed + epoch
 
     loader = create_dataloader(
-        dataset_settings,
+        settings.dataset,
         split="train",
         shuffle=True,
         random_seed=epoch_seed,
@@ -122,18 +127,18 @@ def run_epoch(
 
     for step, (img1, img2, metadata) in enumerate(loader):
         # Determine if we should return aux data (for logging or visualization)
-        should_return_aux = logging_settings.should_log_something(global_step)
+        should_return_aux = settings.logging.should_log_something(global_step)
 
         loss, aux = train_step(
             model,
             optimizer,
             img1,
             img2,
-            model_settings,
+            settings.model,
             return_aux=should_return_aux,
         )
 
-        if global_step % logging_settings.log_every_steps == 0:
+        if global_step % settings.logging.log_every_steps == 0:
             log_progress(
                 logger,
                 model,
@@ -143,10 +148,10 @@ def run_epoch(
                 loss,
                 aux,
                 epoch_start,
-                model_settings.window_size,
+                settings.model.window_size,
             )
 
-        if global_step % logging_settings.log_visualizations_every_steps == 0:
+        if global_step % settings.logging.log_visualizations_every_steps == 0:
             # Get pyramids and flow from aux_data
             pyramid1 = aux["model"]["pyramid1"]
             pyramid2 = aux["model"]["pyramid2"]
@@ -163,9 +168,20 @@ def run_epoch(
                 aux_data=aux,
                 metadata=metadata[0],
                 step=global_step,
-                window_size=model_settings.window_size,
-                num_levels=model_settings.num_levels,
+                window_size=settings.model.window_size,
+                num_levels=settings.model.num_levels,
             )
+
+        # Checkpoint periodically
+        if settings.checkpoint.every_steps > 0:
+            if global_step % settings.checkpoint.every_steps == 0:
+                checkpoint_path = save_checkpoint(
+                    model=model,
+                    step=global_step,
+                    settings=settings,
+                    run_name=run_name,
+                )
+                print(f"Checkpoint saved at step {global_step}: {checkpoint_path}")
 
         global_step += 1
 
@@ -180,10 +196,13 @@ def train(settings: Settings):
 
     print_header(settings)
 
+    # Generate run name for consistent logging and checkpointing
+    run_name = generate_run_name(prefix=settings.logging.run_name_prefix)
+
     # Use strict mode for smoke tests to catch visualization errors
     logger = JaxLogger(
         log_dir=settings.logging.log_dir,
-        run_name_prefix=settings.logging.run_name_prefix,
+        run_name=run_name,
         strict=is_smoke_test,
     )
 
@@ -227,10 +246,20 @@ def train(settings: Settings):
             model,
             optimizer,
             logger,
-            settings.dataset,
-            settings.model,
-            settings.logging,
+            settings,
+            run_name,
         )
+
+    # Save final checkpoint
+    if settings.checkpoint.save_final:
+        checkpoint_path = save_checkpoint(
+            model=model,
+            step=global_step,
+            settings=settings,
+            run_name=run_name,
+            save_final=True,
+        )
+        print(f"Final checkpoint saved: {checkpoint_path}")
 
     logger.close()
 
