@@ -107,8 +107,15 @@ The model is trained end-to-end using a dual objective that balances structural 
 
 **Loss combination:**
 ```
-total = (1 - lambda_recon) * entropy_loss + lambda_recon * reconstruction_loss
+total_loss = entropy_loss + recon_weight * reconstruction_loss
 ```
+
+Where:
+- `entropy_loss`: Primary objective ensuring distinctive embeddings
+- `reconstruction_loss`: Secondary objective ensuring embeddings are trackable  
+- `recon_weight`: Controls relative importance (default: 0.1)
+
+This formulation treats entropy as the foundation (without distinctive embeddings, flow is ambiguous) and reconstruction as a grounding signal (ensuring distinctive features actually correspond across frames).
 
 **Entropy loss details:**
 - Computed per 16×16 window at each pyramid level

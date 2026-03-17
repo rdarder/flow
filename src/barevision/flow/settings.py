@@ -121,8 +121,9 @@ class ModelSettings:
                            Set to 1.0 for uniform weighting across levels.
         lambda_entropy: Cross-attention loss weight in [0, 1] (default 0.5 = equal weighting)
                        entropy_loss = (1 - lambda_entropy) * self_loss + lambda_entropy * cross_loss
-        lambda_recon: Reconstruction loss weight in [0, 1] (default 0.5 = equal weighting)
-                      total = (1 - lambda_recon) * entropy + reconstruction
+        recon_weight: Reconstruction loss weight (default 0.1)
+                      total_loss = entropy_loss + recon_weight * reconstruction_loss
+                      Higher values prioritize tracking accuracy over embedding distinctness.
         flow_hidden_dim: Flow estimator hidden dimension (default 24)
         temperature: Temperature for attention softmax (default 0.2)
     """
@@ -132,7 +133,7 @@ class ModelSettings:
     embed_dim: int = 16
     level_weight_decay: float = 1.0  # Uniform weighting across levels
     lambda_entropy: float = 0.5  # Equal weighting between self and cross entropy
-    lambda_recon: float = 0.5  # Equal weighting between entropy and reconstruction
+    recon_weight: float = 0.1  # Reconstruction loss weight (entropy is primary)
     flow_hidden_dim: int = 24  # Flow estimator hidden dimension
     temperature: float = 0.2  # Temperature for attention softmax
 
@@ -151,8 +152,8 @@ class ModelSettings:
             raise ValueError(
                 f"lambda_entropy must be in [0, 1], got {self.lambda_entropy}"
             )
-        if not 0 <= self.lambda_recon <= 1:
-            raise ValueError(f"lambda_recon must be in [0, 1], got {self.lambda_recon}")
+        if self.recon_weight < 0:
+            raise ValueError(f"recon_weight must be >= 0, got {self.recon_weight}")
         if self.flow_hidden_dim < 1:
             raise ValueError(
                 f"flow_hidden_dim must be >= 1, got {self.flow_hidden_dim}"
@@ -257,7 +258,7 @@ def create_smoke_test_settings() -> Settings:
             embed_dim=16,
             level_weight_decay=1.0,
             lambda_entropy=0.5,
-            lambda_recon=0.5,
+            recon_weight=0.1,
             flow_hidden_dim=24,
             temperature=0.2,
         ),

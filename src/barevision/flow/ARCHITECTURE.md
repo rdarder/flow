@@ -109,7 +109,8 @@ barevision/flow/
 
 **`losses.py`** — Combined training objective.
 - `compute_loss`: Combines entropy + reconstruction loss
-- `total = (1 - lambda_recon) * entropy + lambda_recon * reconstruction`
+- `total = entropy_loss + recon_weight * reconstruction_loss`
+- Entropy is primary (distinctive embeddings), reconstruction is secondary (trackable)
 - Read this for loss weighting changes.
 
 **`visualization.py`** — Training visualization orchestrator.

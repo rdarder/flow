@@ -82,7 +82,7 @@ def train_step(
             window_size=model_settings.window_size,
             lambda_entropy=model_settings.lambda_entropy,
             level_weight_decay=model_settings.level_weight_decay,
-            lambda_recon=model_settings.lambda_recon,
+            recon_weight=model_settings.recon_weight,
             temperature=model_settings.temperature,
             return_attention_weights=return_aux,
         )
@@ -152,7 +152,7 @@ def validation_step(
         window_size=model_settings.window_size,
         lambda_entropy=model_settings.lambda_entropy,
         level_weight_decay=model_settings.level_weight_decay,
-        lambda_recon=model_settings.lambda_recon,
+        recon_weight=model_settings.recon_weight,
         temperature=model_settings.temperature,
         return_attention_weights=False,
     )

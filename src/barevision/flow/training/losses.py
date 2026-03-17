@@ -1,6 +1,14 @@
 """Combined training loss for optical flow.
 
 Combines embedding entropy loss with flow reconstruction loss.
+
+Loss formulation:
+    total_loss = entropy_loss + recon_weight * reconstruction_loss
+
+Where:
+    - entropy_loss: Primary objective (distinctive embeddings)
+    - reconstruction_loss: Secondary objective (trackable embeddings)
+    - recon_weight: Controls relative importance of reconstruction (default 0.1)
 """
 
 from typing import Tuple
@@ -19,13 +27,17 @@ def compute_loss(
     window_size: int = 16,
     lambda_entropy: float = 0.5,
     level_weight_decay: float = 1.0,
-    lambda_recon: float = 0.5,
+    recon_weight: float = 0.1,
     temperature: float = 0.2,
     return_attention_weights: bool = False,
 ) -> Tuple[jnp.ndarray, dict]:
     """Compute combined entropy + reconstruction loss for optical flow training.
 
-    total = (1 - lambda_recon) * entropy_loss + lambda_recon * reconstruction_loss
+    Loss formulation:
+        total = entropy_loss + recon_weight * reconstruction_loss
+
+    This makes entropy the primary objective (ensuring distinctive embeddings)
+    and reconstruction a secondary objective (ensuring embeddings are trackable).
 
     Args:
         pyramid1: List of feature maps from frame 1, one per level
@@ -35,7 +47,7 @@ def compute_loss(
         window_size: Size of attention windows (default 16)
         lambda_entropy: Cross-attention loss weight in [0, 1] (default 0.5)
         level_weight_decay: Weight multiplier per level (default 1.0 = uniform)
-        lambda_recon: Reconstruction loss weight in [0, 1] (default 0.5)
+        recon_weight: Reconstruction loss weight (default 0.1)
         temperature: Softmax temperature (default 0.2)
         return_attention_weights: If True, return attention weights and entropy maps
 
@@ -56,14 +68,15 @@ def compute_loss(
     # Compute reconstruction loss
     recon_loss = reconstruction_loss_core(warped_embeddings, target_embeddings)
 
-    # Combine losses
-    total_loss = (1 - lambda_recon) * entropy_loss + lambda_recon * recon_loss
+    # Combine losses: entropy is primary, reconstruction is secondary
+    total_loss = entropy_loss + recon_weight * recon_loss
 
     aux = dict(
         self_loss=entropy_aux["self_loss"],
         cross_loss=entropy_aux["cross_loss"],
         entropy_loss=entropy_loss,
         reconstruction_loss=recon_loss,
+        total_loss=total_loss,
     )
 
     # Merge level-specific aux data if available
