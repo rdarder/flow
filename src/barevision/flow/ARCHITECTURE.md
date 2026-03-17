@@ -48,7 +48,10 @@ barevision/flow/
 │
 ├── video_dataset.py      # Data loading (shared)
 ├── settings.py           # Hyperparameters (shared)
-└── logging_utils.py      # Console output (shared)
+├── checkpoint_utils.py   # Model persistence and restoration
+├── inference.py          # Inference script for flow estimation
+├── logging_utils.py      # Console output (shared)
+└── ARCHITECTURE.md       # This file
 ```
 
 ---
@@ -143,6 +146,68 @@ barevision/flow/
 - `log_diagnostics`: Embedding statistics
 - Pure formatting. No logic.
 
+**`checkpoint_utils.py`** — Model persistence utilities.
+- `save_checkpoint`: Save periodic/final checkpoints
+- `save_best_checkpoint`: Save best model by validation loss
+- `load_checkpoint`: Load checkpoint data
+- `restore_model_from_checkpoint`: Restore model state
+- `generate_run_name`: Unique run identifier with timestamp
+- `config_from_checkpoint`: Extract config without loading model
+
+**`inference.py`** — Flow estimation from checkpoint.
+- CLI entry point: `python -m barevision.flow.inference`
+- Loads model from checkpoint
+- Estimates flow between two images
+- Saves flow field as numpy array and optional visualization
+
+---
+
+## Checkpointing and Validation
+
+### Checkpoint System (`checkpoint_utils.py`)
+
+The training pipeline supports three types of checkpoints:
+
+1. **Periodic Checkpoints**: Saved every N steps during training
+   - Configured via `--checkpoint.every_steps <N>`
+   - Path: `checkpoints/{run_name}/step_{STEP:06d}/`
+   - Set to 0 to disable
+
+2. **Best Model Checkpoint**: Automatically saved when validation loss improves
+   - Enabled by default (`--validation.save_best=true`)
+   - Path: `checkpoints/{run_name}/best/`
+   - Contains `best_val_loss` metadata
+
+3. **Final Checkpoint**: Saved when training completes
+   - Configured via `--checkpoint.save_final=true` (default)
+   - Path: `checkpoints/{run_name}/final/`
+
+Each checkpoint contains:
+- Model state (NNX state dict)
+- Global step number
+- Full configuration (for model reconstruction)
+- Validation loss (for best checkpoints only)
+
+### Validation System
+
+Validation runs at the end of each epoch on the held-out validation set (15% of videos):
+
+- **Frequency**: Configurable via `--validation.every_epochs <N>` (default: 1)
+- **Metrics**: Validation loss logged to TensorBoard as `Loss/validation`
+- **Best Model Tracking**: Automatically tracks and saves best model by validation loss
+
+Validation uses the same loss function as training (entropy + reconstruction) but without gradient computation.
+
+### Train/Validation Split
+
+The dataset splits videos (not frames) into train/val sets:
+- **Training**: 85% of videos (rounded down)
+- **Validation**: 15% of videos (rounded up)
+- **Split Method**: JAX PRNG-based shuffling with configurable seed
+- **Reproducibility**: Same seed produces identical splits
+
+Split is configured via `--dataset.seed` (default: 42).
+
 ---
 
 ## Utility Modules (External)
@@ -180,6 +245,12 @@ python -m barevision.flow.training --dataset.batch_size=4 --training.epochs=10
 
 # Smoke test (quick validation)
 python -m barevision.flow.training --smoke-test
+
+# Inference (estimate flow between two images)
+python -m barevision.flow.inference --checkpoint_path checkpoints/flow_20260317_143052/final \
+                                    --image1 frame1.png \
+                                    --image2 frame2.png \
+                                    --output flow.npy
 
 # Tests
 pytest src/barevision/flow/embeddings/test_model.py

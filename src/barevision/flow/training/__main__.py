@@ -13,6 +13,7 @@ from barevision.flow.embeddings.model import count_parameters
 from barevision.flow.logging_utils import (
     log_progress,
     log_diagnostics,
+    log_metrics,
     print_footer,
     print_header,
 )
@@ -23,7 +24,11 @@ from barevision.flow.settings import (
 )
 from barevision.flow.video_dataset import create_dataloader
 from barevision.flow.training.visualization import log_visualizations
-from barevision.flow.checkpoint_utils import generate_run_name, save_checkpoint
+from barevision.flow.checkpoint_utils import (
+    generate_run_name,
+    save_checkpoint,
+    save_best_checkpoint,
+)
 from barevision.utils.logging import JaxLogger
 
 
@@ -103,6 +108,56 @@ def train_step(
     optimizer.update(model, grads)
 
     return loss, aux
+
+
+@partial(
+    nnx.jit,
+    static_argnames=("model_settings",),
+)
+def validation_step(
+    model: OpticalFlowModel,
+    img1,
+    img2,
+    model_settings: ModelSettings,
+):
+    """Execute single validation step (no gradients).
+
+    Args:
+        model: OpticalFlowModel (combines embeddings + flow estimation)
+        img1: Frame 1 (B, H, W, 3)
+        img2: Frame 2 (B, H, W, 3)
+        model_settings: Model configuration
+
+    Returns:
+        Validation loss (scalar)
+    """
+    # Forward pass
+    flow, pyramid1, pyramid2 = model(img1, img2, temperature=model_settings.temperature)
+
+    # Get coarsest level embeddings
+    emb1_coarse = pyramid1[-1]
+    emb2_coarse = pyramid2[-1]
+
+    # Warp Frame 1 embeddings
+    from barevision.flow.matching.losses import warp_embeddings
+
+    warped = warp_embeddings(emb1_coarse, flow)
+
+    # Compute loss
+    loss, _ = compute_loss(
+        pyramid1,
+        pyramid2,
+        warped_embeddings=warped,
+        target_embeddings=emb2_coarse,
+        window_size=model_settings.window_size,
+        lambda_entropy=model_settings.lambda_entropy,
+        level_weight_decay=model_settings.level_weight_decay,
+        lambda_recon=model_settings.lambda_recon,
+        temperature=model_settings.temperature,
+        return_attention_weights=False,
+    )
+
+    return loss
 
 
 def run_epoch(
@@ -188,6 +243,47 @@ def run_epoch(
     return global_step
 
 
+def run_validation(
+    model: OpticalFlowModel,
+    settings: Settings,
+) -> float:
+    """Run validation on validation dataset.
+
+    Args:
+        model: OpticalFlowModel in evaluation mode
+        settings: Full settings configuration
+
+    Returns:
+        Average validation loss
+    """
+    # Create validation dataloader (no shuffle, deterministic)
+    loader = create_dataloader(
+        settings.dataset,
+        split="val",
+        shuffle=False,
+        random_seed=settings.dataset.seed,
+    )
+
+    total_loss = 0.0
+    num_batches = 0
+
+    for img1, img2, _ in loader:
+        loss = validation_step(
+            model,
+            img1,
+            img2,
+            settings.model,
+        )
+        total_loss += float(loss)
+        num_batches += 1
+
+    if num_batches == 0:
+        return 0.0
+
+    avg_loss = total_loss / num_batches
+    return avg_loss
+
+
 def train(settings: Settings):
     """Main training loop."""
     is_smoke_test = settings.smoke_test
@@ -239,6 +335,9 @@ def train(settings: Settings):
     print(f"Total parameters: {total_params}\n")
 
     global_step = 0
+    best_val_loss = float("inf")
+    best_val_step = 0
+
     for epoch in range(settings.training.epochs):
         global_step = run_epoch(
             epoch,
@@ -250,6 +349,32 @@ def train(settings: Settings):
             run_name,
         )
 
+        # Run validation at end of each epoch
+        if settings.validation.every_epochs > 0:
+            if (epoch + 1) % settings.validation.every_epochs == 0:
+                print(f"\nRunning validation at epoch {epoch + 1}...")
+                val_loss = run_validation(model, settings)
+                print(f"Validation loss: {val_loss:.6f}")
+
+                # Log validation loss to TensorBoard
+                logger.log_scalar("Loss/validation", val_loss, step=global_step)
+
+                # Save best model if validation improved
+                if settings.validation.save_best and val_loss < best_val_loss:
+                    best_val_loss = val_loss
+                    best_val_step = global_step
+                    checkpoint_path = save_best_checkpoint(
+                        model=model,
+                        step=global_step,
+                        val_loss=val_loss,
+                        settings=settings,
+                        run_name=run_name,
+                    )
+                    print(
+                        f"New best model saved at step {global_step} "
+                        f"(val_loss: {val_loss:.6f}): {checkpoint_path}"
+                    )
+
     # Save final checkpoint
     if settings.checkpoint.save_final:
         checkpoint_path = save_checkpoint(
@@ -260,6 +385,14 @@ def train(settings: Settings):
             save_final=True,
         )
         print(f"Final checkpoint saved: {checkpoint_path}")
+
+    # Print validation summary
+    if settings.validation.every_epochs > 0 and best_val_loss < float("inf"):
+        print(f"\n{'=' * 60}")
+        print(f"Validation Summary:")
+        print(f"  Best validation loss: {best_val_loss:.6f}")
+        print(f"  Achieved at step: {best_val_step}")
+        print(f"{'=' * 60}")
 
     logger.close()
 

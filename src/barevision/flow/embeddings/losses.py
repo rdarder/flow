@@ -178,9 +178,9 @@ def compute_window_attention_losses(
         raise ValueError(f"Width {W} not divisible by window_size {window_size}")
 
     # Validate shapes match
-    assert (
-        emb2.shape == emb1.shape
-    ), f"emb2 shape {emb2.shape} != emb1 shape {emb1.shape}"
+    assert emb2.shape == emb1.shape, (
+        f"emb2 shape {emb2.shape} != emb1 shape {emb1.shape}"
+    )
 
     # Split into windows
     grid = WindowGrid(window_size=window_size)
@@ -275,7 +275,7 @@ def compute_hierarchical_entropy_loss(
     pyramid2: List[jnp.ndarray],
     window_size: int = 16,
     lambda_entropy: float = 0.5,
-    level_weight_decay: float = 2.0,
+    level_weight_decay: float = 1.0,
     temperature: float = 0.2,
     return_attention_weights: bool = False,
 ) -> tuple[jnp.ndarray, dict]:
@@ -290,13 +290,14 @@ def compute_hierarchical_entropy_loss(
     6. Sums weighted per-level losses for final compound loss
 
     Level weighting: level_i_weight = level_weight_decay^i
+    Default (1.0) gives uniform weighting across all levels.
 
     Args:
         pyramid1: List of feature maps from frame 1, one per level
         pyramid2: List of feature maps from frame 2, one per level
         window_size: Size of attention windows (default 16)
         lambda_entropy: Cross-attention loss weight in [0, 1] (default 0.5)
-        level_weight_decay: Weight multiplier per level (default 2.0)
+        level_weight_decay: Weight multiplier per level (default 1.0 = uniform)
         temperature: Softmax temperature (default 0.2)
         return_attention_weights: If True, return attention weights and entropy maps per level
 

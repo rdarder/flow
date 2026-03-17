@@ -55,19 +55,23 @@ def generate_run_name(prefix: str = "flow") -> str:
     return f"{prefix}_{timestamp}"
 
 
-def get_checkpoint_path(checkpoint_location: str, run_name: str, step: int) -> Path:
+def get_checkpoint_path(
+    checkpoint_location: str, run_name: str, step: int | str
+) -> Path:
     """Get the directory path for a checkpoint.
 
     Args:
         checkpoint_location: Base directory for checkpoints
         run_name: Unique run identifier
-        step: Global step number (use -1 for "final")
+        step: Global step number (use -1 for "final", or "best" for best model)
 
     Returns:
         Absolute Path to checkpoint directory
     """
-    if step == -1:
+    if step == -1 or step == "final":
         step_str = "final"
+    elif step == "best":
+        step_str = "best"
     else:
         step_str = f"step_{step:06d}"
 
@@ -108,6 +112,50 @@ def save_checkpoint(
         "model": nnx.state(model).to_pure_dict(),
         "step": step,
         "config": _settings_to_config_dict(settings),
+    }
+
+    # Save using Orbax
+    checkpointer = ocp.PyTreeCheckpointer()
+    checkpointer.save(checkpoint_path, ocp.args.PyTreeSave(checkpoint_data))
+
+    return checkpoint_path
+
+
+def save_best_checkpoint(
+    model: nnx.Module,
+    step: int,
+    val_loss: float,
+    settings: Settings,
+    run_name: str,
+) -> Path:
+    """Save best model checkpoint based on validation loss.
+
+    Args:
+        model: NNX model to save
+        step: Current global step
+        val_loss: Validation loss that triggered this checkpoint
+        settings: Full settings object (for config metadata)
+        run_name: Run identifier for directory naming
+
+    Returns:
+        Path to saved checkpoint directory
+    """
+    import shutil
+
+    checkpoint_path = get_checkpoint_path(
+        settings.checkpoint.location, run_name, "best"
+    )
+
+    # Remove existing best checkpoint if it exists (overwrite)
+    if checkpoint_path.exists():
+        shutil.rmtree(checkpoint_path)
+
+    # Prepare checkpoint data with additional validation loss info
+    checkpoint_data = {
+        "model": nnx.state(model).to_pure_dict(),
+        "step": step,
+        "config": _settings_to_config_dict(settings),
+        "best_val_loss": val_loss,
     }
 
     # Save using Orbax

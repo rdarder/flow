@@ -372,11 +372,11 @@ class TestHierarchicalEmbeddingLosses:
             compute_hierarchical_entropy_loss(pyramid1, pyramid2)
 
     def test_level_weight_decay(self):
-        """Test that level weight decay correctly weights coarser levels higher."""
+        """Test that level weight decay defaults to uniform weighting."""
         pyramid1 = [
             jr.normal(jr.PRNGKey(0), (1, 64, 64, 16)),  # Level 0: weight = 1
-            jr.normal(jr.PRNGKey(1), (1, 32, 32, 16)),  # Level 1: weight = 2
-            jr.normal(jr.PRNGKey(2), (1, 16, 16, 16)),  # Level 2: weight = 4
+            jr.normal(jr.PRNGKey(1), (1, 32, 32, 16)),  # Level 1: weight = 1
+            jr.normal(jr.PRNGKey(2), (1, 16, 16, 16)),  # Level 2: weight = 1
         ]
         pyramid2 = [
             jr.normal(jr.PRNGKey(3), (1, 64, 64, 16)),
@@ -384,11 +384,11 @@ class TestHierarchicalEmbeddingLosses:
             jr.normal(jr.PRNGKey(5), (1, 16, 16, 16)),
         ]
 
-        # Default decay=2.0
+        # Default decay=1.0 (uniform)
         loss, aux = compute_hierarchical_entropy_loss(pyramid1, pyramid2)
 
-        # Check weights are correct
-        assert aux["level_weights"] == [1.0, 2.0, 4.0]
+        # Check weights are uniform
+        assert aux["level_weights"] == [1.0, 1.0, 1.0]
 
         # Verify weighted sum normalized by total weight
         weighted_sum = sum(aux["level_losses"])

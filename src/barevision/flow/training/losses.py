@@ -18,7 +18,7 @@ def compute_loss(
     target_embeddings,
     window_size: int = 16,
     lambda_entropy: float = 0.5,
-    level_weight_decay: float = 2.0,
+    level_weight_decay: float = 1.0,
     lambda_recon: float = 0.5,
     temperature: float = 0.2,
     return_attention_weights: bool = False,
@@ -34,7 +34,7 @@ def compute_loss(
         target_embeddings: (B, H, W, D) Frame 2 embeddings (target)
         window_size: Size of attention windows (default 16)
         lambda_entropy: Cross-attention loss weight in [0, 1] (default 0.5)
-        level_weight_decay: Weight multiplier per level (default 2.0)
+        level_weight_decay: Weight multiplier per level (default 1.0 = uniform)
         lambda_recon: Reconstruction loss weight in [0, 1] (default 0.5)
         temperature: Softmax temperature (default 0.2)
         return_attention_weights: If True, return attention weights and entropy maps

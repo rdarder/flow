@@ -116,12 +116,13 @@ class ModelSettings:
         window_size: Attention window size in pixels (must divide img_size dimensions)
         num_levels: Number of pyramid levels (default 3)
         embed_dim: Output embedding dimension per level (default 16)
-        level_weight_decay: Loss weight decay factor per level (default 2.0)
-                           Coarser levels get higher weight: level_i weight = decay^(num_levels - 1 - i)
+        level_weight_decay: Loss weight decay factor per level (default 1.0 = uniform)
+                           Coarser levels get higher weight: level_i weight = decay^i.
+                           Set to 1.0 for uniform weighting across levels.
         lambda_entropy: Cross-attention loss weight in [0, 1] (default 0.5 = equal weighting)
                        entropy_loss = (1 - lambda_entropy) * self_loss + lambda_entropy * cross_loss
         lambda_recon: Reconstruction loss weight in [0, 1] (default 0.5 = equal weighting)
-                      total = (1 - lambda_recon) * entropy + lambda_recon * reconstruction
+                      total = (1 - lambda_recon) * entropy + reconstruction
         flow_hidden_dim: Flow estimator hidden dimension (default 24)
         temperature: Temperature for attention softmax (default 0.2)
     """
@@ -129,7 +130,7 @@ class ModelSettings:
     window_size: int = 16
     num_levels: int = 3
     embed_dim: int = 16
-    level_weight_decay: float = 2.0  # Coarsest level gets 2x weight per level step
+    level_weight_decay: float = 1.0  # Uniform weighting across levels
     lambda_entropy: float = 0.5  # Equal weighting between self and cross entropy
     lambda_recon: float = 0.5  # Equal weighting between entropy and reconstruction
     flow_hidden_dim: int = 24  # Flow estimator hidden dimension
@@ -180,6 +181,23 @@ class TrainingSettings:
 
 
 @dataclass
+class ValidationSettings:
+    """Validation configuration.
+
+    Attributes:
+        every_epochs: Run validation every N epochs (0 to disable validation)
+        save_best: Whether to save best model checkpoint based on validation loss
+    """
+
+    every_epochs: int = 1
+    save_best: bool = True
+
+    def __post_init__(self):
+        if self.every_epochs < 0:
+            raise ValueError(f"every_epochs must be >= 0, got {self.every_epochs}")
+
+
+@dataclass
 class CheckpointSettings:
     """Checkpoint configuration for model persistence.
 
@@ -217,6 +235,7 @@ class Settings:
     training: TrainingSettings
     logging: LoggingSettings
     checkpoint: CheckpointSettings
+    validation: ValidationSettings
     smoke_test: bool = False
 
 
@@ -236,7 +255,7 @@ def create_smoke_test_settings() -> Settings:
             window_size=16,
             num_levels=3,
             embed_dim=16,
-            level_weight_decay=2.0,
+            level_weight_decay=1.0,
             lambda_entropy=0.5,
             lambda_recon=0.5,
             flow_hidden_dim=24,
@@ -256,6 +275,10 @@ def create_smoke_test_settings() -> Settings:
             every_steps=0,  # Disable periodic checkpointing in smoke test
             location="checkpoints",
             save_final=False,  # Don't save final checkpoint in smoke test
+        ),
+        validation=ValidationSettings(
+            every_epochs=0,  # Disable validation in smoke test for speed
+            save_best=False,
         ),
         smoke_test=False,  # Already applied by caller
     )

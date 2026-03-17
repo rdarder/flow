@@ -42,26 +42,30 @@ This means the finer levels (Level 0 and Level 1) physically cover a wider field
 
 ---
 
-## 2. Flow Estimation Pipeline (Planned Design)
+## 2. Flow Estimation Pipeline (Partially Implemented)
 
-Once the embeddings are trained, the inference pipeline extracts optical flow by recursively passing global flow priors down the pyramid from coarse to fine.
+The flow estimation components are implemented but the full hierarchical cascading inference pipeline is still under development. The reconstruction loss is already integrated into training.
 
 ### Hierarchical Cascading and Window Shifting
 
-At the coarsest level (Level 2), the network estimates the macro-flow of the scene. This median flow vector is upscaled and passed as a prior to the next finer level (Level 1).
+**Design:** At the coarsest level (Level 2), the network estimates the macro-flow of the scene. This median flow vector is upscaled and passed as a prior to the next finer level (Level 1).
 
 To cancel out global/ego-motion, Frame 2's attention window at Level 1 is physically shifted by this prior to re-center the target object. **This is where the spatial buffer from Part 1 is utilized:** Because Level 1 ingested a wider field of view without artificial padding, we have the valid, uncorrupted feature context required to safely slide this shifted window without falling off the edge of the image tensor.
+
+**Current status:** The FlowEstimator MLP and reconstruction loss are implemented. The full hierarchical cascading inference (passing priors down the pyramid with window shifting) is planned for future implementation.
 
 ### The Constellation & Centroids
 
 Because the embeddings form stable "signatures" or "constellations" of attention peaks rather than single solid blobs, tracking relies on comparing the center of mass (Centroid) of the Self-Attention map to the Cross-Attention map.
 
-### Decoupled Temperature
+### Temperature Scaling
 
-The temperature used for the softmax operation is decoupled between the embedding generation phase and the flow estimation phase:
+A single temperature parameter controls softmax sharpness during training (default: 0.2). This balances two competing needs:
 
-* **Embedding Generation (Entropy Loss):** Uses a cold temperature (e.g., 0.05) to force the network to sculpt sharp, highly distinct peaks and reject ambiguous background noise.
-* **Flow Estimation:** Uses a higher temperature (e.g., 0.2 to 0.5). This visually softens the sharp peaks into smoother, more continuous blob-like regions, ensuring that the centroid calculation has a stable, contiguous mass to measure.
+* **Sharp enough** to encourage distinct attention peaks during embedding training (entropy loss)
+* **Smooth enough** to provide stable centroids for flow estimation
+
+The current implementation uses a unified temperature for both phases. Future iterations may explore decoupling: colder temperatures for embedding generation (e.g., 0.05) and warmer temperatures for flow estimation (e.g., 0.2-0.5).
 
 ### The Boundary Problem (Centroid Drag)
 
@@ -94,11 +98,49 @@ At each level, the predicted residual flows are added to the prior flow. The flo
 
 ---
 
-## 3. Dual Loss Formulation (End-to-End Training)
+## 3. Dual Loss Formulation (Implemented)
 
-Once the flow estimation pipeline is integrated, the model will be trained using a dual objective to balance structural distinctness with accurate tracking.
+The model is trained end-to-end using a dual objective that balances structural distinctness with accurate tracking:
 
-1. **Entropy Minimization Loss:** Applied to the raw attention maps (Self and Cross). This acts as a regularizer to prevent the embeddings and flow estimation from collapsing into trivial, perfectly smooth solutions. It forces the embeddings to remain locally unique and visually distinct.
-2. **Reconstruction Loss (Latent Space):** Instead of reconstructing physical RGB pixels (which is highly sensitive to lighting changes and noise), the loss is computed in the latent space. The network uses the estimated flow field to warp the Frame 1 embeddings and minimizes the distance between the warped Frame 1 embeddings and the true Frame 2 embeddings.
+1. **Entropy Minimization Loss:** Applied to attention maps at all pyramid levels (Self and Cross). This regularizer prevents embeddings from collapsing into trivial, perfectly smooth solutions. It forces embeddings to remain locally unique and visually distinct.
+2. **Reconstruction Loss (Latent Space):** The network uses the estimated flow field to warp Frame 1 embeddings and minimizes the L2 distance between warped Frame 1 embeddings and Frame 2 embeddings. This ensures features are trackable across frames.
 
-By optimizing both simultaneously, the embedding engine learns features that are specifically optimized to be trackable by the flow estimator, while the entropy loss guarantees those features remain sharply grounded in the visual structure of the frame.
+**Loss combination:**
+```
+total = (1 - lambda_recon) * entropy_loss + lambda_recon * reconstruction_loss
+```
+
+**Entropy loss details:**
+- Computed per 16×16 window at each pyramid level
+- Normalized by theoretical maximum `log(window_size²)` to [0, 1] range
+- Aggregated across levels with configurable weighting (default: uniform per-pixel)
+- Temperature scaling (default: 0.2) controls softmax sharpness
+
+By optimizing both simultaneously, the embedding engine learns features that are specifically optimized to be trackable, while entropy loss guarantees those features remain sharply grounded in visual structure.
+
+---
+
+## 4. Training Infrastructure
+
+### Checkpointing
+
+The training pipeline automatically saves model checkpoints at three points:
+
+1. **Periodic**: Every N steps during training (configurable)
+2. **Best Model**: When validation loss improves (automatic)
+3. **Final**: When training completes
+
+Checkpoints include model state, training step, and full configuration for reconstruction during inference.
+
+### Validation
+
+Training includes automatic validation on a held-out set (15% of videos):
+- Runs at the end of each epoch (configurable frequency)
+- Tracks best validation loss for model selection
+- Logs metrics to TensorBoard for monitoring
+
+### Inference
+
+Trained models can be used for optical flow estimation via the inference script, which loads checkpoints and estimates flow between arbitrary image pairs.
+
+See `src/barevision/flow/ARCHITECTURE.md` for detailed implementation documentation.
