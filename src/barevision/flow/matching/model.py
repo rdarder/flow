@@ -80,21 +80,37 @@ class FlowEstimator(nnx.Module):
     All coordinates are normalized to [0, 1] range.
     """
 
-    def __init__(self, window_size: int = 16, hidden_dim: int = 24, *, rngs: nnx.Rngs):
+    def __init__(
+        self,
+        window_size: int = 16,
+        hidden_dim: int = 24,
+        max_flow: float = 0.5,
+        *,
+        rngs: nnx.Rngs,
+    ):
         """Initialize flow estimator.
 
         Args:
             window_size: Size of attention window
             hidden_dim: Hidden layer dimension (default 24)
+            max_flow: Maximum flow magnitude in normalized coordinates (default 0.5 = half window)
             rngs: NNX RNGs for parameter initialization
         """
         self.window_size = window_size
         self.hidden_dim = hidden_dim
+        self.max_flow = max_flow
 
-        self.mlp = nnx.Sequential(
-            nnx.Linear(6, hidden_dim, rngs=rngs),
-            nnx.relu,
-            nnx.Linear(hidden_dim, 2, rngs=rngs),
+        # First layer with standard initialization
+        self.linear1 = nnx.Linear(6, hidden_dim, rngs=rngs)
+
+        # Second layer initialized near-zero to encourage small outputs initially
+        # This helps the network start with minimal bias toward non-zero flow
+        self.linear2 = nnx.Linear(
+            hidden_dim,
+            2,
+            kernel_init=nnx.initializers.normal(0.01),
+            bias_init=nnx.initializers.zeros,
+            rngs=rngs,
         )
 
     def __call__(self, src_pos: jnp.ndarray, centroids: jnp.ndarray) -> jnp.ndarray:
@@ -105,13 +121,18 @@ class FlowEstimator(nnx.Module):
             centroids: (B, N, 4) from AttentionCentroids
 
         Returns:
-            flow: (B, N, 2) predicted flow [u, v] in normalized coordinates
+            flow: (B, N, 2) predicted flow [u, v] in normalized coordinates, bounded to [-max_flow, max_flow]
         """
         # Concatenate inputs: (B, N, 6)
         x = jnp.concatenate([src_pos, centroids], axis=-1)
 
-        # Pass through MLP: (B, N, 2)
-        flow = self.mlp(x)
+        # First layer with ReLU
+        x = self.linear1(x)
+        x = nnx.relu(x)
+
+        # Second layer with tanh activation and scaling
+        flow_raw = self.linear2(x)
+        flow = jnp.tanh(flow_raw) * self.max_flow
 
         return flow
 

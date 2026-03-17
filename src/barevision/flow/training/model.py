@@ -66,6 +66,7 @@ class Model(nnx.Module):
         self.flow_estimator = FlowEstimator(
             window_size=window_size,
             hidden_dim=flow_hidden_dim,
+            max_flow=0.5,  # Maximum 0.5 = half-window displacement
             rngs=rngs,
         )
 

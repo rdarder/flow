@@ -80,7 +80,9 @@ def test_flow_estimator_shape():
     src_pos = jnp.zeros((B, N, 2))
     centroids = jnp.zeros((B, N, 4))
 
-    flow_estimator = FlowEstimator(window_size=16, hidden_dim=24, rngs=nnx.Rngs(0))
+    flow_estimator = FlowEstimator(
+        window_size=16, hidden_dim=24, max_flow=0.5, rngs=nnx.Rngs(0)
+    )
     flow = flow_estimator(src_pos, centroids)
 
     assert flow.shape == (B, N, 2), f"Expected (B, N, 2), got {flow.shape}"
@@ -89,7 +91,9 @@ def test_flow_estimator_shape():
 
 def test_flow_estimator_parameters():
     """Flow estimator has expected parameter count."""
-    flow_estimator = FlowEstimator(window_size=16, hidden_dim=24, rngs=nnx.Rngs(0))
+    flow_estimator = FlowEstimator(
+        window_size=16, hidden_dim=24, max_flow=0.5, rngs=nnx.Rngs(0)
+    )
 
     from barevision.flow.embeddings.model import count_parameters
 
@@ -101,6 +105,34 @@ def test_flow_estimator_parameters():
     expected_params = 6 * 24 + 24 + 24 * 2 + 2
     assert params == expected_params, f"Expected {expected_params} params, got {params}"
     print(f"✓ FlowEstimator parameters: {params}")
+
+
+def test_flow_estimator_bounded():
+    """Flow estimator output is bounded to [-max_flow, max_flow]."""
+    B, N = 2, 256
+    max_flow = 0.5
+
+    # Create random inputs that could produce large outputs
+    rng = jax.random.PRNGKey(0)
+    src_pos = jax.random.uniform(rng, (B, N, 2), minval=-10, maxval=10)
+    centroids = jax.random.uniform(rng, (B, N, 4), minval=-10, maxval=10)
+
+    flow_estimator = FlowEstimator(
+        window_size=16, hidden_dim=24, max_flow=max_flow, rngs=nnx.Rngs(0)
+    )
+    flow = flow_estimator(src_pos, centroids)
+
+    # Check that flow is bounded
+    assert (
+        flow.max() <= max_flow + 1e-6
+    ), f"Flow max {flow.max()} exceeds max_flow {max_flow}"
+    assert (
+        flow.min() >= -max_flow - 1e-6
+    ), f"Flow min {flow.min()} below -max_flow {-max_flow}"
+
+    print(
+        f"✓ FlowEstimator bounded: range [{flow.min():.4f}, {flow.max():.4f}] within [-{max_flow}, {max_flow}]"
+    )
 
 
 def test_warp_embeddings_identity():
@@ -227,6 +259,7 @@ if __name__ == "__main__":
     test_attention_centroids_peak()
     test_flow_estimator_shape()
     test_flow_estimator_parameters()
+    test_flow_estimator_bounded()
     test_warp_embeddings_identity()
     test_warp_embeddings_shift()
     test_reconstruction_loss_zero()

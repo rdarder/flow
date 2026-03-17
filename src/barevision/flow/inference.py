@@ -125,11 +125,54 @@ def main():
 
     # Extract flow (remove batch dimension)
     flow_np = np.array(flow[0])
-    print(f"Flow field shape: {flow_np.shape}")
-    print(f"Flow magnitude stats:")
-    print(f"  - Mean: {np.linalg.norm(flow_np, axis=-1).mean():.4f}")
-    print(f"  - Max: {np.linalg.norm(flow_np, axis=-1).max():.4f}")
-    print(f"  - Min: {np.linalg.norm(flow_np, axis=-1).min():.4f}")
+    print(f"\nFlow field shape: {flow_np.shape}")
+
+    # Detailed flow statistics
+    magnitude = np.linalg.norm(flow_np, axis=-1)
+    u_component = flow_np[..., 0]
+    v_component = flow_np[..., 1]
+
+    print(f"\nFlow magnitude statistics:")
+    print(f"  - Mean: {magnitude.mean():.4f}")
+    print(f"  - Std:  {magnitude.std():.4f}")
+    print(
+        f"  - Max:  {magnitude.max():.4f} at pixel {np.unravel_index(magnitude.argmax(), magnitude.shape)}"
+    )
+    print(f"  - Min:  {magnitude.min():.4f}")
+
+    print(f"\nFlow component statistics (normalized window coordinates):")
+    print(f"  U component (horizontal):")
+    print(f"    - Mean: {u_component.mean():.4f}")
+    print(f"    - Std:  {u_component.std():.4f}")
+    print(f"    - Range: [{u_component.min():.4f}, {u_component.max():.4f}]")
+    print(f"  V component (vertical):")
+    print(f"    - Mean: {v_component.mean():.4f}")
+    print(f"    - Std:  {v_component.std():.4f}")
+    print(f"    - Range: [{v_component.min():.4f}, {v_component.max():.4f}]")
+
+    # Diagnostic: Check for bias in flow predictions
+    print(f"\nFlow bias diagnostic:")
+    print(
+        f"  - Pixels with |flow| > 0.01: {(magnitude > 0.01).sum()} / {magnitude.size} ({100 * (magnitude > 0.01).sum() / magnitude.size:.1f}%)"
+    )
+    print(
+        f"  - Pixels with |flow| > 0.1:  {(magnitude > 0.1).sum()} / {magnitude.size} ({100 * (magnitude > 0.1).sum() / magnitude.size:.1f}%)"
+    )
+    print(
+        f"  - Pixels with |flow| > 0.3:  {(magnitude > 0.3).sum()} / {magnitude.size} ({100 * (magnitude > 0.3).sum() / magnitude.size:.1f}%)"
+    )
+
+    # Check if flow is suspiciously uniform (potential bias issue)
+    flow_variance = magnitude.var()
+    print(f"  - Flow variance: {flow_variance:.6f}")
+    if flow_variance < 0.001 and magnitude.mean() > 0.05:
+        print(f"  ⚠️  WARNING: Low variance with non-zero mean suggests model bias!")
+        print(
+            f"     This may indicate the FlowEstimator MLP has learned a biased output."
+        )
+        print(
+            f"     Consider: adding bias initialization, output activation, or checking training data."
+        )
 
     # Save flow field
     output_path = Path(args.output)
@@ -138,12 +181,27 @@ def main():
 
     # Optionally save visualization
     if args.save_viz:
-        from barevision.flow.matching.visualization import flow_to_colorwheel
+        from barevision.flow.matching.visualization import (
+            flow_to_arrows,
+            flow_to_colorwheel,
+        )
 
+        # Colorwheel visualization
         flow_viz = flow_to_colorwheel(flow_np, max_flow=0.3)
-        viz_path = output_path.with_suffix(".png")
+        viz_path = output_path.with_suffix(".colorwheel.png")
         Image.fromarray((flow_viz * 255).astype(np.uint8)).save(viz_path)
-        print(f"Visualization saved to: {viz_path}")
+        print(f"Colorwheel visualization saved to: {viz_path}")
+
+        # Arrow visualization
+        arrows_viz = flow_to_arrows(
+            flow_np,
+            max_flow=0.3,
+            window_size=model_config["window_size"],
+            grid_density=8,
+        )
+        arrows_path = output_path.with_suffix(".arrows.png")
+        Image.fromarray(arrows_viz).save(arrows_path)
+        print(f"Arrow visualization saved to: {arrows_path}")
 
 
 if __name__ == "__main__":

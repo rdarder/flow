@@ -102,21 +102,18 @@ def flow_to_arrows(
     Args:
         flow: (H, W, 2) flow field in normalized window coordinates
               where 1.0 = one full window displacement
-        max_flow: Maximum flow magnitude for background scaling (default 0.3)
+        max_flow: Maximum flow magnitude for reference (default 0.3)
         window_size: Size of attention window in pixels (default 16)
         grid_density: Number of arrows along each axis
 
     Returns:
-        (H, W, 3) RGB image with arrows
+        (H, W, 3) RGB image with arrows on white background
     """
     H, W, _ = flow.shape
 
-    # Create figure
+    # Create figure with white background
     fig, ax = plt.subplots(1, 1, figsize=(8, 8))
-
-    # Show background as grayscale of flow magnitude
-    magnitude = np.linalg.norm(flow, axis=-1)
-    ax.imshow(magnitude, cmap="gray", vmin=0, vmax=max_flow)
+    ax.set_facecolor("white")
 
     # Create grid for arrows
     step_y = H // grid_density
@@ -133,7 +130,7 @@ def flow_to_arrows(
         -flow[y_grid, x_grid, 1] * window_size
     )  # Negative because y is inverted in images
 
-    # Plot arrows
+    # Plot arrows in blue
     ax.quiver(
         x_grid,
         y_grid,
@@ -144,13 +141,14 @@ def flow_to_arrows(
         scale=1,
         width=0.003,
         headwidth=5,
+        color="#1f77b4",  # Matplotlib default blue
     )
 
     ax.set_xlim(0, W)
     ax.set_ylim(H, 0)  # Invert y axis
     ax.set_xticks([])
     ax.set_yticks([])
-    ax.set_title(f"Flow Field (1:1 pixel displacement, window_size={window_size})")
+    ax.set_title(f"Flow Field (arrows = pixel displacement, window_size={window_size})")
 
     from io import BytesIO
 
