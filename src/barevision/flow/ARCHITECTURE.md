@@ -43,11 +43,8 @@ barevision/flow/
 ├── training/             # Combined training orchestration
 │   ├── model.py         # Model (embeddings + matching)
 │   ├── losses.py        # Combined loss function
-│   ├── visualization.py # Orchestrates visualization
+│   ├── visualization.py # Orchestrates visualization + window extraction helpers
 │   └── __main__.py      # Entry point: python -m barevision.flow.training
-│
-├── utils/                # Shared utilities
-│   └── visualization_attention.py  # Window extraction for viz
 │
 ├── video_dataset.py      # Data loading (shared)
 ├── settings.py           # Hyperparameters (shared)
@@ -77,9 +74,7 @@ barevision/flow/
 - Read this for loss function changes.
 
 **`visualization.py`** — Embedding diagnostics.
-- `create_frame_with_grid_figure`: Input frame with 16×16 grid overlay
 - `create_attention_maps_figure`: Self/cross attention heatmaps for selected pixels
-- `compute_embedding_statistics`: Mean, std, sparsity metrics
 - Diagnostic only. Safe to modify without affecting training.
 
 ### Matching Package (`matching/`)
@@ -117,6 +112,8 @@ barevision/flow/
 **`visualization.py`** — Training visualization orchestrator.
 - `log_visualizations`: Calls both embeddings + matching visualization
 - Logs flow colorwheel/arrows + attention maps per pyramid level
+- `_extract_window_attention_data`: Helper for extracting window attention (internal)
+- `_extract_pixel_attention_maps`: Helper for pixel extraction (internal)
 - Called every N steps, not in training loss path
 - Diagnostic only. Safe to modify without affecting training.
 
@@ -146,11 +143,6 @@ barevision/flow/
 - `log_diagnostics`: Embedding statistics
 - Pure formatting. No logic.
 
-**`utils/visualization_attention.py`** — Shared visualization utility.
-- `extract_window_data_for_viz`: Extract attention for specific window + pixels
-- Used by `training/visualization.py`
-- Utility function. Safe to modify.
-
 ---
 
 ## Utility Modules (External)
@@ -164,6 +156,11 @@ barevision/flow/
 - `get_datasets_dir`: Project datasets directory resolver
 
 **`../utils/logging.py`** — `JaxLogger` wrapper for TensorBoard.
+
+**`../utils/cache.py`** — JAX compilation cache configuration.
+- `setup_jax_compilation_cache()`: Configures persistent compilation cache
+- Auto-configured on `import barevision`
+- Cache location: `~/.cache/barevision/jax_cache`
 
 ---
 
