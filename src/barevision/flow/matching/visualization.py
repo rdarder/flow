@@ -91,15 +91,19 @@ def flow_to_colorwheel(flow: np.ndarray, max_flow: float = 0.3) -> np.ndarray:
 def flow_to_arrows(
     flow: np.ndarray,
     max_flow: float = 0.3,
-    scale: float = 2.0,
+    window_size: int = 16,
     grid_density: int = 8,
 ) -> np.ndarray:
     """Create arrow visualization of flow field.
 
+    Arrows show exact pixel displacement: a flow of 0.05 with window_size=16
+    produces an arrow of length 0.8 pixels (0.05 * 16).
+
     Args:
-        flow: (H, W, 2) flow field
-        max_flow: Maximum flow magnitude for scaling (default 0.3)
-        scale: Arrow length multiplier
+        flow: (H, W, 2) flow field in normalized window coordinates
+              where 1.0 = one full window displacement
+        max_flow: Maximum flow magnitude for background scaling (default 0.3)
+        window_size: Size of attention window in pixels (default 16)
         grid_density: Number of arrows along each axis
 
     Returns:
@@ -123,9 +127,11 @@ def flow_to_arrows(
         indexing="ij",
     )
 
-    # Sample flow at grid points
-    u = flow[y_grid, x_grid, 0] * scale * W
-    v = -flow[y_grid, x_grid, 1] * scale * H  # Negative because y is inverted in images
+    # Sample flow at grid points - convert from normalized window coords to pixels
+    u = flow[y_grid, x_grid, 0] * window_size
+    v = (
+        -flow[y_grid, x_grid, 1] * window_size
+    )  # Negative because y is inverted in images
 
     # Plot arrows
     ax.quiver(
@@ -144,7 +150,7 @@ def flow_to_arrows(
     ax.set_ylim(H, 0)  # Invert y axis
     ax.set_xticks([])
     ax.set_yticks([])
-    ax.set_title(f"Flow Field (arrows scaled {scale}x)")
+    ax.set_title(f"Flow Field (1:1 pixel displacement, window_size={window_size})")
 
     from io import BytesIO
 
