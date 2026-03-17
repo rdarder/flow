@@ -59,9 +59,9 @@ def train_step(
     """
 
     def loss_fn(model):
-        # Forward pass
+        # Forward pass (uses flow_temperature for attention)
         flow, pyramid1, pyramid2 = model(
-            img1, img2, temperature=model_settings.temperature
+            img1, img2, temperature=model_settings.flow_temperature
         )
 
         # Get coarsest level embeddings
@@ -73,7 +73,7 @@ def train_step(
 
         warped = warp_embeddings(emb1_coarse, flow)
 
-        # Compute loss
+        # Compute loss (uses entropy_temperature for entropy loss)
         loss, loss_aux = compute_loss(
             pyramid1,
             pyramid2,
@@ -83,7 +83,7 @@ def train_step(
             lambda_entropy=model_settings.lambda_entropy,
             level_weight_decay=model_settings.level_weight_decay,
             recon_weight=model_settings.recon_weight,
-            temperature=model_settings.temperature,
+            entropy_temperature=model_settings.entropy_temperature,
             return_attention_weights=return_aux,
         )
 
@@ -131,8 +131,10 @@ def validation_step(
     Returns:
         Validation loss (scalar)
     """
-    # Forward pass
-    flow, pyramid1, pyramid2 = model(img1, img2, temperature=model_settings.temperature)
+    # Forward pass (uses flow_temperature for attention)
+    flow, pyramid1, pyramid2 = model(
+        img1, img2, temperature=model_settings.flow_temperature
+    )
 
     # Get coarsest level embeddings
     emb1_coarse = pyramid1[-1]
@@ -143,7 +145,7 @@ def validation_step(
 
     warped = warp_embeddings(emb1_coarse, flow)
 
-    # Compute loss
+    # Compute loss (uses entropy_temperature for entropy loss)
     loss, _ = compute_loss(
         pyramid1,
         pyramid2,
@@ -153,7 +155,7 @@ def validation_step(
         lambda_entropy=model_settings.lambda_entropy,
         level_weight_decay=model_settings.level_weight_decay,
         recon_weight=model_settings.recon_weight,
-        temperature=model_settings.temperature,
+        entropy_temperature=model_settings.entropy_temperature,
         return_attention_weights=False,
     )
 

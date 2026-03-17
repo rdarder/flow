@@ -60,12 +60,12 @@ Because the embeddings form stable "signatures" or "constellations" of attention
 
 ### Temperature Scaling
 
-A single temperature parameter controls softmax sharpness during training (default: 0.2). This balances two competing needs:
+Two separate temperature parameters control attention sharpness:
 
-* **Sharp enough** to encourage distinct attention peaks during embedding training (entropy loss)
-* **Smooth enough** to provide stable centroids for flow estimation
+* **`entropy_temperature` (default: 1.0):** Used for entropy loss computation. Fixed at 1.0 for temperature-independent loss values, making entropy comparable across training runs.
+* **`flow_temperature` (default: 0.3):** Used during flow estimation forward pass. Controls output sharpness - lower values produce sharper attention peaks for precise flow, higher values produce smoother centroids for robust tracking.
 
-The current implementation uses a unified temperature for both phases. Future iterations may explore decoupling: colder temperatures for embedding generation (e.g., 0.05) and warmer temperatures for flow estimation (e.g., 0.2-0.5).
+This decoupling prevents the loss landscape from changing when tuning flow estimation behavior.
 
 ### The Boundary Problem (Centroid Drag)
 

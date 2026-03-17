@@ -28,7 +28,7 @@ def compute_loss(
     lambda_entropy: float = 0.5,
     level_weight_decay: float = 1.0,
     recon_weight: float = 0.1,
-    temperature: float = 0.2,
+    entropy_temperature: float = 1.0,
     return_attention_weights: bool = False,
 ) -> Tuple[jnp.ndarray, dict]:
     """Compute combined entropy + reconstruction loss for optical flow training.
@@ -48,7 +48,7 @@ def compute_loss(
         lambda_entropy: Cross-attention loss weight in [0, 1] (default 0.5)
         level_weight_decay: Weight multiplier per level (default 1.0 = uniform)
         recon_weight: Reconstruction loss weight (default 0.1)
-        temperature: Softmax temperature (default 0.2)
+        entropy_temperature: Temperature for entropy loss (default 1.0)
         return_attention_weights: If True, return attention weights and entropy maps
 
     Returns:
@@ -61,7 +61,7 @@ def compute_loss(
         window_size=window_size,
         lambda_entropy=lambda_entropy,
         level_weight_decay=level_weight_decay,
-        temperature=temperature,
+        temperature=entropy_temperature,
         return_attention_weights=return_attention_weights,
     )
 

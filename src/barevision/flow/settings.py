@@ -124,8 +124,10 @@ class ModelSettings:
         recon_weight: Reconstruction loss weight (default 0.1)
                       total_loss = entropy_loss + recon_weight * reconstruction_loss
                       Higher values prioritize tracking accuracy over embedding distinctness.
-        flow_hidden_dim: Flow estimator hidden dimension (default 24)
-        temperature: Temperature for attention softmax (default 0.2)
+        entropy_temperature: Temperature for entropy loss computation (default 1.0)
+                            Fixed temperature for entropy calculation. Lower = sharper peaks in loss.
+        flow_temperature: Temperature for flow estimation attention (default 0.3)
+                         Used during inference. Lower = sharper attention, higher = smoother.
     """
 
     window_size: int = 16
@@ -134,8 +136,9 @@ class ModelSettings:
     level_weight_decay: float = 1.0  # Uniform weighting across levels
     lambda_entropy: float = 0.5  # Equal weighting between self and cross entropy
     recon_weight: float = 0.1  # Reconstruction loss weight (entropy is primary)
+    entropy_temperature: float = 1.0  # Fixed temperature for entropy loss
+    flow_temperature: float = 0.3  # Temperature for flow estimation
     flow_hidden_dim: int = 24  # Flow estimator hidden dimension
-    temperature: float = 0.2  # Temperature for attention softmax
 
     def __post_init__(self):
         if self.window_size < 1:
@@ -154,12 +157,18 @@ class ModelSettings:
             )
         if self.recon_weight < 0:
             raise ValueError(f"recon_weight must be >= 0, got {self.recon_weight}")
+        if self.entropy_temperature <= 0:
+            raise ValueError(
+                f"entropy_temperature must be > 0, got {self.entropy_temperature}"
+            )
+        if self.flow_temperature <= 0:
+            raise ValueError(
+                f"flow_temperature must be > 0, got {self.flow_temperature}"
+            )
         if self.flow_hidden_dim < 1:
             raise ValueError(
                 f"flow_hidden_dim must be >= 1, got {self.flow_hidden_dim}"
             )
-        if self.temperature <= 0:
-            raise ValueError(f"temperature must be > 0, got {self.temperature}")
 
 
 @dataclass
@@ -259,8 +268,9 @@ def create_smoke_test_settings() -> Settings:
             level_weight_decay=1.0,
             lambda_entropy=0.5,
             recon_weight=0.1,
+            entropy_temperature=1.0,
+            flow_temperature=0.3,
             flow_hidden_dim=24,
-            temperature=0.2,
         ),
         training=TrainingSettings(
             epochs=1,
