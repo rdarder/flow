@@ -457,9 +457,9 @@ class TestHierarchicalLossIntegration:
         # Use smaller model for faster testing
         model = HierarchicalEmbeddingModel(
             hidden_dim=16,  # Reduced from 32
-            embed_dim=8,    # Reduced from 16
-            num_groups=4,   # Reduced from 8
-            num_levels=2,   # Reduced from 3
+            embed_dim=8,  # Reduced from 16
+            num_groups=4,  # Reduced from 8
+            num_levels=2,  # Reduced from 3
             rngs=nnx.Rngs(jr.PRNGKey(0)),
         )
 

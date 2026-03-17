@@ -13,20 +13,38 @@ from torch.utils.tensorboard import SummaryWriter
 
 
 class JaxLogger:
-    """TensorBoard logger for training metrics."""
+    """TensorBoard logger for training metrics.
 
-    def __init__(self, log_dir: str = "runs", run_name_prefix: str = "barevision"):
+    Attributes:
+        strict: If True, raise exceptions on logging errors instead of warnings
+    """
+
+    def __init__(
+        self,
+        log_dir: str = "runs",
+        run_name_prefix: str = "barevision",
+        strict: bool = False,
+    ):
         """Initialize logger with automatic run naming.
 
         Args:
             log_dir: Directory for TensorBoard logs
             run_name_prefix: Prefix for run name (e.g., "barevision" -> "barevision_20240225_123045")
+            strict: If True, raise exceptions on logging errors instead of printing warnings
         """
         run_name = f"{run_name_prefix}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         log_path = os.path.join(log_dir, run_name)
         self.writer = SummaryWriter(log_path)
         self.log_dir = log_path
+        self.strict = strict
         print(f"Logging to {log_path}")
+
+    def _handle_error(self, error_type: str, e: Exception):
+        """Handle logging errors based on strict mode."""
+        if self.strict:
+            raise RuntimeError(f"Logger error ({error_type}): {e}") from e
+        else:
+            print(f"Logger Warning ({error_type}): {e}")
 
     def log_scalar(self, tag: str, value: float, step: int):
         """Log a scalar value.
@@ -39,7 +57,7 @@ class JaxLogger:
         try:
             self.writer.add_scalar(tag, float(value), step)
         except Exception as e:
-            print(f"Logger Warning (scalar): {e}")
+            self._handle_error("scalar", e)
 
     def log_image(
         self, tag: str, image: np.ndarray, step: int, dataformats: str = "HWC"
@@ -55,7 +73,7 @@ class JaxLogger:
         try:
             self.writer.add_image(tag, image, step, dataformats=dataformats)
         except Exception as e:
-            print(f"Logger Warning (image): {e}")
+            self._handle_error("image", e)
 
     def log_histogram(self, tag: str, values: np.ndarray, step: int):
         """Log a histogram of values.
@@ -70,7 +88,7 @@ class JaxLogger:
             if len(values_flat) > 0:
                 self.writer.add_histogram(tag, values_flat, step)
         except Exception as e:
-            print(f"Logger Warning (histogram): {e}")
+            self._handle_error("histogram", e)
 
     def log_figure(
         self, tag: str, figure_array: np.ndarray, step: int, dataformats: str = "HWC"

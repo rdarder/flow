@@ -157,9 +157,7 @@ class ModelSettings:
                 f"flow_hidden_dim must be >= 1, got {self.flow_hidden_dim}"
             )
         if self.temperature <= 0:
-            raise ValueError(
-                f"temperature must be > 0, got {self.temperature}"
-            )
+            raise ValueError(f"temperature must be > 0, got {self.temperature}")
 
 
 @dataclass
