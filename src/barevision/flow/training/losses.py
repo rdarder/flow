@@ -11,19 +11,18 @@ Where:
     - recon_weight: Controls relative importance of reconstruction (default 0.1)
 """
 
-from typing import Tuple
+from typing import List
 
 import jax.numpy as jnp
 
 from barevision.flow.embeddings.losses import compute_hierarchical_entropy_loss
-from barevision.flow.matching.losses import warp_embeddings, reconstruction_loss_core
+from barevision.flow.matching.losses import hierarchical_reconstruction_loss
 
 
 def compute_loss(
     pyramid1,
     pyramid2,
-    warped_embeddings,
-    target_embeddings,
+    flows: List[jnp.ndarray],
     window_size: int,
     lambda_entropy: float,
     level_weight_decay: float,
@@ -38,11 +37,12 @@ def compute_loss(
     This makes entropy the primary objective (ensuring distinctive embeddings)
     and reconstruction a secondary objective (ensuring embeddings are trackable).
 
+    V1: Uses hierarchical reconstruction loss across all pyramid levels.
+
     Args:
         pyramid1: List of feature maps from frame 1, one per level
         pyramid2: List of feature maps from frame 2, one per level
-        warped_embeddings: (B, H, W, D) Frame 1 embeddings warped to F2
-        target_embeddings: (B, H, W, D) Frame 2 embeddings (target)
+        flows: List of flow fields, one per level
         window_size: Size of attention windows
         lambda_entropy: Cross-attention loss weight in [0, 1]
         level_weight_decay: Weight multiplier per level
@@ -62,8 +62,12 @@ def compute_loss(
         temperature=entropy_temperature,
     )
 
-    # Compute reconstruction loss
-    recon_loss = reconstruction_loss_core(warped_embeddings, target_embeddings)
+    # Compute hierarchical reconstruction loss
+    recon_loss, recon_aux = hierarchical_reconstruction_loss(
+        pyramid1,
+        pyramid2,
+        flows,
+    )
 
     # Combine losses: entropy is primary, reconstruction is secondary
     total_loss = entropy_loss + recon_weight * recon_loss
@@ -78,6 +82,7 @@ def compute_loss(
         level_cross_attention_weights=entropy_aux["level_cross_attention_weights"],
         level_self_entropy_maps=entropy_aux["level_self_entropy_maps"],
         level_cross_entropy_maps=entropy_aux["level_cross_entropy_maps"],
+        level_reconstruction_losses=recon_aux["level_losses"],
     )
 
     return total_loss, aux

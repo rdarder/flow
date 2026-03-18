@@ -23,7 +23,7 @@ def log_visualizations(
     img2: jnp.ndarray,
     pyramid1: List[jnp.ndarray],
     pyramid2: List[jnp.ndarray],
-    flow: Optional[jnp.ndarray],
+    flows: Optional[List[jnp.ndarray]],
     aux_data: Optional[Dict],
     metadata: dict,
     step: int,
@@ -34,7 +34,10 @@ def log_visualizations(
 
     Orchestrates visualization from both embeddings and matching packages:
     - Embeddings: frame grid, attention maps for each pyramid level
-    - Matching: flow field colorwheel and arrows
+    - Matching: flow field colorwheel and arrows (per level)
+
+    V1: Visualizes flow at each pyramid level independently.
+    V2: May visualize priors and window shifts.
 
     Args:
         logger: JaxLogger instance for TensorBoard logging
@@ -42,7 +45,7 @@ def log_visualizations(
         img2: Frame 2 (1, H, W, 3) - original RGB
         pyramid1: List of embedding pyramids for frame 1
         pyramid2: List of embedding pyramids for frame 2
-        flow: (B, H, W, 2) predicted flow field (optional)
+        flows: List of predicted flow fields, one per level (optional)
         aux_data: Auxiliary data from training step (optional)
         metadata: dict with video_name, frame_t, frame_tk, distance
         step: Global step for logging
@@ -51,21 +54,29 @@ def log_visualizations(
     """
     import gc
 
-    # Log flow visualization if available
-    if flow is not None:
-        flow_viz = (
-            np.array(flow[0]) if flow.shape[0] == 1 else np.array(flow.mean(axis=0))
-        )
+    # Log flow visualization if available (for each level)
+    if flows is not None:
+        for level_idx, flow in enumerate(flows):
+            flow_viz = (
+                np.array(flow[0]) if flow.shape[0] == 1 else np.array(flow.mean(axis=0))
+            )
 
-        # Colorwheel visualization with adaptive scaling for better contrast
-        flow_rgb = flow_to_colorwheel(flow_viz, max_flow=0.3, adaptive=True)
-        logger.log_image("Flow/Predicted_Colorwheel", flow_rgb, step)
+            # Colorwheel visualization with adaptive scaling for better contrast
+            flow_rgb = flow_to_colorwheel(flow_viz, max_flow=0.3, adaptive=True)
+            logger.log_image(
+                f"Flow/Level{level_idx}_Predicted_Colorwheel", flow_rgb, step
+            )
 
-        # Arrow visualization
-        arrows_rgb = flow_to_arrows(
-            flow_viz, max_flow=0.3, window_size=window_size, grid_density=window_size
-        )
-        logger.log_image("Flow/Predicted_Arrows", arrows_rgb, step)
+            # Arrow visualization
+            arrows_rgb = flow_to_arrows(
+                flow_viz,
+                max_flow=0.3,
+                window_size=window_size,
+                grid_density=window_size,
+            )
+            logger.log_image(
+                f"Flow/Level{level_idx}_Predicted_Arrows", arrows_rgb, step
+            )
 
     # Log visualizations for each pyramid level
     for level_idx in range(num_levels):

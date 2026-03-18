@@ -60,25 +60,15 @@ def train_step(
 
     def loss_fn(model):
         # Forward pass (uses flow_temperature for attention)
-        flow, pyramid1, pyramid2 = model(
+        flows, pyramid1, pyramid2 = model(
             img1, img2, temperature=model_settings.flow_temperature
         )
-
-        # Get coarsest level embeddings
-        emb1_coarse = pyramid1[-1]
-        emb2_coarse = pyramid2[-1]
-
-        # Warp Frame 1 embeddings
-        from barevision.flow.matching.losses import warp_embeddings
-
-        warped = warp_embeddings(emb1_coarse, flow)
 
         # Compute loss (uses entropy_temperature for entropy loss)
         loss, loss_aux = compute_loss(
             pyramid1,
             pyramid2,
-            warped_embeddings=warped,
-            target_embeddings=emb2_coarse,
+            flows=flows,
             window_size=model_settings.window_size,
             lambda_entropy=model_settings.lambda_entropy,
             level_weight_decay=model_settings.level_weight_decay,
@@ -93,7 +83,7 @@ def train_step(
                 "model": {
                     "pyramid1": pyramid1,
                     "pyramid2": pyramid2,
-                    "flow": flow,
+                    "flows": flows,
                 },
                 "loss": loss_aux,
             }
@@ -131,25 +121,15 @@ def validation_step(
         Validation loss (scalar)
     """
     # Forward pass (uses flow_temperature for attention)
-    flow, pyramid1, pyramid2 = model(
+    flows, pyramid1, pyramid2 = model(
         img1, img2, temperature=model_settings.flow_temperature
     )
-
-    # Get coarsest level embeddings
-    emb1_coarse = pyramid1[-1]
-    emb2_coarse = pyramid2[-1]
-
-    # Warp Frame 1 embeddings
-    from barevision.flow.matching.losses import warp_embeddings
-
-    warped = warp_embeddings(emb1_coarse, flow)
 
     # Compute loss (uses entropy_temperature for entropy loss)
     loss, _ = compute_loss(
         pyramid1,
         pyramid2,
-        warped_embeddings=warped,
-        target_embeddings=emb2_coarse,
+        flows=flows,
         window_size=model_settings.window_size,
         lambda_entropy=model_settings.lambda_entropy,
         level_weight_decay=model_settings.level_weight_decay,
@@ -208,10 +188,10 @@ def run_epoch(
             )
 
         if global_step % settings.logging.log_visualizations_every_steps == 0:
-            # Get pyramids and flow from aux_data
+            # Get pyramids and flows from aux_data
             pyramid1 = aux["model"]["pyramid1"]
             pyramid2 = aux["model"]["pyramid2"]
-            flow = aux["model"].get("flow", None)
+            flows = aux["model"].get("flows", None)
 
             # Pass original images for visualization (not embeddings)
             log_visualizations(
@@ -220,7 +200,7 @@ def run_epoch(
                 img2[0:1],  # Original RGB frame 2
                 pyramid1,
                 pyramid2,
-                flow,
+                flows,
                 aux_data=aux,
                 metadata=metadata[0],
                 step=global_step,
