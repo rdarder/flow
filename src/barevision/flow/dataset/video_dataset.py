@@ -37,7 +37,7 @@ class VideoFrameDataset:
 
     Generates frame pairs (t, t+k) for self-supervised training where:
     - t ranges over all valid frame indices
-    - k ranges from 1 to max_frame_distance
+    - k ranges from min_frame_distance to max_frame_distance
     - Pairs are only created within the same video
 
     The dataset uses video-based train/val splits (85/15) with configurable seed.
@@ -47,6 +47,7 @@ class VideoFrameDataset:
         self,
         data_root: Optional[str] = None,
         split: str = "train",
+        min_frame_distance: int = 1,
         max_frame_distance: int = 5,
         img_size: Tuple[int, int] = (190, 190),
         seed: int = 42,
@@ -58,6 +59,7 @@ class VideoFrameDataset:
             data_root: Root directory containing video subdirectories.
                       If None, uses project's datasets/frames directory.
             split: 'train' or 'val'
+            min_frame_distance: Minimum temporal distance k for frame pairs (t, t+k)
             max_frame_distance: Maximum temporal distance k for frame pairs (t, t+k)
             img_size: Target image size (height, width)
             seed: Random seed for reproducible train/val split
@@ -70,6 +72,7 @@ class VideoFrameDataset:
             self.data_root = data_root
 
         self.split = split
+        self.min_frame_distance = min_frame_distance
         self.max_frame_distance = max_frame_distance
         self.img_size = img_size
         self.seed = seed
@@ -139,20 +142,22 @@ class VideoFrameDataset:
             if num_frames < 2:
                 continue
 
-            # Generate pairs (t, t+k) for all valid t and k in [1, max_distance]
+            # Generate pairs (t, t+k) for all valid t and k in [min_k, max_k]
             for t in range(num_frames):
+                min_k = self.min_frame_distance
                 max_k = min(self.max_frame_distance, num_frames - t - 1)
-                for k in range(1, max_k + 1):
-                    self.frame_pairs.append(
-                        FramePair(
-                            video_name=video_name,
-                            frame_t_idx=t,
-                            frame_tk_idx=t + k,
-                            distance=k,
-                            img1_path=os.path.join(video_path, frame_files[t]),
-                            img2_path=os.path.join(video_path, frame_files[t + k]),
+                if min_k <= max_k:
+                    for k in range(min_k, max_k + 1):
+                        self.frame_pairs.append(
+                            FramePair(
+                                video_name=video_name,
+                                frame_t_idx=t,
+                                frame_tk_idx=t + k,
+                                distance=k,
+                                img1_path=os.path.join(video_path, frame_files[t]),
+                                img2_path=os.path.join(video_path, frame_files[t + k]),
+                            )
                         )
-                    )
 
     def __len__(self) -> int:
         """Return number of frame pairs."""
@@ -268,8 +273,10 @@ def create_dataloader(
 
     dataset = VideoFrameDataset(
         split=split,
-        max_frame_distance=5,
+        min_frame_distance=dataset_settings.min_frame_distance,
+        max_frame_distance=dataset_settings.max_frame_distance,
         img_size=dataset_settings.img_size,
+        seed=dataset_settings.seed,
     )
 
     max_samples = (

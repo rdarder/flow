@@ -17,20 +17,24 @@ class DatasetSettings:
         coarse_grid_size: Target coarse-level grid dimension (default 3 for 3×3 grid)
         window_size: Window size at coarse level (default 16)
         num_levels: Number of pyramid levels (used to calculate required input size)
+        min_frame_distance: Minimum temporal distance for frame pairs (default 1)
         max_frame_distance: Maximum temporal distance for frame pairs
         max_samples: Maximum samples per epoch (-1 for full dataset)
         num_workers: Number of worker processes for data loading (0 = main process only)
+        seed: Random seed for train/val split and data loading
     """
 
     batch_size: int = 4
     coarse_grid_size: int = 1  # Phase 2: 1×1 grid at coarsest level (16×16 window)
     window_size: int = 16
     num_levels: int = 3
+    min_frame_distance: int = 1  # Minimum k for frame pairs (t, t+k)
     max_frame_distance: int = (
         2  # Phase 2: Restrict to adjacent frames for deep supervision
     )
     max_samples: int = -1
     num_workers: int = 4
+    seed: int = 42  # Random seed for reproducibility
 
     @property
     def img_size(self) -> Tuple[int, int]:
@@ -63,9 +67,13 @@ class DatasetSettings:
             raise ValueError(f"window_size must be >= 1, got {self.window_size}")
         if self.num_levels < 1:
             raise ValueError(f"num_levels must be >= 1, got {self.num_levels}")
-        if self.max_frame_distance < 1:
+        if self.min_frame_distance < 1:
             raise ValueError(
-                f"max_frame_distance must be >= 1, got {self.max_frame_distance}"
+                f"min_frame_distance must be >= 1, got {self.min_frame_distance}"
+            )
+        if self.max_frame_distance < self.min_frame_distance:
+            raise ValueError(
+                f"max_frame_distance ({self.max_frame_distance}) must be >= min_frame_distance ({self.min_frame_distance})"
             )
         if self.num_workers < 0:
             raise ValueError(f"num_workers must be >= 0, got {self.num_workers}")
@@ -318,7 +326,8 @@ def create_smoke_test_settings() -> Settings:
             coarse_grid_size=1,  # Phase 2: 1×1 grid at coarsest
             window_size=16,
             num_levels=3,  # 3 pyramid levels
-            max_frame_distance=2,  # Phase 2: Adjacent frames only
+            min_frame_distance=1,  # Adjacent frames
+            max_frame_distance=5,  # Up to 5 frames apart for motion variety
             max_samples=2,  # Only 2 samples for speed
             num_workers=0,
         ),
