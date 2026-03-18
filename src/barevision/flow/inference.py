@@ -89,6 +89,12 @@ def main():
     print(f"  - Embed dim: {model_config['embed_dim']}")
     print(f"  - Flow hidden dim: {model_config['flow_hidden_dim']}")
 
+    # Get flow temperature (may be stored as 'flow_temperature' or legacy 'temperature')
+    flow_temperature = model_config.get(
+        "flow_temperature", model_config.get("temperature", 0.2)
+    )
+    print(f"  - Flow temperature: {flow_temperature}")
+
     # Handle img_size which may be a list
     img_size_list = dataset_config["img_size"]
     if isinstance(img_size_list, list):
@@ -123,9 +129,7 @@ def main():
 
     # Run inference
     print("Running inference...")
-    flow, pyramid1, pyramid2 = model(
-        img1, img2, temperature=model_config["temperature"]
-    )
+    flow, pyramid1, pyramid2 = model(img1, img2, temperature=flow_temperature)
 
     # Extract flow (remove batch dimension)
     flow_np = np.array(flow[0])
