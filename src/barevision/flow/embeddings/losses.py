@@ -163,9 +163,9 @@ def compute_window_attention_losses(
         raise ValueError(f"Width {W} not divisible by window_size {window_size}")
 
     # Validate shapes match
-    assert (
-        emb2.shape == emb1.shape
-    ), f"emb2 shape {emb2.shape} != emb1 shape {emb1.shape}"
+    assert emb2.shape == emb1.shape, (
+        f"emb2 shape {emb2.shape} != emb1 shape {emb1.shape}"
+    )
 
     # Split into windows
     grid = WindowGrid(window_size=window_size)
@@ -220,7 +220,8 @@ def crop_to_grid_aligned(feature_map: jnp.ndarray, window_size: int) -> jnp.ndar
     """Crop feature map to dimensions divisible by window_size.
 
     Phase 2: Ensures each pyramid level can be cleanly split into windows.
-    Uses top-left crop to maintain spatial alignment between frame pairs.
+    Uses centered crop to maximize spatial buffer on all sides for flow estimation.
+    This provides symmetric buffer space for motion in any direction.
 
     Args:
         feature_map: (B, H, W, D) feature map
@@ -235,8 +236,12 @@ def crop_to_grid_aligned(feature_map: jnp.ndarray, window_size: int) -> jnp.ndar
     crop_h = (H // window_size) * window_size
     crop_w = (W // window_size) * window_size
 
-    # Top-left crop
-    return feature_map[:, :crop_h, :crop_w, :]
+    # Centered crop: compute start position to center the crop
+    # If H=79 and crop_h=64, start_h = (79-64)//2 = 7, end at 71 (removes 7 top, 8 bottom)
+    start_h = (H - crop_h) // 2
+    start_w = (W - crop_w) // 2
+
+    return feature_map[:, start_h : start_h + crop_h, start_w : start_w + crop_w, :]
 
 
 def compute_hierarchical_entropy_loss(
