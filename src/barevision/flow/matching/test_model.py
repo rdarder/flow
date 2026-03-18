@@ -6,7 +6,7 @@ import numpy as np
 from flax import nnx
 
 from barevision.flow.matching import (
-    AttentionCentroids,
+    AttentionFeatures,
     FlowEstimator,
     create_source_position_grid,
     flow_to_dense,
@@ -15,23 +15,27 @@ from barevision.flow.matching import (
 )
 
 
-def test_attention_centroids_shape():
-    """Centroids output has correct shape."""
+def test_attention_features_shape():
+    """AttentionFeatures output has correct shape."""
     B, N = 2, 256  # 16x16 window
 
     # Create dummy attention maps (uniform for simplicity)
     self_attn = jnp.ones((B, N, N)) / N
     cross_attn = jnp.ones((B, N, N)) / N
 
-    centroids_computer = AttentionCentroids(window_size=16)
-    centroids = centroids_computer(self_attn, cross_attn)
+    # Create source position grid
+    src_pos = create_source_position_grid(window_size=16)
+    src_pos = jnp.broadcast_to(src_pos, (B, N, 2))
 
-    assert centroids.shape == (B, N, 4), f"Expected (B, N, 4), got {centroids.shape}"
-    print(f"✓ AttentionCentroids shape: {centroids.shape}")
+    features_computer = AttentionFeatures(window_size=16)
+    features = features_computer(self_attn, cross_attn, src_pos)
+
+    assert features.shape == (B, N, 8), f"Expected (B, N, 8), got {features.shape}"
+    print(f"✓ AttentionFeatures shape: {features.shape}")
 
 
-def test_attention_centroids_peak():
-    """Centroid of delta-function attention is at peak location."""
+def test_attention_features_peak():
+    """Features from delta-function attention are at peak location."""
     H = W = 16
     N = H * W
 
@@ -46,29 +50,92 @@ def test_attention_centroids_peak():
     cross_attn = jnp.zeros((1, N, N))
     cross_attn = cross_attn.at[:, :, peak_idx].set(1.0)
 
-    centroids_computer = AttentionCentroids(window_size=16)
-    centroids = centroids_computer(self_attn, cross_attn)
+    # Create source position at the same location (self-attention should center here)
+    src_pos = jnp.zeros((1, N, 2))
+    src_pos = src_pos.at[:, peak_idx, :].set(
+        jnp.array([peak_x / (W - 1), peak_y / (H - 1)])
+    )
+
+    features_computer = AttentionFeatures(window_size=16)
+    features = features_computer(self_attn, cross_attn, src_pos)
 
     # Expected normalized coordinates
     expected_cx = peak_x / (W - 1)
     expected_cy = peak_y / (H - 1)
 
-    # Check self-attention centroid
-    self_cx = centroids[0, 0, 0]
-    self_cy = centroids[0, 0, 1]
+    # For peak location, check features
+    # self_relative should be ~0 (self-attention centered on source)
+    self_rel_cx = features[0, peak_idx, 0]
+    self_rel_cy = features[0, peak_idx, 1]
 
-    np.testing.assert_allclose(self_cx, expected_cx, rtol=1e-5)
-    np.testing.assert_allclose(self_cy, expected_cy, rtol=1e-5)
+    np.testing.assert_allclose(self_rel_cx, 0.0, atol=1e-6)
+    np.testing.assert_allclose(self_rel_cy, 0.0, atol=1e-6)
 
-    # Check cross-attention centroid
-    cross_cx = centroids[0, 0, 2]
-    cross_cy = centroids[0, 0, 3]
+    # cross_relative should be ~0 (cross-attention at same location)
+    cross_rel_cx = features[0, peak_idx, 2]
+    cross_rel_cy = features[0, peak_idx, 3]
 
-    np.testing.assert_allclose(cross_cx, expected_cx, rtol=1e-5)
-    np.testing.assert_allclose(cross_cy, expected_cy, rtol=1e-5)
+    np.testing.assert_allclose(cross_rel_cx, 0.0, atol=1e-6)
+    np.testing.assert_allclose(cross_rel_cy, 0.0, atol=1e-6)
+
+    # cross_absolute should be at peak location
+    cross_abs_cx = features[0, peak_idx, 4]
+    cross_abs_cy = features[0, peak_idx, 5]
+
+    np.testing.assert_allclose(cross_abs_cx, expected_cx, rtol=1e-5)
+    np.testing.assert_allclose(cross_abs_cy, expected_cy, rtol=1e-5)
+
+    # Max peaks should be 1.0 (delta function)
+    self_max = features[0, peak_idx, 6]
+    cross_max = features[0, peak_idx, 7]
+
+    np.testing.assert_allclose(self_max, 1.0, rtol=1e-5)
+    np.testing.assert_allclose(cross_max, 1.0, rtol=1e-5)
+
+    print(f"✓ AttentionFeatures peak: all features correct at peak location")
+
+
+def test_attention_features_translation():
+    """Features correctly encode translation between self and cross attention."""
+    H = W = 16
+    N = H * W
+
+    # Self-attention peak at center
+    self_peak_y, self_peak_x = 8, 8
+    self_peak_idx = self_peak_y * W + self_peak_x
+
+    # Cross-attention peak shifted by (2, 3) pixels
+    cross_peak_y, cross_peak_x = 10, 11
+    cross_peak_idx = cross_peak_y * W + cross_peak_x
+
+    # Create delta-function attention
+    self_attn = jnp.zeros((1, N, N))
+    self_attn = self_attn.at[:, :, self_peak_idx].set(1.0)
+
+    cross_attn = jnp.zeros((1, N, N))
+    cross_attn = cross_attn.at[:, :, cross_peak_idx].set(1.0)
+
+    # Source position at self-attention peak
+    src_x = self_peak_x / (W - 1)
+    src_y = self_peak_y / (H - 1)
+    src_pos = jnp.broadcast_to(jnp.array([[[src_x, src_y]]]), (1, N, 2))
+
+    features_computer = AttentionFeatures(window_size=16)
+    features = features_computer(self_attn, cross_attn, src_pos)
+
+    # Expected flow (normalized)
+    expected_flow_x = (cross_peak_x - self_peak_x) / (W - 1)
+    expected_flow_y = (cross_peak_y - self_peak_y) / (H - 1)
+
+    # cross_relative should encode the flow
+    cross_rel_cx = features[0, 0, 2]
+    cross_rel_cy = features[0, 0, 3]
+
+    np.testing.assert_allclose(cross_rel_cx, expected_flow_x, rtol=1e-5)
+    np.testing.assert_allclose(cross_rel_cy, expected_flow_y, rtol=1e-5)
 
     print(
-        f"✓ AttentionCentroids peak: centroid at ({self_cx:.3f}, {self_cy:.3f}) matches peak at ({expected_cx:.3f}, {expected_cy:.3f})"
+        f"✓ AttentionFeatures translation: flow ({expected_flow_x:.3f}, {expected_flow_y:.3f}) correctly encoded"
     )
 
 
@@ -76,14 +143,13 @@ def test_flow_estimator_shape():
     """Flow estimator produces (B, N, 2) output."""
     B, N = 2, 256
 
-    # Create dummy inputs
-    src_pos = jnp.zeros((B, N, 2))
-    centroids = jnp.zeros((B, N, 4))
+    # Create dummy features (8 features per pixel)
+    features = jnp.zeros((B, N, 8))
 
     flow_estimator = FlowEstimator(
-        window_size=16, hidden_dim=24, max_flow=0.5, rngs=nnx.Rngs(0)
+        window_size=16, hidden_dim=32, max_flow=0.5, rngs=nnx.Rngs(0)
     )
-    flow = flow_estimator(src_pos, centroids)
+    flow = flow_estimator(features)
 
     assert flow.shape == (B, N, 2), f"Expected (B, N, 2), got {flow.shape}"
     print(f"✓ FlowEstimator shape: {flow.shape}")
@@ -92,17 +158,19 @@ def test_flow_estimator_shape():
 def test_flow_estimator_parameters():
     """Flow estimator has expected parameter count."""
     flow_estimator = FlowEstimator(
-        window_size=16, hidden_dim=24, max_flow=0.5, rngs=nnx.Rngs(0)
+        window_size=16, hidden_dim=32, max_flow=0.5, rngs=nnx.Rngs(0)
     )
 
     from barevision.flow.embeddings.model import count_parameters
 
     params = count_parameters(flow_estimator)
 
-    # Linear(6→24) = 6*24 + 24 = 168
-    # Linear(24→2) = 24*2 + 2 = 50
-    # Total = 218
-    expected_params = 6 * 24 + 24 + 24 * 2 + 2
+    # Linear(8→32) = 8*32 + 32 = 288
+    # Linear(32→32) = 32*32 + 32 = 1056
+    # Linear(32→32) = 32*32 + 32 = 1056
+    # Linear(32→2) = 32*2 + 2 = 66
+    # Total = 2466
+    expected_params = (8 * 32 + 32) + (32 * 32 + 32) + (32 * 32 + 32) + (32 * 2 + 2)
     assert params == expected_params, f"Expected {expected_params} params, got {params}"
     print(f"✓ FlowEstimator parameters: {params}")
 
@@ -112,15 +180,14 @@ def test_flow_estimator_bounded():
     B, N = 2, 256
     max_flow = 0.5
 
-    # Create random inputs that could produce large outputs
+    # Create random features that could produce large outputs
     rng = jax.random.PRNGKey(0)
-    src_pos = jax.random.uniform(rng, (B, N, 2), minval=-10, maxval=10)
-    centroids = jax.random.uniform(rng, (B, N, 4), minval=-10, maxval=10)
+    features = jax.random.uniform(rng, (B, N, 8), minval=-10, maxval=10)
 
     flow_estimator = FlowEstimator(
-        window_size=16, hidden_dim=24, max_flow=max_flow, rngs=nnx.Rngs(0)
+        window_size=16, hidden_dim=32, max_flow=max_flow, rngs=nnx.Rngs(0)
     )
-    flow = flow_estimator(src_pos, centroids)
+    flow = flow_estimator(features)
 
     # Check that flow is bounded
     assert (
@@ -255,8 +322,9 @@ def test_create_source_position_grid():
 if __name__ == "__main__":
     print("Running flow component tests...\n")
 
-    test_attention_centroids_shape()
-    test_attention_centroids_peak()
+    test_attention_features_shape()
+    test_attention_features_peak()
+    test_attention_features_translation()
     test_flow_estimator_shape()
     test_flow_estimator_parameters()
     test_flow_estimator_bounded()

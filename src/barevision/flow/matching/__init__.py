@@ -1,8 +1,8 @@
-"""Flow estimation from attention centroids."""
+"""Flow estimation from attention features."""
 
 from barevision.flow.matching.model import (
     FlowEstimator,
-    AttentionCentroids,
+    AttentionFeatures,
     create_source_position_grid,
     flow_to_dense,
 )
@@ -13,7 +13,7 @@ from barevision.flow.matching.losses import (
 
 __all__ = [
     "FlowEstimator",
-    "AttentionCentroids",
+    "AttentionFeatures",
     "create_source_position_grid",
     "flow_to_dense",
     "warp_embeddings",

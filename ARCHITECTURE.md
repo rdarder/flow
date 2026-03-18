@@ -73,32 +73,37 @@ When a feature moves near the edge of a 16x16 window, the boundary physically tr
 
 ### Solution: The Flow Estimator
 
-*Note: The Flow Estimator described below is partially implemented. The current implementation uses only 6 input features (Source Position + Centroids) and outputs 2 values (Residual U, V). The full feature set including Prior Flow, Quadrant Masses, Max Peak Value, and Confidence output is planned for future implementation.*
+### Solution: The Flow Estimator
 
-Instead of utilizing explicit mathematical geometry to correct boundary clipping, the pipeline employs a small, per-embedding MLP to statistically predict the local residual flow based on extremely cheap spatial features.
+Instead of utilizing explicit mathematical geometry to correct boundary clipping, the pipeline employs a small, per-embedding MLP to statistically predict the local residual flow based on cheap spatial features.
 
-For every embedding, the following 18-float feature vector is **planned**:
+For every embedding, the following 8-float feature vector is computed:
 
-1. **Source Position:** Local `X, Y` coordinates (2 floats).
-2. **Prior Flow:** `U, V` vector passed down from the parent level (2 floats).
-3. **Centroids:** `Cx, Cy` for both Self and Cross attention maps (4 floats).
-4. **Quadrant Masses:** The unnormalized sum of attention weights split into 4 spatial quadrants for both Self and Cross maps. This acts as a cheap geometric proxy for boundary truncation (8 floats).
-5. **Max Peak Value:** The absolute maximum attention weight for Self and Cross maps. Serves as a cheap proxy for variance/scatter (2 floats).
+1. **Self-Relative Centroid (2 floats):** Offset of self-attention centroid from source position. Should be ~0 for well-formed self-attention.
+2. **Cross-Relative Centroid (2 floats):** Offset of cross-attention centroid from source position. This is the primary flow signal.
+3. **Cross-Absolute Centroid (2 floats):** Absolute position of cross-attention centroid in the window [0, 1]. Provides boundary context for detecting edge clipping.
+4. **Self Max Peak (1 float):** Maximum attention weight in self-attention map. Indicates self-attention sharpness (confidence).
+5. **Cross Max Peak (1 float):** Maximum attention weight in cross-attention map. Indicates matching confidence.
 
-These 18 floats are passed through a small neural network (`Linear(18→24) → ReLU → Linear(24→3)`).
-The network outputs three values:
+These 8 floats are passed through a 3-layer MLP (`Linear(8→32) → ReLU → Linear(32→32) → ReLU → Linear(32→32) → ReLU → Linear(32→2)`).
+The network outputs two values:
 
-* **Residual U:** The local X displacement relative to the shifted window.
-* **Residual V:** The local Y displacement relative to the shifted window.
-* **Confidence:** A score [0, 1] predicting the reliability of the patch. *Not yet implemented.*
+* **Residual U:** The local X displacement.
+* **Residual V:** The local Y displacement.
 
 *Note: The residual U and V outputs are continuous values that represent the full local flow of that specific embedding, which can span multiple pixels.*
 
+**Design rationale:**
+
+* **Translation invariance:** By using relative centroids (offset from source), the same flow pattern produces identical features regardless of position in the window. This removes the need for absolute source position and reduces the learning burden.
+* **Boundary detection:** Cross-absolute centroid position provides context for detecting when flow approaches window edges, helping the model distinguish real flow from boundary clipping artifacts.
+* **Confidence signals:** Max peak values for both self and cross attention serve as confidence indicators, useful for downstream aggregation and detecting ambiguous matches.
+
+*Note: Prior features such as Prior Flow (from coarser levels), Quadrant Masses, and explicit Confidence output are deferred for future implementation once this baseline is validated.*
+
 ### Flow Aggregation
 
-*Note: Confidence-weighted aggregation is planned but not yet implemented. Current implementation uses simple median.*
-
-At each level, the predicted residual flows are added to the prior flow. The flows are then aggregated across the entire image using a **Confidence-Weighted Median**, which naturally discards ambiguous or occluded patches. This robust median flow is then upscaled and passed to the next finer level as the new prior.
+At each level, the predicted residual flows are aggregated across the entire image using a **median**, which naturally discards outliers. The confidence features (max peaks) are available for future confidence-weighted aggregation once the baseline is validated. This robust median flow is then upscaled and passed to the next finer level as the new prior.
 
 ---
 

@@ -83,8 +83,8 @@ barevision/flow/
 ### Matching Package (`matching/`)
 
 **`model.py`** — Attention-based feature matching.
-- `AttentionCentroids`: Computes center-of-mass from attention maps
-- `FlowEstimator`: MLP predicting flow from centroids + positions
+- `AttentionFeatures`: Computes 8 spatial and confidence features from attention maps
+- `FlowEstimator`: MLP predicting flow from attention features (8→32→32→32→2)
 - `create_source_position_grid`: Normalized coordinate grid
 - `flow_to_dense`: Reshape flow from token to spatial format
 - Read this for matching architecture changes.

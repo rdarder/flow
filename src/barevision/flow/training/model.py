@@ -12,7 +12,7 @@ from flax import nnx
 from barevision.flow.embeddings.model import HierarchicalEmbeddingModel
 from barevision.flow.matching.model import (
     FlowEstimator,
-    AttentionCentroids,
+    AttentionFeatures,
     create_source_position_grid,
 )
 
@@ -132,16 +132,16 @@ class Model(nnx.Module):
         self_attn = jax.nn.softmax(self_logits / temperature, axis=-1)
         cross_attn = jax.nn.softmax(cross_logits / temperature, axis=-1)
 
-        # Compute attention centroids
-        centroids_computer = AttentionCentroids(window_size=H)
-        centroids = centroids_computer(self_attn, cross_attn)
-
         # Create source position grid
         src_pos = create_source_position_grid(window_size=H)
         src_pos = jnp.broadcast_to(src_pos, (B, N, 2))
 
+        # Compute attention features (8 features per pixel)
+        features_computer = AttentionFeatures(window_size=H)
+        features = features_computer(self_attn, cross_attn, src_pos)
+
         # Predict flow
-        flow = self.flow_estimator(src_pos, centroids)
+        flow = self.flow_estimator(features)
 
         # Reshape to spatial grid
         return flow.reshape(B, H, W, 2)
