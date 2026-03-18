@@ -73,9 +73,11 @@ When a feature moves near the edge of a 16x16 window, the boundary physically tr
 
 ### Solution: The Flow Estimator
 
+*Note: The Flow Estimator described below is partially implemented. The current implementation uses only 6 input features (Source Position + Centroids) and outputs 2 values (Residual U, V). The full feature set including Prior Flow, Quadrant Masses, Max Peak Value, and Confidence output is planned for future implementation.*
+
 Instead of utilizing explicit mathematical geometry to correct boundary clipping, the pipeline employs a small, per-embedding MLP to statistically predict the local residual flow based on extremely cheap spatial features.
 
-For every embedding, the following 18-float feature vector is extracted:
+For every embedding, the following 18-float feature vector is **planned**:
 
 1. **Source Position:** Local `X, Y` coordinates (2 floats).
 2. **Prior Flow:** `U, V` vector passed down from the parent level (2 floats).
@@ -88,11 +90,13 @@ The network outputs three values:
 
 * **Residual U:** The local X displacement relative to the shifted window.
 * **Residual V:** The local Y displacement relative to the shifted window.
-* **Confidence:** A score [0, 1] predicting the reliability of the patch.
+* **Confidence:** A score [0, 1] predicting the reliability of the patch. *Not yet implemented.*
 
 *Note: The residual U and V outputs are continuous values that represent the full local flow of that specific embedding, which can span multiple pixels.*
 
 ### Flow Aggregation
+
+*Note: Confidence-weighted aggregation is planned but not yet implemented. Current implementation uses simple median.*
 
 At each level, the predicted residual flows are added to the prior flow. The flows are then aggregated across the entire image using a **Confidence-Weighted Median**, which naturally discards ambiguous or occluded patches. This robust median flow is then upscaled and passed to the next finer level as the new prior.
 

@@ -80,16 +80,28 @@ def test_loss_returns_attention_weights():
         jr.normal(key, (1, 16, 16, 16)),
     ]
 
-    # Test without attention weights (default)
+    # Test without attention weights
     loss, aux = compute_hierarchical_entropy_loss(
-        pyramid1, pyramid2, return_attention_weights=False
+        pyramid1,
+        pyramid2,
+        window_size=16,
+        lambda_entropy=0.5,
+        level_weight_decay=1.0,
+        temperature=1.0,
+        return_attention_weights=False,
     )
     assert "self_loss" in aux
     assert "level_self_attention_weights" not in aux
 
     # Test with attention weights
     loss, aux = compute_hierarchical_entropy_loss(
-        pyramid1, pyramid2, return_attention_weights=True
+        pyramid1,
+        pyramid2,
+        window_size=16,
+        lambda_entropy=0.5,
+        level_weight_decay=1.0,
+        temperature=1.0,
+        return_attention_weights=True,
     )
     assert "self_loss" in aux
     assert "level_self_attention_weights" in aux

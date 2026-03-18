@@ -20,14 +20,14 @@ class TestSelfAttentionEntropyLossCore:
     def test_output_shape(self):
         """Test that output shape matches input spatial dimensions."""
         windows = jr.normal(jr.PRNGKey(0), (2, 16, 16, 16))  # (B, H, W, D)
-        loss = self_attention_entropy_loss(windows)
+        loss = self_attention_entropy_loss(windows, temperature=1.0)
 
         assert loss.shape == (2, 16, 16), f"Expected (2, 16, 16), got {loss.shape}"
 
     def test_finite_values(self):
         """Test that all values are finite."""
         windows = jr.normal(jr.PRNGKey(0), (4, 16, 16, 16))
-        loss = self_attention_entropy_loss(windows)
+        loss = self_attention_entropy_loss(windows, temperature=1.0)
 
         assert jnp.isfinite(loss).all(), "Loss contains NaN/Inf"
 
@@ -35,7 +35,7 @@ class TestSelfAttentionEntropyLossCore:
         """Test that gradients flow."""
 
         def loss_fn(w):
-            return self_attention_entropy_loss(w).mean()
+            return self_attention_entropy_loss(w, temperature=1.0).mean()
 
         windows = jr.normal(jr.PRNGKey(0), (2, 16, 16, 16))
         grad = jax.grad(loss_fn)(windows)
@@ -52,7 +52,7 @@ class TestCrossAttentionEntropyLossCore:
         """Test that output shape matches input spatial dimensions."""
         windows1 = jr.normal(jr.PRNGKey(0), (2, 16, 16, 16))
         windows2 = jr.normal(jr.PRNGKey(1), (2, 16, 16, 16))
-        loss = cross_attention_entropy_loss(windows1, windows2)
+        loss = cross_attention_entropy_loss(windows1, windows2, temperature=1.0)
 
         assert loss.shape == (2, 16, 16)
 
@@ -60,7 +60,7 @@ class TestCrossAttentionEntropyLossCore:
         """Test that all values are finite."""
         windows1 = jr.normal(jr.PRNGKey(0), (4, 16, 16, 16))
         windows2 = jr.normal(jr.PRNGKey(1), (4, 16, 16, 16))
-        loss = cross_attention_entropy_loss(windows1, windows2)
+        loss = cross_attention_entropy_loss(windows1, windows2, temperature=1.0)
 
         assert jnp.isfinite(loss).all()
 
@@ -68,7 +68,7 @@ class TestCrossAttentionEntropyLossCore:
         """Cross-attention entropy is always non-negative."""
         windows1 = jr.normal(jr.PRNGKey(0), (2, 16, 16, 16))
         windows2 = jr.normal(jr.PRNGKey(1), (2, 16, 16, 16))
-        loss = cross_attention_entropy_loss(windows1, windows2)
+        loss = cross_attention_entropy_loss(windows1, windows2, temperature=1.0)
 
         assert (loss >= 0).all()
 
@@ -76,7 +76,7 @@ class TestCrossAttentionEntropyLossCore:
         """Test that gradients flow through both inputs."""
 
         def loss_fn(w1, w2):
-            return cross_attention_entropy_loss(w1, w2).mean()
+            return cross_attention_entropy_loss(w1, w2, temperature=1.0).mean()
 
         windows1 = jr.normal(jr.PRNGKey(0), (2, 16, 16, 16))
         windows2 = jr.normal(jr.PRNGKey(1), (2, 16, 16, 16))
@@ -95,7 +95,9 @@ class TestCombinedLoss:
         """Test that combined loss returns scalar values."""
         emb1 = jr.normal(jr.PRNGKey(0), (2, 32, 32, 16))
         emb2 = jr.normal(jr.PRNGKey(1), (2, 32, 32, 16))
-        loss, aux = compute_window_attention_losses(emb1, emb2)
+        loss, aux = compute_window_attention_losses(
+            emb1, emb2, window_size=16, lambda_entropy=0.5, temperature=1.0
+        )
 
         assert jnp.isscalar(loss) or loss.shape == ()
         assert jnp.isscalar(aux["self_loss"]) or aux["self_loss"].shape == ()
@@ -105,7 +107,9 @@ class TestCombinedLoss:
         """Test that combined loss is finite."""
         emb1 = jr.normal(jr.PRNGKey(0), (2, 32, 32, 16))
         emb2 = jr.normal(jr.PRNGKey(1), (2, 32, 32, 16))
-        loss, aux = compute_window_attention_losses(emb1, emb2)
+        loss, aux = compute_window_attention_losses(
+            emb1, emb2, window_size=16, lambda_entropy=0.5, temperature=1.0
+        )
 
         assert jnp.isfinite(loss)
         assert jnp.isfinite(aux["self_loss"])
@@ -117,7 +121,9 @@ class TestCombinedLoss:
         emb2 = jr.normal(jr.PRNGKey(1), (1, 31, 32, 16))
 
         with pytest.raises(ValueError, match="Height.*not divisible"):
-            compute_window_attention_losses(emb1, emb2)
+            compute_window_attention_losses(
+                emb1, emb2, window_size=16, lambda_entropy=0.5, temperature=1.0
+            )
 
     def test_misaligned_width_fails(self):
         """Test that misaligned width raises ValueError."""
@@ -125,7 +131,9 @@ class TestCombinedLoss:
         emb2 = jr.normal(jr.PRNGKey(1), (1, 32, 33, 16))
 
         with pytest.raises(ValueError, match="Width.*not divisible"):
-            compute_window_attention_losses(emb1, emb2)
+            compute_window_attention_losses(
+                emb1, emb2, window_size=16, lambda_entropy=0.5, temperature=1.0
+            )
 
     def test_shape_mismatch_fails(self):
         """Test that mismatched shapes raise assertion."""
@@ -133,13 +141,17 @@ class TestCombinedLoss:
         emb2 = jr.normal(jr.PRNGKey(1), (1, 32, 32, 8))  # Different D
 
         with pytest.raises(AssertionError):
-            compute_window_attention_losses(emb1, emb2)
+            compute_window_attention_losses(
+                emb1, emb2, window_size=16, lambda_entropy=0.5, temperature=1.0
+            )
 
     def test_gradient_flow(self):
         """Test gradients flow through combined loss."""
 
         def loss_fn(e1, e2):
-            loss, _ = compute_window_attention_losses(e1, e2)
+            loss, _ = compute_window_attention_losses(
+                e1, e2, window_size=16, lambda_entropy=0.5, temperature=1.0
+            )
             return loss
 
         emb1 = jr.normal(jr.PRNGKey(0), (1, 32, 32, 16))
@@ -157,13 +169,13 @@ class TestCombinedLoss:
         emb2 = jr.normal(jr.PRNGKey(1), (1, 32, 32, 16))
 
         loss1, aux1 = compute_window_attention_losses(
-            emb1, emb2, lambda_entropy=0.0
+            emb1, emb2, window_size=16, lambda_entropy=0.0, temperature=1.0
         )  # Self only
         loss2, aux2 = compute_window_attention_losses(
-            emb1, emb2, lambda_entropy=1.0
+            emb1, emb2, window_size=16, lambda_entropy=1.0, temperature=1.0
         )  # Cross only
         loss3, aux3 = compute_window_attention_losses(
-            emb1, emb2, lambda_entropy=0.5
+            emb1, emb2, window_size=16, lambda_entropy=0.5, temperature=1.0
         )  # Equal mix
 
         # All should be finite
@@ -187,7 +199,9 @@ class TestLossIntegration:
         emb2 = jr.normal(jr.PRNGKey(1), (B, H, W, D))
 
         def train_loss(e1, e2):
-            loss, _ = compute_window_attention_losses(e1, e2)
+            loss, _ = compute_window_attention_losses(
+                e1, e2, window_size=16, lambda_entropy=0.5, temperature=1.0
+            )
             return loss
 
         loss = train_loss(emb1, emb2)
@@ -206,7 +220,9 @@ class TestLossIntegration:
         for h, w in [(16, 16), (32, 32)]:
             emb1 = jr.normal(jr.PRNGKey(0), (1, h, w, 16))
             emb2 = jr.normal(jr.PRNGKey(1), (1, h, w, 16))
-            loss, aux = compute_window_attention_losses(emb1, emb2)
+            loss, aux = compute_window_attention_losses(
+                emb1, emb2, window_size=16, lambda_entropy=0.5, temperature=1.0
+            )
             assert jnp.isscalar(loss) or loss.shape == ()
             assert jnp.isfinite(loss)
 
@@ -252,7 +268,14 @@ class TestHierarchicalEmbeddingLosses:
         pyramid1 = [jr.normal(jr.PRNGKey(0), (1, 64, 64, 16))]
         pyramid2 = [jr.normal(jr.PRNGKey(1), (1, 64, 64, 16))]
 
-        loss, aux = compute_hierarchical_entropy_loss(pyramid1, pyramid2)
+        loss, aux = compute_hierarchical_entropy_loss(
+            pyramid1,
+            pyramid2,
+            window_size=16,
+            lambda_entropy=0.5,
+            level_weight_decay=1.0,
+            temperature=1.0,
+        )
 
         assert jnp.isfinite(loss)
         assert jnp.isfinite(aux["self_loss"])
@@ -272,7 +295,14 @@ class TestHierarchicalEmbeddingLosses:
             jr.normal(jr.PRNGKey(5), (1, 16, 16, 16)),
         ]
 
-        loss, aux = compute_hierarchical_entropy_loss(pyramid1, pyramid2)
+        loss, aux = compute_hierarchical_entropy_loss(
+            pyramid1,
+            pyramid2,
+            window_size=16,
+            lambda_entropy=0.5,
+            level_weight_decay=1.0,
+            temperature=1.0,
+        )
 
         assert jnp.isfinite(loss)
         assert len(aux["level_losses"]) == 3
@@ -293,7 +323,14 @@ class TestHierarchicalEmbeddingLosses:
             jr.normal(jr.PRNGKey(5), (1, 16, 16, 16)),
         ]
 
-        loss, aux = compute_hierarchical_entropy_loss(pyramid1, pyramid2)
+        loss, aux = compute_hierarchical_entropy_loss(
+            pyramid1,
+            pyramid2,
+            window_size=16,
+            lambda_entropy=0.5,
+            level_weight_decay=1.0,
+            temperature=1.0,
+        )
 
         assert jnp.isfinite(loss)
         assert len(aux["level_losses"]) == 3
@@ -302,7 +339,14 @@ class TestHierarchicalEmbeddingLosses:
         """Test that gradients flow through all pyramid levels."""
 
         def loss_fn(p1, p2):
-            loss, _ = compute_hierarchical_entropy_loss(p1, p2)
+            loss, _ = compute_hierarchical_entropy_loss(
+                p1,
+                p2,
+                window_size=16,
+                lambda_entropy=0.5,
+                level_weight_decay=1.0,
+                temperature=1.0,
+            )
             return loss
 
         pyramid1 = [
@@ -341,7 +385,14 @@ class TestHierarchicalEmbeddingLosses:
             jr.normal(jr.PRNGKey(5), (1, 16, 16, 16)),
         ]
 
-        loss, aux = compute_hierarchical_entropy_loss(pyramid1, pyramid2)
+        loss, aux = compute_hierarchical_entropy_loss(
+            pyramid1,
+            pyramid2,
+            window_size=16,
+            lambda_entropy=0.5,
+            level_weight_decay=1.0,
+            temperature=1.0,
+        )
 
         # Each level should contribute to the total loss
         level_losses = aux["level_losses"]
@@ -369,7 +420,14 @@ class TestHierarchicalEmbeddingLosses:
         ]
 
         with pytest.raises(ValueError, match="Pyramid level mismatch"):
-            compute_hierarchical_entropy_loss(pyramid1, pyramid2)
+            compute_hierarchical_entropy_loss(
+                pyramid1,
+                pyramid2,
+                window_size=16,
+                lambda_entropy=0.5,
+                level_weight_decay=1.0,
+                temperature=1.0,
+            )
 
     def test_level_weight_decay(self):
         """Test that level weight decay defaults to uniform weighting."""
@@ -385,7 +443,14 @@ class TestHierarchicalEmbeddingLosses:
         ]
 
         # Default decay=1.0 (uniform)
-        loss, aux = compute_hierarchical_entropy_loss(pyramid1, pyramid2)
+        loss, aux = compute_hierarchical_entropy_loss(
+            pyramid1,
+            pyramid2,
+            window_size=16,
+            lambda_entropy=0.5,
+            level_weight_decay=1.0,
+            temperature=1.0,
+        )
 
         # Check weights are uniform
         assert aux["level_weights"] == [1.0, 1.0, 1.0]
@@ -411,7 +476,12 @@ class TestHierarchicalEmbeddingLosses:
 
         # Custom decay=3.0: weights should be [1, 3, 9]
         loss, aux = compute_hierarchical_entropy_loss(
-            pyramid1, pyramid2, level_weight_decay=3.0
+            pyramid1,
+            pyramid2,
+            window_size=16,
+            lambda_entropy=0.5,
+            level_weight_decay=3.0,
+            temperature=1.0,
         )
 
         assert aux["level_weights"] == [1.0, 3.0, 9.0]
@@ -431,7 +501,12 @@ class TestHierarchicalEmbeddingLosses:
 
         # decay=1.0: all levels get equal weight
         loss, aux = compute_hierarchical_entropy_loss(
-            pyramid1, pyramid2, level_weight_decay=1.0
+            pyramid1,
+            pyramid2,
+            window_size=16,
+            lambda_entropy=0.5,
+            level_weight_decay=1.0,
+            temperature=1.0,
         )
 
         assert aux["level_weights"] == [1.0, 1.0, 1.0]
@@ -470,7 +545,14 @@ class TestHierarchicalLossIntegration:
         def train_loss(m, x1, x2):
             pyramid1 = m(x1)
             pyramid2 = m(x2)
-            loss, _ = compute_hierarchical_entropy_loss(pyramid1, pyramid2)
+            loss, _ = compute_hierarchical_entropy_loss(
+                pyramid1,
+                pyramid2,
+                window_size=16,
+                lambda_entropy=0.5,
+                level_weight_decay=1.0,
+                temperature=1.0,
+            )
             return loss
 
         loss = train_loss(model, img1, img2)

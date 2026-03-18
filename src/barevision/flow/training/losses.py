@@ -24,11 +24,11 @@ def compute_loss(
     pyramid2,
     warped_embeddings,
     target_embeddings,
-    window_size: int = 16,
-    lambda_entropy: float = 0.5,
-    level_weight_decay: float = 1.0,
-    recon_weight: float = 0.1,
-    entropy_temperature: float = 1.0,
+    window_size: int,
+    lambda_entropy: float,
+    level_weight_decay: float,
+    recon_weight: float,
+    entropy_temperature: float,
     return_attention_weights: bool = False,
 ) -> Tuple[jnp.ndarray, dict]:
     """Compute combined entropy + reconstruction loss for optical flow training.
@@ -44,11 +44,11 @@ def compute_loss(
         pyramid2: List of feature maps from frame 2, one per level
         warped_embeddings: (B, H, W, D) Frame 1 embeddings warped to F2
         target_embeddings: (B, H, W, D) Frame 2 embeddings (target)
-        window_size: Size of attention windows (default 16)
-        lambda_entropy: Cross-attention loss weight in [0, 1] (default 0.5)
-        level_weight_decay: Weight multiplier per level (default 1.0 = uniform)
-        recon_weight: Reconstruction loss weight (default 0.1)
-        entropy_temperature: Temperature for entropy loss (default 1.0)
+        window_size: Size of attention windows
+        lambda_entropy: Cross-attention loss weight in [0, 1]
+        level_weight_decay: Weight multiplier per level
+        recon_weight: Reconstruction loss weight
+        entropy_temperature: Temperature for entropy loss
         return_attention_weights: If True, return attention weights and entropy maps
 
     Returns:

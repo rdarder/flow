@@ -45,8 +45,11 @@ def log_attention_statistics(
     flat_windows = windows.reshape(B * num_windows, window_size, window_size, D)
 
     # Compute entropies (both return positive values)
-    self_entropy = self_attention_entropy_loss(flat_windows)
-    cross_entropy = cross_attention_entropy_loss(flat_windows, flat_windows)
+    # Use temperature=1.0 for diagnostic logging (standard entropy measurement)
+    self_entropy = self_attention_entropy_loss(flat_windows, temperature=1.0)
+    cross_entropy = cross_attention_entropy_loss(
+        flat_windows, flat_windows, temperature=1.0
+    )
 
     # Log histograms
     logger.log_histogram(

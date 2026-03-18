@@ -42,7 +42,7 @@ def _compute_entropy(probabilities: jnp.ndarray) -> jnp.ndarray:
 
 def self_attention_entropy_loss(
     windows: jnp.ndarray,
-    temperature: float = 0.2,
+    temperature: float,
     return_attention_weights: bool = False,
 ) -> tuple[jnp.ndarray, dict] | jnp.ndarray:
     """Compute self-attention entropy loss on a batch of windows.
@@ -56,7 +56,7 @@ def self_attention_entropy_loss(
 
     Args:
         windows: (B, H, W, D) batch of windows (already split and flattened)
-        temperature: Softmax temperature (default 0.2)
+        temperature: Softmax temperature
         return_attention_weights: If True, return attention weights and entropy in aux dict
 
     Returns:
@@ -93,7 +93,7 @@ def self_attention_entropy_loss(
 def cross_attention_entropy_loss(
     windows1: jnp.ndarray,
     windows2: jnp.ndarray,
-    temperature: float = 0.2,
+    temperature: float,
     return_attention_weights: bool = False,
 ) -> tuple[jnp.ndarray, dict] | jnp.ndarray:
     """Compute cross-attention entropy loss on a batch of windows.
@@ -103,7 +103,7 @@ def cross_attention_entropy_loss(
     Args:
         windows1: (B, H, W, D) batch of windows from frame 1
         windows2: (B, H, W, D) batch of windows from frame 2
-        temperature: Softmax temperature (default 0.2)
+        temperature: Softmax temperature
         return_attention_weights: If True, return attention weights and entropy in aux dict
 
     Returns:
@@ -141,9 +141,9 @@ def cross_attention_entropy_loss(
 def compute_window_attention_losses(
     emb1: jnp.ndarray,
     emb2: jnp.ndarray,
-    window_size: int = 16,
-    lambda_entropy: float = 0.5,
-    temperature: float = 0.2,
+    window_size: int,
+    lambda_entropy: float,
+    temperature: float,
     return_attention_weights: bool = False,
 ) -> tuple[jnp.ndarray, dict]:
     """Compute combined self and cross attention losses for a single pyramid level.
@@ -156,9 +156,9 @@ def compute_window_attention_losses(
     Args:
         emb1: (B, H, W, D) embeddings from frame 1
         emb2: (B, H, W, D) embeddings from frame 2
-        window_size: Size of attention windows (default 16)
-        lambda_entropy: Cross-attention loss weight in [0, 1] (default 0.5)
-        temperature: Softmax temperature (default 0.2)
+        window_size: Size of attention windows
+        lambda_entropy: Cross-attention loss weight in [0, 1]
+        temperature: Softmax temperature
         return_attention_weights: If True, return attention weights and entropy maps
 
     Returns:
@@ -245,9 +245,7 @@ def compute_window_attention_losses(
     return combined, aux
 
 
-def crop_to_grid_aligned(
-    feature_map: jnp.ndarray, window_size: int = 16
-) -> jnp.ndarray:
+def crop_to_grid_aligned(feature_map: jnp.ndarray, window_size: int) -> jnp.ndarray:
     """Crop feature map to dimensions divisible by window_size.
 
     Phase 2: Ensures each pyramid level can be cleanly split into windows.
@@ -255,7 +253,7 @@ def crop_to_grid_aligned(
 
     Args:
         feature_map: (B, H, W, D) feature map
-        window_size: Window size for attention (default 16)
+        window_size: Window size for attention
 
     Returns:
         Cropped feature map with H and W divisible by window_size
@@ -273,10 +271,10 @@ def crop_to_grid_aligned(
 def compute_hierarchical_entropy_loss(
     pyramid1: List[jnp.ndarray],
     pyramid2: List[jnp.ndarray],
-    window_size: int = 16,
-    lambda_entropy: float = 0.5,
-    level_weight_decay: float = 1.0,
-    temperature: float = 0.2,
+    window_size: int,
+    lambda_entropy: float,
+    level_weight_decay: float,
+    temperature: float,
     return_attention_weights: bool = False,
 ) -> tuple[jnp.ndarray, dict]:
     """Compute compound entropy loss across all pyramid levels.
@@ -295,10 +293,10 @@ def compute_hierarchical_entropy_loss(
     Args:
         pyramid1: List of feature maps from frame 1, one per level
         pyramid2: List of feature maps from frame 2, one per level
-        window_size: Size of attention windows (default 16)
-        lambda_entropy: Cross-attention loss weight in [0, 1] (default 0.5)
-        level_weight_decay: Weight multiplier per level (default 1.0 = uniform)
-        temperature: Softmax temperature (default 0.2)
+        window_size: Size of attention windows
+        lambda_entropy: Cross-attention loss weight in [0, 1]
+        level_weight_decay: Weight multiplier per level
+        temperature: Softmax temperature
         return_attention_weights: If True, return attention weights and entropy maps per level
 
     Returns:

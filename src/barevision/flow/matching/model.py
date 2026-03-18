@@ -17,11 +17,11 @@ class AttentionCentroids(nnx.Module):
     The centroid is computed as the center-of-mass of attention weights.
     """
 
-    def __init__(self, window_size: int = 16):
+    def __init__(self, window_size: int):
         """Initialize centroid computer.
 
         Args:
-            window_size: Size of attention window (default 16)
+            window_size: Size of attention window
         """
         self.window_size = window_size
 
@@ -81,9 +81,9 @@ class FlowEstimator(nnx.Module):
 
     def __init__(
         self,
-        window_size: int = 16,
-        hidden_dim: int = 24,
-        max_flow: float = 0.5,
+        window_size: int,
+        hidden_dim: int,
+        max_flow: float,
         *,
         rngs: nnx.Rngs,
     ):
@@ -91,8 +91,8 @@ class FlowEstimator(nnx.Module):
 
         Args:
             window_size: Size of attention window
-            hidden_dim: Hidden layer dimension (default 24)
-            max_flow: Maximum flow magnitude in normalized coordinates (default 0.5 = half window)
+            hidden_dim: Hidden layer dimension
+            max_flow: Maximum flow magnitude in normalized coordinates (0.5 = half window)
             rngs: NNX RNGs for parameter initialization
         """
         self.window_size = window_size
@@ -139,11 +139,11 @@ class FlowEstimator(nnx.Module):
         return flow
 
 
-def create_source_position_grid(window_size: int = 16) -> jnp.ndarray:
+def create_source_position_grid(window_size: int) -> jnp.ndarray:
     """Create normalized source position grid.
 
     Args:
-        window_size: Size of window (default 16)
+        window_size: Size of window
 
     Returns:
         src_pos: (N, 2) normalized coordinates [x, y] for each pixel
