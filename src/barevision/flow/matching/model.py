@@ -104,8 +104,8 @@ class AttentionFeatures(nnx.Module):
         return features
 
 
-class FlowEstimator(nnx.Module):
-    """Predicts residual flow from attention features.
+class LevelFlowEstimator(nnx.Module):
+    """Predicts residual flow from attention features for a single pyramid level.
 
     Input: 8 floats per pixel:
         - self_relative (2): self-centroid offset from source
@@ -117,6 +117,9 @@ class FlowEstimator(nnx.Module):
     Output: 2 floats per pixel (residual_u, residual_v)
 
     All coordinates are normalized to [0, 1] range, relative features are 0-mean.
+
+    V1: Operates on a single 16×16 window at a time.
+    V2: Will receive prior flow from coarser level and window shift offset.
     """
 
     def __init__(

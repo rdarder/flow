@@ -11,7 +11,7 @@ from flax import nnx
 
 from barevision.flow.embeddings.model import HierarchicalEmbeddingModel
 from barevision.flow.matching.model import (
-    FlowEstimator,
+    LevelFlowEstimator as FlowEstimator,
     AttentionFeatures,
     create_source_position_grid,
 )
