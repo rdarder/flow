@@ -20,7 +20,6 @@ class DatasetSettings:
         max_frame_distance: Maximum temporal distance for frame pairs
         max_samples: Maximum samples per epoch (-1 for full dataset)
         num_workers: Number of worker processes for data loading (0 = main process only)
-        seed: Random seed for data shuffling and train/val split
     """
 
     batch_size: int = 4
@@ -32,7 +31,6 @@ class DatasetSettings:
     )
     max_samples: int = -1
     num_workers: int = 4
-    seed: int = 42
 
     @property
     def img_size(self) -> Tuple[int, int]:
@@ -176,14 +174,18 @@ class TrainingSettings:
     """Training hyperparameters.
 
     Attributes:
+        seed: Random seed for all randomness: model initialization, data shuffling, train/val split
         epochs: Number of training epochs
         learning_rate: Optimizer learning rate
     """
 
+    seed: int = 42
     epochs: int = 1
     learning_rate: float = 1e-4
 
     def __post_init__(self):
+        if self.seed < 0:
+            raise ValueError(f"seed must be >= 0, got {self.seed}")
         if self.epochs < 1:
             raise ValueError(f"epochs must be >= 1, got {self.epochs}")
         if self.learning_rate <= 0:

@@ -7,7 +7,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
-def flow_to_colorwheel(flow: np.ndarray, max_flow: float = 0.3) -> np.ndarray:
+def flow_to_colorwheel(
+    flow: np.ndarray, max_flow: float = 0.3, adaptive: bool = False
+) -> np.ndarray:
     """Convert flow field to colorwheel visualization.
 
     Flow direction is encoded as hue, magnitude as saturation.
@@ -15,6 +17,7 @@ def flow_to_colorwheel(flow: np.ndarray, max_flow: float = 0.3) -> np.ndarray:
     Args:
         flow: (H, W, 2) flow field where (u, v) = displacement
         max_flow: Maximum flow magnitude for full saturation (default 0.3)
+        adaptive: If True, use actual max flow in data (capped at max_flow) for better contrast
 
     Returns:
         (H, W, 3) RGB image with flow colorwheel
@@ -28,8 +31,17 @@ def flow_to_colorwheel(flow: np.ndarray, max_flow: float = 0.3) -> np.ndarray:
     # Normalize angle to [0, 1] for hue
     hue = (angle + np.pi) / (2 * np.pi)
 
-    # Normalize magnitude to [0, 1] for saturation (capped at max_flow)
-    saturation = np.clip(magnitude / max_flow, 0, 1)
+    # Adaptive scaling: use actual max flow if smaller than max_flow
+    if adaptive:
+        actual_max = magnitude.max()
+        viz_max = min(actual_max, max_flow) if actual_max > 0 else max_flow
+    else:
+        viz_max = max_flow
+
+    # Normalize magnitude to [0, 1] for saturation (capped at viz_max)
+    saturation = (
+        np.clip(magnitude / viz_max, 0, 1) if viz_max > 0 else np.zeros_like(magnitude)
+    )
 
     # Value is always 1 (bright colors)
     value = np.ones_like(magnitude)

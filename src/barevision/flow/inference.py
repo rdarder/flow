@@ -81,6 +81,7 @@ def main():
     # Extract model configuration
     model_config = config["model"]
     dataset_config = config["dataset"]
+    training_config = config.get("training", {})
 
     print(f"Model configuration:")
     print(f"  - Window size: {model_config['window_size']}")
@@ -98,6 +99,9 @@ def main():
     print(f"  - Expected input size: {img_size}x{img_size}")
 
     # Create model with same architecture
+    # Use seed from checkpoint config for reproducibility (weights will be overwritten)
+    # Try training.seed first (new checkpoints), fall back to dataset.seed (old checkpoints)
+    model_seed = training_config.get("seed", dataset_config.get("seed", 42))
     model = OpticalFlowModel(
         hidden_dim=32,
         embed_dim=model_config["embed_dim"],
@@ -105,7 +109,7 @@ def main():
         num_levels=model_config["num_levels"],
         flow_hidden_dim=model_config["flow_hidden_dim"],
         window_size=model_config["window_size"],
-        rngs=nnx.Rngs(0),  # RNG needed for initialization (weights will be overwritten)
+        rngs=nnx.Rngs(model_seed),
     )
 
     # Restore model weights
@@ -186,8 +190,8 @@ def main():
             flow_to_colorwheel,
         )
 
-        # Colorwheel visualization
-        flow_viz = flow_to_colorwheel(flow_np, max_flow=0.3)
+        # Colorwheel visualization with adaptive scaling for better contrast
+        flow_viz = flow_to_colorwheel(flow_np, max_flow=0.3, adaptive=True)
         viz_path = output_path.with_suffix(".colorwheel.png")
         Image.fromarray((flow_viz * 255).astype(np.uint8)).save(viz_path)
         print(f"Colorwheel visualization saved to: {viz_path}")

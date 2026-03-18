@@ -57,13 +57,13 @@ def log_visualizations(
             np.array(flow[0]) if flow.shape[0] == 1 else np.array(flow.mean(axis=0))
         )
 
-        # Colorwheel visualization
-        flow_rgb = flow_to_colorwheel(flow_viz, max_flow=0.3)
+        # Colorwheel visualization with adaptive scaling for better contrast
+        flow_rgb = flow_to_colorwheel(flow_viz, max_flow=0.3, adaptive=True)
         logger.log_image("Flow/Predicted_Colorwheel", flow_rgb, step)
 
         # Arrow visualization
         arrows_rgb = flow_to_arrows(
-            flow_viz, max_flow=0.3, window_size=window_size, grid_density=8
+            flow_viz, max_flow=0.3, window_size=window_size, grid_density=window_size
         )
         logger.log_image("Flow/Predicted_Arrows", arrows_rgb, step)
 

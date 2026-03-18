@@ -17,12 +17,11 @@ class AttentionCentroids(nnx.Module):
     The centroid is computed as the center-of-mass of attention weights.
     """
 
-    def __init__(self, window_size: int = 16, *, rngs: nnx.Rngs):
+    def __init__(self, window_size: int = 16):
         """Initialize centroid computer.
 
         Args:
             window_size: Size of attention window (default 16)
-            rngs: NNX RNGs
         """
         self.window_size = window_size
 
@@ -103,12 +102,15 @@ class FlowEstimator(nnx.Module):
         # First layer with standard initialization
         self.linear1 = nnx.Linear(6, hidden_dim, rngs=rngs)
 
-        # Second layer initialized near-zero to encourage small outputs initially
-        # This helps the network start with minimal bias toward non-zero flow
+        # Second layer: initialize with small weights to start with near-zero flow predictions
+        # This is a common pattern in residual networks - start conservative and learn the signal
+        # Using normal(0.02) keeps initial outputs small while maintaining gradient flow
+        # Zero bias ensures no systematic direction bias at initialization
+        # The tanh activation further bounds output to [-1, 1], scaled by max_flow
         self.linear2 = nnx.Linear(
             hidden_dim,
             2,
-            kernel_init=nnx.initializers.normal(0.01),
+            kernel_init=nnx.initializers.normal(0.02),
             bias_init=nnx.initializers.zeros,
             rngs=rngs,
         )

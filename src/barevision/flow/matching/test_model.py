@@ -23,7 +23,7 @@ def test_attention_centroids_shape():
     self_attn = jnp.ones((B, N, N)) / N
     cross_attn = jnp.ones((B, N, N)) / N
 
-    centroids_computer = AttentionCentroids(window_size=16, rngs=nnx.Rngs(0))
+    centroids_computer = AttentionCentroids(window_size=16)
     centroids = centroids_computer(self_attn, cross_attn)
 
     assert centroids.shape == (B, N, 4), f"Expected (B, N, 4), got {centroids.shape}"
@@ -46,7 +46,7 @@ def test_attention_centroids_peak():
     cross_attn = jnp.zeros((1, N, N))
     cross_attn = cross_attn.at[:, :, peak_idx].set(1.0)
 
-    centroids_computer = AttentionCentroids(window_size=16, rngs=nnx.Rngs(0))
+    centroids_computer = AttentionCentroids(window_size=16)
     centroids = centroids_computer(self_attn, cross_attn)
 
     # Expected normalized coordinates

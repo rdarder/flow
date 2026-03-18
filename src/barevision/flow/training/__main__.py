@@ -172,7 +172,7 @@ def run_epoch(
     run_name: str,
 ):
     # Compute deterministic seed for this epoch
-    epoch_seed = settings.dataset.seed + epoch
+    epoch_seed = settings.training.seed + epoch
 
     loader = create_dataloader(
         settings.dataset,
@@ -229,9 +229,9 @@ def run_epoch(
                 num_levels=settings.model.num_levels,
             )
 
-        # Checkpoint periodically
+        # Checkpoint periodically (skip step 0)
         if settings.checkpoint.every_steps > 0:
-            if global_step % settings.checkpoint.every_steps == 0:
+            if global_step > 0 and global_step % settings.checkpoint.every_steps == 0:
                 checkpoint_path = save_checkpoint(
                     model=model,
                     step=global_step,
@@ -263,7 +263,7 @@ def run_validation(
         settings.dataset,
         split="val",
         shuffle=False,
-        random_seed=settings.dataset.seed,
+        random_seed=settings.training.seed,
     )
 
     total_loss = 0.0
@@ -308,6 +308,7 @@ def train(settings: Settings):
     # Architecture constants:
     # - hidden_dim=32: intermediate feature dimension in convolution blocks
     # - num_groups=8: grouped convolution groups (32/8 = 4 channels per group)
+    # - rngs initialized from training.seed for reproducibility across runs
     model = OpticalFlowModel(
         hidden_dim=32,
         embed_dim=settings.model.embed_dim,
@@ -315,7 +316,7 @@ def train(settings: Settings):
         num_levels=settings.model.num_levels,
         flow_hidden_dim=settings.model.flow_hidden_dim,
         window_size=settings.model.window_size,
-        rngs=nnx.Rngs(0),
+        rngs=nnx.Rngs(settings.training.seed),
     )
 
     # Single optimizer for all parameters

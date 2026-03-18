@@ -133,7 +133,7 @@ class Model(nnx.Module):
         cross_attn = jax.nn.softmax(cross_logits / temperature, axis=-1)
 
         # Compute attention centroids
-        centroids_computer = AttentionCentroids(window_size=H, rngs=nnx.Rngs(0))
+        centroids_computer = AttentionCentroids(window_size=H)
         centroids = centroids_computer(self_attn, cross_attn)
 
         # Create source position grid
