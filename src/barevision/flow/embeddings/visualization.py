@@ -33,7 +33,7 @@ def _figure_to_array(fig: Figure) -> np.ndarray:
     width, height = fig.canvas.get_width_height()
 
     # Get RGBA buffer from canvas (modern matplotlib API)
-    buf = fig.canvas.buffer_rgba()
+    buf = fig.canvas.buffer_rgba()  # type: ignore[attr-defined]
     buffer = np.frombuffer(buf, dtype=np.uint8)
 
     # RGBA to RGB - skip alpha channel (4th byte of each pixel)
