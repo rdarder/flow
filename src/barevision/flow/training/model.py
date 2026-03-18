@@ -5,16 +5,11 @@ End-to-end model for optical flow estimation.
 
 from typing import List, Tuple
 
-import jax
-import jax.numpy as jnp
 from flax import nnx
+import jax.numpy as jnp
 
 from barevision.flow.embeddings.model import HierarchicalEmbeddingModel
-from barevision.flow.matching.model import (
-    LevelFlowEstimator as FlowEstimator,
-    AttentionFeatures,
-    create_source_position_grid,
-)
+from barevision.flow.matching.model import HierarchicalFlowEstimator
 
 
 class Model(nnx.Module):
@@ -63,7 +58,8 @@ class Model(nnx.Module):
         )
 
         # Flow estimator (operates on embeddings from both frames)
-        self.flow_estimator = FlowEstimator(
+        self.flow_estimator = HierarchicalFlowEstimator(
+            num_levels=num_levels,
             window_size=window_size,
             hidden_dim=flow_hidden_dim,
             max_flow=0.5,  # Maximum 0.5 = half-window displacement
@@ -78,8 +74,10 @@ class Model(nnx.Module):
         img1: jnp.ndarray,
         img2: jnp.ndarray,
         temperature: float = 0.2,
-    ) -> Tuple[jnp.ndarray, List[jnp.ndarray], List[jnp.ndarray]]:
+    ) -> Tuple[List[jnp.ndarray], List[jnp.ndarray], List[jnp.ndarray]]:
         """Compute optical flow between two frames.
+
+        V1: Estimates flow independently at all pyramid levels.
 
         Args:
             img1: Frame 1 (B, H, W, 3)
@@ -87,64 +85,19 @@ class Model(nnx.Module):
             temperature: Softmax temperature for attention
 
         Returns:
-            Tuple of (flow_field, pyramid1, pyramid2)
+            Tuple of (flows, pyramid1, pyramid2)
+            - flows: List of flow fields, one per level
+            - pyramid1: List of embeddings from frame 1
+            - pyramid2: List of embeddings from frame 2
         """
         # Extract embeddings from both frames
         pyramid1 = self.embedding_model(img1)
         pyramid2 = self.embedding_model(img2)
 
-        # Estimate flow at coarsest level
-        flow = self._estimate_flow_at_level(
-            pyramid1[-1], pyramid2[-1], temperature=temperature
-        )
+        # Estimate flow at all levels
+        flows = self.flow_estimator(pyramid1, pyramid2, temperature=temperature)
 
-        return flow, pyramid1, pyramid2
-
-    def _estimate_flow_at_level(
-        self,
-        emb1: jnp.ndarray,
-        emb2: jnp.ndarray,
-        temperature: float = 0.2,
-    ) -> jnp.ndarray:
-        """Estimate flow from embeddings at a single pyramid level.
-
-        Current implementation: operates on coarsest level only.
-
-        Args:
-            emb1: (B, H, W, D) embeddings from frame 1
-            emb2: (B, H, W, D) embeddings from frame 2
-            temperature: Softmax temperature for attention
-
-        Returns:
-            flow: (B, H, W, 2) optical flow field
-        """
-        B, H, W, D = emb1.shape
-        N = H * W
-
-        # Flatten spatial dimensions
-        flat_emb1 = emb1.reshape(B, N, D)
-        flat_emb2 = emb2.reshape(B, N, D)
-
-        # Compute self and cross attention
-        self_logits = flat_emb1 @ flat_emb1.transpose(0, 2, 1)
-        cross_logits = flat_emb1 @ flat_emb2.transpose(0, 2, 1)
-
-        self_attn = jax.nn.softmax(self_logits / temperature, axis=-1)
-        cross_attn = jax.nn.softmax(cross_logits / temperature, axis=-1)
-
-        # Create source position grid
-        src_pos = create_source_position_grid(window_size=H)
-        src_pos = jnp.broadcast_to(src_pos, (B, N, 2))
-
-        # Compute attention features (8 features per pixel)
-        features_computer = AttentionFeatures(window_size=H)
-        features = features_computer(self_attn, cross_attn, src_pos)
-
-        # Predict flow
-        flow = self.flow_estimator(features)
-
-        # Reshape to spatial grid
-        return flow.reshape(B, H, W, 2)
+        return flows, pyramid1, pyramid2
 
     def extract_embeddings(
         self,

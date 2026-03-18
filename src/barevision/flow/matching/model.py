@@ -3,6 +3,8 @@
 Predicts optical flow from attention centroids, positions, and confidence features.
 """
 
+from typing import List
+
 import jax
 import jax.numpy as jnp
 from flax import nnx
@@ -226,3 +228,172 @@ def flow_to_dense(flow: jnp.ndarray, H: int, W: int) -> jnp.ndarray:
     B, N, _ = flow.shape
     assert N == H * W, f"Flow has {N} tokens but grid is {H}x{W}"
     return flow.reshape(B, H, W, 2)
+
+
+class HierarchicalFlowEstimator(nnx.Module):
+    """Orchestrates coarse-to-fine flow estimation across pyramid levels.
+
+    V1 (current): Runs LevelFlowEstimator independently at each level.
+        - Crops each level to grid-aligned (divisible by window_size)
+        - Splits into 16×16 windows
+        - Runs LevelFlowEstimator on each window
+        - Returns list of flow fields, one per level
+
+    V2 (planned): Will cascade with upscaled priors and window shifting.
+        - Start at coarsest level (single window)
+        - Upscale flow 2× and pass as prior to next finer level
+        - Extract centered region at finer level based on prior
+        - Shift windows to cancel ego-motion
+        - Refine flow prediction with prior context
+
+    Architecture:
+        pyramid1, pyramid2 → [Level 0: 16 windows] → flow_L0
+                           → [Level 1: 4 windows]  → flow_L1
+                           → [Level 2: 1 window]   → flow_L2
+        Returns: [flow_L0, flow_L1, flow_L2]
+
+    Each flow field is at its level's native resolution (after cropping).
+    """
+
+    def __init__(
+        self,
+        num_levels: int,
+        window_size: int,
+        hidden_dim: int,
+        max_flow: float,
+        *,
+        rngs: nnx.Rngs,
+    ):
+        """Initialize hierarchical flow estimator.
+
+        Args:
+            num_levels: Number of pyramid levels
+            window_size: Size of attention windows (default 16)
+            hidden_dim: Hidden dimension for LevelFlowEstimator
+            max_flow: Maximum flow magnitude (default 0.5 = half-window)
+            rngs: NNX RNGs for parameter initialization
+        """
+        self.num_levels = num_levels
+        self.window_size = window_size
+
+        # Create independent LevelFlowEstimator per level
+        # V2: Could share weights across levels, but V1 uses independent estimators
+        self.level_estimators = nnx.List(
+            [
+                LevelFlowEstimator(
+                    window_size=window_size,
+                    hidden_dim=hidden_dim,
+                    max_flow=max_flow,
+                    rngs=rngs,
+                )
+                for _ in range(num_levels)
+            ]
+        )
+
+    def __call__(
+        self,
+        pyramid1: List[jnp.ndarray],
+        pyramid2: List[jnp.ndarray],
+        temperature: float = 0.2,
+    ) -> List[jnp.ndarray]:
+        """Estimate flow at all pyramid levels.
+
+        V1: Independent estimation at each level (no priors, no shifting).
+
+        Args:
+            pyramid1: List of embeddings from frame 1, one per level
+            pyramid2: List of embeddings from frame 2, one per level
+            temperature: Softmax temperature for attention
+
+        Returns:
+            List of flow fields, one per level.
+            Each flow field has shape (B, H_l, W_l, 2) where H_l, W_l are
+            the cropped dimensions at that level.
+        """
+        from barevision.flow.embeddings.losses import crop_to_grid_aligned
+        from barevision.utils.grid import WindowGrid
+
+        if len(pyramid1) != len(pyramid2) != self.num_levels:
+            raise ValueError(
+                f"Expected {self.num_levels} pyramid levels, "
+                f"got {len(pyramid1)} and {len(pyramid2)}"
+            )
+
+        flows = []
+        grid = WindowGrid(window_size=self.window_size)
+
+        for level_idx in range(self.num_levels):
+            emb1 = pyramid1[level_idx]
+            emb2 = pyramid2[level_idx]
+            estimator = self.level_estimators[level_idx]
+
+            # Crop to grid-aligned (centered crop for symmetric buffer)
+            emb1_cropped = crop_to_grid_aligned(emb1, self.window_size)
+            emb2_cropped = crop_to_grid_aligned(emb2, self.window_size)
+
+            B, H, W, D = emb1_cropped.shape
+
+            # Split into windows
+            windows1 = grid.split(emb1_cropped)  # (B, num_windows, 16, 16, D)
+            windows2 = grid.split(emb2_cropped)
+
+            num_windows_h = H // self.window_size
+            num_windows_w = W // self.window_size
+            num_windows = num_windows_h * num_windows_w
+
+            # Flatten batch and windows for processing
+            flat_windows1 = windows1.reshape(
+                B * num_windows, self.window_size, self.window_size, D
+            )
+            flat_windows2 = windows2.reshape(
+                B * num_windows, self.window_size, self.window_size, D
+            )
+
+            # Flatten spatial dimensions for attention
+            N = self.window_size * self.window_size
+            flat_emb1 = flat_windows1.reshape(B * num_windows, N, D)
+            flat_emb2 = flat_windows2.reshape(B * num_windows, N, D)
+
+            # Compute self and cross attention
+            self_logits = flat_emb1 @ flat_emb1.transpose(0, 2, 1)
+            cross_logits = flat_emb1 @ flat_emb2.transpose(0, 2, 1)
+
+            self_attn = jax.nn.softmax(self_logits / temperature, axis=-1)
+            cross_attn = jax.nn.softmax(cross_logits / temperature, axis=-1)
+
+            # Create source position grid
+            src_pos = create_source_position_grid(window_size=self.window_size)
+            src_pos = jnp.broadcast_to(src_pos, (B * num_windows, N, 2))
+
+            # Compute attention features (8 floats per pixel)
+            features_computer = AttentionFeatures(window_size=self.window_size)
+            features = features_computer(self_attn, cross_attn, src_pos)
+
+            # Predict flow
+            flow = estimator(features)  # (B * num_windows, N, 2)
+
+            # Reshape back to spatial grid per window
+            flow_per_window = flow.reshape(
+                B * num_windows, self.window_size, self.window_size, 2
+            )
+
+            # Unflatten batch and windows
+            flow_unflat = flow_per_window.reshape(
+                B, num_windows, self.window_size, self.window_size, 2
+            )
+
+            # Rearrange windows into grid layout
+            # (B, num_windows, WH, WW, 2) → (B, num_h, num_w, WH, WW, 2)
+            flow_grid = flow_unflat.reshape(
+                B, num_windows_h, num_windows_w, self.window_size, self.window_size, 2
+            )
+
+            # Transpose to interleave: (B, num_h, WH, num_w, WW, 2)
+            flow_grid = flow_grid.transpose(0, 1, 3, 2, 4, 5)
+
+            # Reshape to spatial grid: (B, H, W, 2)
+            flow_grid = flow_grid.reshape(B, H, W, 2)
+
+            flows.append(flow_grid)
+
+        return flows

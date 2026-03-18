@@ -2,6 +2,7 @@
 
 from barevision.flow.matching.model import (
     LevelFlowEstimator,
+    HierarchicalFlowEstimator,
     AttentionFeatures,
     create_source_position_grid,
     flow_to_dense,
@@ -13,6 +14,7 @@ from barevision.flow.matching.losses import (
 
 __all__ = [
     "LevelFlowEstimator",
+    "HierarchicalFlowEstimator",
     "AttentionFeatures",
     "create_source_position_grid",
     "flow_to_dense",
