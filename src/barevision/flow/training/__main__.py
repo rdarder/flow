@@ -179,6 +179,7 @@ def run_epoch(
         split="train",
         shuffle=True,
         random_seed=epoch_seed,
+        augmentation_settings=settings.augmentation,
     )
     epoch_start = time.time()
 
@@ -258,12 +259,13 @@ def run_validation(
     Returns:
         Average validation loss
     """
-    # Create validation dataloader (no shuffle, deterministic)
+    # Create validation dataloader (no shuffle, deterministic, no augmentation)
     loader = create_dataloader(
         settings.dataset,
         split="val",
         shuffle=False,
         random_seed=settings.training.seed,
+        augmentation_settings=None,  # No augmentation for validation
     )
 
     total_loss = 0.0

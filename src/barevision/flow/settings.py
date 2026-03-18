@@ -193,6 +193,64 @@ class TrainingSettings:
 
 
 @dataclass
+class AugmentationSettings:
+    """Data augmentation configuration.
+
+    Augmentations are applied on-the-fly during training with per-sample deterministic seeding.
+    This means the same sample always gets the same augmentation within and across epochs,
+    but different samples get different augmentations.
+
+    Attributes:
+        horizontal_flip_prob: Probability of horizontal flip (left-right mirror), default 0.5
+        vertical_flip_prob: Probability of vertical flip (up-down mirror), default 0.0
+        rotation_prob: Probability of random rotation, default 0.0
+        rotation_max_angle: Maximum rotation angle in degrees (rotation is uniform in [-angle, +angle])
+        color_augmentation_prob: Probability of color augmentation (brightness/contrast), default 0.0
+        color_jitter_strength: Strength of color jitter (multiplier for brightness/contrast changes)
+        swap_frames_prob: Probability of swapping (img1, img2) order, default 0.0
+                          Note: For self-supervised reconstruction loss, no flow negation needed.
+    """
+
+    horizontal_flip_prob: float = 0.5
+    vertical_flip_prob: float = 0.0
+    rotation_prob: float = 0.0
+    rotation_max_angle: float = 15.0
+    color_augmentation_prob: float = 0.0
+    color_jitter_strength: float = 0.1
+    swap_frames_prob: float = 0.0
+
+    def __post_init__(self):
+        if not 0 <= self.horizontal_flip_prob <= 1:
+            raise ValueError(
+                f"horizontal_flip_prob must be in [0, 1], got {self.horizontal_flip_prob}"
+            )
+        if not 0 <= self.vertical_flip_prob <= 1:
+            raise ValueError(
+                f"vertical_flip_prob must be in [0, 1], got {self.vertical_flip_prob}"
+            )
+        if not 0 <= self.rotation_prob <= 1:
+            raise ValueError(
+                f"rotation_prob must be in [0, 1], got {self.rotation_prob}"
+            )
+        if self.rotation_max_angle < 0:
+            raise ValueError(
+                f"rotation_max_angle must be >= 0, got {self.rotation_max_angle}"
+            )
+        if not 0 <= self.color_augmentation_prob <= 1:
+            raise ValueError(
+                f"color_augmentation_prob must be in [0, 1], got {self.color_augmentation_prob}"
+            )
+        if self.color_jitter_strength < 0:
+            raise ValueError(
+                f"color_jitter_strength must be >= 0, got {self.color_jitter_strength}"
+            )
+        if not 0 <= self.swap_frames_prob <= 1:
+            raise ValueError(
+                f"swap_frames_prob must be in [0, 1], got {self.swap_frames_prob}"
+            )
+
+
+@dataclass
 class ValidationSettings:
     """Validation configuration.
 
@@ -248,6 +306,7 @@ class Settings:
     logging: LoggingSettings
     checkpoint: CheckpointSettings
     validation: ValidationSettings
+    augmentation: AugmentationSettings
     smoke_test: bool = False
 
 
@@ -292,6 +351,15 @@ def create_smoke_test_settings() -> Settings:
         validation=ValidationSettings(
             every_epochs=0,  # Disable validation in smoke test for speed
             save_best=False,
+        ),
+        augmentation=AugmentationSettings(
+            horizontal_flip_prob=0.5,  # Enable horizontal flip in smoke test
+            vertical_flip_prob=0.0,
+            rotation_prob=0.0,
+            rotation_max_angle=15.0,
+            color_augmentation_prob=0.0,
+            color_jitter_strength=0.1,
+            swap_frames_prob=0.0,
         ),
         smoke_test=False,  # Already applied by caller
     )
