@@ -178,9 +178,9 @@ def compute_window_attention_losses(
         raise ValueError(f"Width {W} not divisible by window_size {window_size}")
 
     # Validate shapes match
-    assert (
-        emb2.shape == emb1.shape
-    ), f"emb2 shape {emb2.shape} != emb1 shape {emb1.shape}"
+    assert emb2.shape == emb1.shape, (
+        f"emb2 shape {emb2.shape} != emb1 shape {emb1.shape}"
+    )
 
     # Split into windows
     grid = WindowGrid(window_size=window_size)
@@ -281,11 +281,9 @@ def compute_hierarchical_entropy_loss(
 
     Phase 2 Deep Supervision:
     1. Crops each level to grid-aligned dimensions
-    2. Applies L2 normalization and temperature scaling per level
-    3. Computes self + cross entropy loss per level
-    4. Normalizes entropy by theoretical maximum (log of window size squared)
-    5. Applies level-weighted loss (coarser levels get higher weight)
-    6. Sums weighted per-level losses for final compound loss
+    2. Calls compute_window_attention_losses for each level
+    3. Applies level-weighted loss (coarser levels get higher weight)
+    4. Sums weighted per-level losses for final compound loss
 
     Level weighting: level_i_weight = level_weight_decay^i
     Default (1.0) gives uniform weighting across all levels.
@@ -323,8 +321,6 @@ def compute_hierarchical_entropy_loss(
     level_self_entropy = []
     level_cross_entropy = []
 
-    max_entropy = jnp.log(window_size * window_size)
-
     for level_idx in range(num_levels):
         level_weight = level_weight_decay**level_idx
 
@@ -345,70 +341,31 @@ def compute_hierarchical_entropy_loss(
                 f"Level {level_idx}: Cropped dimensions ({H}x{W}) too small for window_size {window_size}"
             )
 
-        # Split into windows
-        grid = WindowGrid(window_size=window_size)
-        windows1 = grid.split(emb1_cropped)
-        windows2 = grid.split(emb2_cropped)
-
-        # Flatten batch and windows
-        num_windows = num_windows_h * num_windows_w
-        flat_windows1 = windows1.reshape(B * num_windows, window_size, window_size, D)
-        flat_windows2 = windows2.reshape(B * num_windows, window_size, window_size, D)
-
-        # Compute core losses
-        self_result = self_attention_entropy_loss(
-            flat_windows1,
-            temperature=temperature,
-            return_attention_weights=return_attention_weights,
-        )
-        cross_result = cross_attention_entropy_loss(
-            flat_windows1,
-            flat_windows2,
+        # Delegate to single-level loss function
+        level_loss, level_aux = compute_window_attention_losses(
+            emb1_cropped,
+            emb2_cropped,
+            window_size=window_size,
+            lambda_entropy=lambda_entropy,
             temperature=temperature,
             return_attention_weights=return_attention_weights,
         )
 
-        # Extract loss and aux data
-        self_aux = None
-        cross_aux = None
-        if return_attention_weights:
-            self_loss_flat, self_aux = self_result
-            cross_loss_flat, cross_aux = cross_result
-        else:
-            self_loss_flat = self_result
-            cross_loss_flat = cross_result
-
-        # Reshape back to spatial grid
-        def reshape_to_grid(loss_flat):
-            loss = loss_flat.reshape(B, num_windows, window_size, window_size)
-            loss = loss.reshape(
-                B, num_windows_h, num_windows_w, window_size, window_size
-            )
-            loss = loss.transpose(0, 1, 3, 2, 4)
-            return loss.reshape(B, H, W)
-
-        # Mean and normalize
-        self_loss_level = reshape_to_grid(self_loss_flat).mean() / max_entropy
-        cross_loss_level = reshape_to_grid(cross_loss_flat).mean() / max_entropy
-
-        # Per-level combined loss
-        level_loss_unweighted = (
-            1 - lambda_entropy
-        ) * self_loss_level + lambda_entropy * cross_loss_level
-        level_loss_weighted = level_loss_unweighted * level_weight
+        # Apply level weight
+        level_loss_weighted = level_loss * level_weight
 
         level_losses.append(level_loss_weighted)
         level_weights.append(level_weight)
-        total_self_loss += self_loss_level * level_weight
-        total_cross_loss += cross_loss_level * level_weight
+        total_self_loss += level_aux["self_loss"] * level_weight
+        total_cross_loss += level_aux["cross_loss"] * level_weight
         total_loss += level_loss_weighted
 
         # Aggregate aux data
-        if return_attention_weights and self_aux is not None and cross_aux is not None:
-            level_self_attn.append(self_aux["attention_weights"])
-            level_cross_attn.append(cross_aux["attention_weights"])
-            level_self_entropy.append(self_aux["entropy_map"])
-            level_cross_entropy.append(cross_aux["entropy_map"])
+        if return_attention_weights:
+            level_self_attn.append(level_aux["self_attention_weights"])
+            level_cross_attn.append(level_aux["cross_attention_weights"])
+            level_self_entropy.append(level_aux["self_entropy_maps"])
+            level_cross_entropy.append(level_aux["cross_entropy_maps"])
 
     # Normalize by total weight
     total_weight = sum(level_weights)
