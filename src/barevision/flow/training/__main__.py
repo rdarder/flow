@@ -82,7 +82,6 @@ def train_step(
             level_weight_decay=model_settings.level_weight_decay,
             recon_weight=model_settings.recon_weight,
             entropy_temperature=model_settings.entropy_temperature,
-            return_attention_weights=return_aux,
         )
 
         # Build aux structure
@@ -154,7 +153,6 @@ def validation_step(
         level_weight_decay=model_settings.level_weight_decay,
         recon_weight=model_settings.recon_weight,
         entropy_temperature=model_settings.entropy_temperature,
-        return_attention_weights=False,
     )
 
     return loss

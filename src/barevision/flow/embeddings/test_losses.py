@@ -20,22 +20,26 @@ class TestSelfAttentionEntropyLossCore:
     def test_output_shape(self):
         """Test that output shape matches input spatial dimensions."""
         windows = jr.normal(jr.PRNGKey(0), (2, 16, 16, 16))  # (B, H, W, D)
-        loss = self_attention_entropy_loss(windows, temperature=1.0)
+        loss, aux = self_attention_entropy_loss(windows, temperature=1.0)
 
         assert loss.shape == (2, 16, 16), f"Expected (2, 16, 16), got {loss.shape}"
+        assert "attention_weights" in aux
+        assert "entropy_map" in aux
 
     def test_finite_values(self):
         """Test that all values are finite."""
         windows = jr.normal(jr.PRNGKey(0), (4, 16, 16, 16))
-        loss = self_attention_entropy_loss(windows, temperature=1.0)
+        loss, aux = self_attention_entropy_loss(windows, temperature=1.0)
 
         assert jnp.isfinite(loss).all(), "Loss contains NaN/Inf"
+        assert jnp.isfinite(aux["attention_weights"]).all()
 
     def test_gradient_flow(self):
         """Test that gradients flow."""
 
         def loss_fn(w):
-            return self_attention_entropy_loss(w, temperature=1.0).mean()
+            loss, _ = self_attention_entropy_loss(w, temperature=1.0)
+            return loss.mean()
 
         windows = jr.normal(jr.PRNGKey(0), (2, 16, 16, 16))
         grad = jax.grad(loss_fn)(windows)
@@ -52,23 +56,25 @@ class TestCrossAttentionEntropyLossCore:
         """Test that output shape matches input spatial dimensions."""
         windows1 = jr.normal(jr.PRNGKey(0), (2, 16, 16, 16))
         windows2 = jr.normal(jr.PRNGKey(1), (2, 16, 16, 16))
-        loss = cross_attention_entropy_loss(windows1, windows2, temperature=1.0)
+        loss, aux = cross_attention_entropy_loss(windows1, windows2, temperature=1.0)
 
         assert loss.shape == (2, 16, 16)
+        assert "attention_weights" in aux
 
     def test_finite_values(self):
         """Test that all values are finite."""
         windows1 = jr.normal(jr.PRNGKey(0), (4, 16, 16, 16))
         windows2 = jr.normal(jr.PRNGKey(1), (4, 16, 16, 16))
-        loss = cross_attention_entropy_loss(windows1, windows2, temperature=1.0)
+        loss, aux = cross_attention_entropy_loss(windows1, windows2, temperature=1.0)
 
         assert jnp.isfinite(loss).all()
+        assert jnp.isfinite(aux["attention_weights"]).all()
 
     def test_positive_entropy(self):
         """Cross-attention entropy is always non-negative."""
         windows1 = jr.normal(jr.PRNGKey(0), (2, 16, 16, 16))
         windows2 = jr.normal(jr.PRNGKey(1), (2, 16, 16, 16))
-        loss = cross_attention_entropy_loss(windows1, windows2, temperature=1.0)
+        loss, aux = cross_attention_entropy_loss(windows1, windows2, temperature=1.0)
 
         assert (loss >= 0).all()
 
@@ -76,7 +82,8 @@ class TestCrossAttentionEntropyLossCore:
         """Test that gradients flow through both inputs."""
 
         def loss_fn(w1, w2):
-            return cross_attention_entropy_loss(w1, w2, temperature=1.0).mean()
+            loss, _ = cross_attention_entropy_loss(w1, w2, temperature=1.0)
+            return loss.mean()
 
         windows1 = jr.normal(jr.PRNGKey(0), (2, 16, 16, 16))
         windows2 = jr.normal(jr.PRNGKey(1), (2, 16, 16, 16))
