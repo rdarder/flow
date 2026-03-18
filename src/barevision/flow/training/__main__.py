@@ -12,8 +12,6 @@ from barevision.flow.training.losses import compute_loss
 from barevision.flow.embeddings.model import count_parameters
 from barevision.flow.logging_utils import (
     log_progress,
-    log_diagnostics,
-    log_metrics,
     print_footer,
     print_header,
 )
@@ -22,7 +20,7 @@ from barevision.flow.settings import (
     Settings,
     create_smoke_test_settings,
 )
-from barevision.flow.video_dataset import create_dataloader
+from barevision.flow.dataset.video_dataset import create_dataloader
 from barevision.flow.training.visualization import log_visualizations
 from barevision.flow.checkpoint_utils import (
     generate_run_name,

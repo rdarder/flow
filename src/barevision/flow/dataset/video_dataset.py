@@ -264,7 +264,7 @@ def create_dataloader(
     Yields:
         Tuple of (img1_batch, img2_batch, metadata_batch)
     """
-    from barevision.flow.augmentations import compose_augmentations
+    from barevision.flow.dataset.augmentations import compose_augmentations
 
     dataset = VideoFrameDataset(
         split=split,

@@ -3,9 +3,8 @@
 import random
 
 import numpy as np
-import pytest
 
-from barevision.flow.augmentations import (
+from barevision.flow.dataset.augmentations import (
     apply_horizontal_flip,
     apply_vertical_flip,
     apply_rotation,
