@@ -284,11 +284,14 @@ class CheckpointSettings:
         location: Base directory for checkpoints (default "checkpoints")
                   Final path will be {location}/{run_name}/
         save_final: Whether to save a final checkpoint when training completes
+        resume_from: Path to checkpoint to resume training from (optional)
+                     If provided, loads model weights and continues from saved step
     """
 
     every_steps: int = 100
     location: str = "checkpoints"
     save_final: bool = True
+    resume_from: str = ""  # Empty string = no resume
 
     def __post_init__(self):
         if self.every_steps < 0:

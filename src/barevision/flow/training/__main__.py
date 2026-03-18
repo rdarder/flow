@@ -2,6 +2,7 @@
 
 import time
 from functools import partial
+from pathlib import Path
 
 import optax
 import tyro
@@ -24,6 +25,7 @@ from barevision.flow.dataset.video_dataset import create_dataloader
 from barevision.flow.training.visualization import log_visualizations
 from barevision.flow.checkpoint_utils import (
     generate_run_name,
+    restore_model_from_checkpoint,
     save_checkpoint,
     save_best_checkpoint,
 )
@@ -327,6 +329,23 @@ def train(settings: Settings):
         wrt=nnx.Param,
     )
 
+    # Resume from checkpoint if requested
+    if settings.checkpoint.resume_from:
+        resume_path = Path(settings.checkpoint.resume_from)
+        if not resume_path.exists():
+            raise FileNotFoundError(f"Checkpoint not found: {resume_path}")
+
+        print(f"\nResuming from checkpoint: {resume_path}")
+        loaded_step = restore_model_from_checkpoint(resume_path, model)
+        print(f"Restored model from step {loaded_step}")
+
+        # Note: This is a simplified resume - we don't restore optimizer state
+        # For production use, you'd want to save/restore optimizer state too
+        global_step = loaded_step
+        print(f"Continuing training from step {global_step}\n")
+    else:
+        global_step = 0
+
     # Count parameters
     total_params = count_parameters(model)
     embed_params = count_parameters(model.embedding_model)
@@ -335,7 +354,6 @@ def train(settings: Settings):
     print(f"Flow estimator parameters: {flow_params}")
     print(f"Total parameters: {total_params}\n")
 
-    global_step = 0
     best_val_loss = float("inf")
     best_val_step = 0
 
