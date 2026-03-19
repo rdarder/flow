@@ -9,11 +9,12 @@ This document maps concepts to source files. It tells you **what is where**, not
 | Concept | Primary File | What's There |
 |---------|-------------|--------------|
 | Embedding Pyramid | `embeddings/model.py` | `StemBlock`, `StandardBlock`, `HierarchicalEmbeddingModel` |
-| Entropy Loss | `embeddings/losses.py` | Self/cross attention loss, hierarchical aggregation |
-| Feature Matching | `matching/model.py` | `FlowEstimator`, `AttentionCentroids`, centroid-based flow prediction |
-| Reconstruction Loss | `matching/losses.py` | `warp_embeddings`, `reconstruction_loss_core` |
-| Training Orchestrator | `training/model.py` | `Model` (combines embeddings + matching) |
-| Combined Loss | `training/losses.py` | `compute_loss` (entropy + reconstruction) |
+| Entropy Loss | `embeddings/losses.py` | Self/cross attention loss, hierarchical aggregation, `crop_to_grid_aligned` |
+| Level Flow Estimator | `matching/model.py` | `LevelFlowEstimator` (MLP), `AttentionFeatures` (8 features) |
+| Hierarchical Flow | `matching/model.py` | `HierarchicalFlowEstimator` (orchestrates multi-level estimation) |
+| Reconstruction Loss | `matching/losses.py` | `warp_embeddings`, `reconstruction_loss_core`, `hierarchical_reconstruction_loss` |
+| Training Orchestrator | `training/model.py` | `Model` (combines embeddings + hierarchical flow) |
+| Combined Loss | `training/losses.py` | `compute_loss` (entropy + hierarchical reconstruction) |
 | Training Loop | `training/__main__.py` | `train_step`, `run_epoch`, `train` |
 | Visualization (Embeddings) | `embeddings/visualization.py` | Grid overlays, attention map figures |
 | Visualization (Matching) | `matching/visualization.py` | Flow colorwheel, arrow visualizations |
@@ -28,21 +29,22 @@ This document maps concepts to source files. It tells you **what is where**, not
 ```
 barevision/flow/
 ├── embeddings/           # Feature pyramid extraction
-│   ├── model.py         # HierarchicalEmbeddingModel
-│   ├── losses.py        # Entropy loss functions
-│   ├── visualization.py # Attention map figures
-│   ├── test_model.py
-│   └── test_losses.py
+│   ├── model.py         # HierarchicalEmbeddingModel (StemBlock, StandardBlock)
+│   ├── losses.py        # Entropy loss functions, crop_to_grid_aligned
+│   ├── visualization.py # Attention map figures, frame grid overlays
+│   ├── test_model.py    # Tests for embedding model
+│   └── test_losses.py   # Tests for entropy loss
 │
 ├── matching/             # Attention-based feature matching
-│   ├── model.py         # FlowEstimator, AttentionCentroids
-│   ├── losses.py        # Warp + reconstruction loss
-│   ├── visualization.py # Flow field visualizations
-│   └── test_model.py
+│   ├── model.py         # LevelFlowEstimator (MLP), HierarchicalFlowEstimator, AttentionFeatures
+│   ├── losses.py        # Warp + reconstruction loss (single-level and hierarchical)
+│   ├── visualization.py # Flow colorwheel, arrow visualizations
+│   ├── test_model.py    # Tests for LevelFlowEstimator and attention features
+│   └── test_hierarchical_model.py  # Tests for HierarchicalFlowEstimator
 │
 ├── training/             # Combined training orchestration
-│   ├── model.py         # Model (embeddings + matching)
-│   ├── losses.py        # Combined loss function
+│   ├── model.py         # Model (embeddings + HierarchicalFlowEstimator)
+│   ├── losses.py        # Combined loss function (entropy + hierarchical reconstruction)
 │   ├── visualization.py # Orchestrates visualization + window extraction helpers
 │   └── __main__.py      # Entry point: python -m barevision.flow.training
 │
@@ -84,7 +86,20 @@ barevision/flow/
 
 **`model.py`** — Attention-based feature matching.
 - `AttentionFeatures`: Computes 8 spatial and confidence features from attention maps
-- `FlowEstimator`: MLP predicting flow from attention features (8→32→32→32→2)
+  - self_relative (2): centroid offset from source
+  - cross_relative (2): flow vector
+  - cross_absolute (2): boundary context
+  - self_max_peak, cross_max_peak (2): confidence signals
+- `LevelFlowEstimator`: MLP predicting flow from features (8→16→16→2)
+  - 2 hidden layers with ReLU, 16-dim default
+  - Output bounded to [-0.5, 0.5] via tanh
+  - No output bias for centered initialization
+- `HierarchicalFlowEstimator`: Orchestrates multi-level flow estimation
+  - Runs LevelFlowEstimator at each pyramid level (V1: independent)
+  - Crops embeddings to grid-aligned dimensions (centered crop)
+  - Splits into 16×16 windows for processing
+  - Returns list of flow fields, one per level
+  - V2: Will add window shifting and priors
 - `create_source_position_grid`: Normalized coordinate grid
 - `flow_to_dense`: Reshape flow from token to spatial format
 - Read this for matching architecture changes.
@@ -92,6 +107,10 @@ barevision/flow/
 **`losses.py`** — Reconstruction objective.
 - `warp_embeddings`: Backward warp embeddings using flow field
 - `reconstruction_loss_core`: L2 distance between warped and target embeddings
+- `hierarchical_reconstruction_loss`: Multi-level reconstruction loss
+  - Crops each level to grid-aligned dimensions
+  - Warps embeddings at each level using level-specific flow
+  - Averages loss across all levels
 - Read this for reconstruction loss changes.
 
 **`visualization.py`** — Flow diagnostics.
@@ -102,22 +121,29 @@ barevision/flow/
 ### Training Package (`training/`)
 
 **`model.py`** — Combined model orchestrator.
-- `Model`: Combines `HierarchicalEmbeddingModel` + `FlowEstimator`
-- Single forward pass returns `(flow, pyramid1, pyramid2)`
+- `Model`: Combines `HierarchicalEmbeddingModel` + `HierarchicalFlowEstimator`
+- Single forward pass returns `(flows, pyramid1, pyramid2)`
+  - flows: List of flow fields, one per pyramid level
+  - pyramid1, pyramid2: Embedding lists from both frames
 - `extract_embeddings`: Convenience method for embedding-only use
 - Read this for model integration changes.
 
 **`losses.py`** — Combined training objective.
-- `compute_loss`: Combines entropy + reconstruction loss
+- `compute_loss`: Combines entropy + hierarchical reconstruction loss
 - `total = entropy_loss + recon_weight * reconstruction_loss`
 - Entropy is primary (distinctive embeddings), reconstruction is secondary (trackable)
+- Reconstruction loss computed across all pyramid levels
+- Returns aux dict with per-level losses for logging
 - Read this for loss weighting changes.
 
 **`visualization.py`** — Training visualization orchestrator.
 - `log_visualizations`: Calls both embeddings + matching visualization
-- Logs flow colorwheel/arrows + attention maps per pyramid level
-- `_extract_window_attention_data`: Helper for extracting window attention (internal)
-- `_extract_pixel_attention_maps`: Helper for pixel extraction (internal)
+- Logs per-level:
+  - Flow colorwheel and arrows (`Level0/flow_colorwheel`, `Level0/flow_arrows`, etc.)
+  - Frame grid overlays (`Level0/Frame_Grid`)
+  - Attention maps (`Level0/Attention_Maps`)
+- Grid overlay uses centered crop to match actual processing
+- Bright white grid lines at pixel edges for visibility
 - Called every N steps, not in training loss path
 - Diagnostic only. Safe to modify without affecting training.
 
@@ -215,8 +241,10 @@ Split is configured via `--dataset.seed` (default: 42).
 
 **`../utils/grid.py`** — Spatial operations.
 - `WindowGrid`: Split/stitch embeddings into 16×16 windows
-- `compute_valid_resolution`, `validate_resolution`: Shape helpers
-- Used by `embeddings/losses.py` for window splitting.
+  - Core utility for window-based processing
+  - Used by embeddings and matching packages
+- Dead code removed: `compute_valid_resolution`, `validate_resolution`, `crop_to_valid`, etc.
+  - These were only used in tests and have been superseded
 
 **`../utils/path.py`** — Path helpers.
 - `get_datasets_dir`: Project datasets directory resolver

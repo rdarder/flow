@@ -42,17 +42,26 @@ This means the finer levels (Level 0 and Level 1) physically cover a wider field
 
 ---
 
-## 2. Flow Estimation Pipeline (Partially Implemented)
+## 2. Flow Estimation Pipeline (V1 Implemented)
 
-The flow estimation components are implemented but the full hierarchical cascading inference pipeline is still under development. The reconstruction loss is already integrated into training.
+The flow estimation pipeline is fully implemented with hierarchical multi-level flow estimation. The system estimates flow independently at each pyramid level and uses reconstruction loss across all levels for training.
 
-### Hierarchical Cascading and Window Shifting
+### Hierarchical Flow Estimation (V1)
 
-**Design:** At the coarsest level (Level 2), the network estimates the macro-flow of the scene. This median flow vector is upscaled and passed as a prior to the next finer level (Level 1).
+**Architecture:** The flow estimator operates at all pyramid levels simultaneously:
 
-To cancel out global/ego-motion, Frame 2's attention window at Level 1 is physically shifted by this prior to re-center the target object. **This is where the spatial buffer from Part 1 is utilized:** Because Level 1 ingested a wider field of view without artificial padding, we have the valid, uncorrupted feature context required to safely slide this shifted window without falling off the edge of the image tensor.
+1. **Per-Level Processing:** Each level's embeddings are split into 16×16 windows
+2. **Independent Estimation:** A dedicated MLP predicts flow for each window
+3. **Multi-Level Loss:** Reconstruction loss computed at each level, averaged across levels
 
-**Current status:** The FlowEstimator MLP and reconstruction loss are implemented. The full hierarchical cascading inference (passing priors down the pyramid with window shifting) is planned for future implementation.
+**Spatial Buffer Utilization:** The centered crop strategy (from VALID padding) provides symmetric buffer space on all sides:
+- Level 0: 79×79 → 64×64 (7-8 pixels buffer per side)
+- Level 1: 37×37 → 32×32 (2-3 pixels buffer per side)
+- Level 2: 16×16 → 16×16 (no crop needed)
+
+This buffer is essential for V2 window shifting, which will use coarse-level flow to shift finer-level windows.
+
+**Current status (V1):** Independent estimation at all levels without priors or shifting. Full cascading with window shifting planned for V2.
 
 ### The Constellation & Centroids
 
@@ -73,8 +82,6 @@ When a feature moves near the edge of a 16x16 window, the boundary physically tr
 
 ### Solution: The Flow Estimator
 
-### Solution: The Flow Estimator
-
 Instead of utilizing explicit mathematical geometry to correct boundary clipping, the pipeline employs a small, per-embedding MLP to statistically predict the local residual flow based on cheap spatial features.
 
 For every embedding, the following 8-float feature vector is computed:
@@ -85,11 +92,17 @@ For every embedding, the following 8-float feature vector is computed:
 4. **Self Max Peak (1 float):** Maximum attention weight in self-attention map. Indicates self-attention sharpness (confidence).
 5. **Cross Max Peak (1 float):** Maximum attention weight in cross-attention map. Indicates matching confidence.
 
-These 8 floats are passed through a 3-layer MLP (`Linear(8→32) → ReLU → Linear(32→32) → ReLU → Linear(32→32) → ReLU → Linear(32→2)`).
+These 8 floats are passed through a 2-layer MLP:
+```
+Linear(8 → 16) → ReLU → Linear(16 → 16) → ReLU → Linear(16 → 2, no bias) → tanh → scale
+```
+
 The network outputs two values:
 
 * **Residual U:** The local X displacement.
 * **Residual V:** The local Y displacement.
+
+Output is bounded to [-0.5, 0.5] in normalized coordinates (half-window maximum flow).
 
 *Note: The residual U and V outputs are continuous values that represent the full local flow of that specific embedding, which can span multiple pixels.*
 
@@ -98,6 +111,7 @@ The network outputs two values:
 * **Translation invariance:** By using relative centroids (offset from source), the same flow pattern produces identical features regardless of position in the window. This removes the need for absolute source position and reduces the learning burden.
 * **Boundary detection:** Cross-absolute centroid position provides context for detecting when flow approaches window edges, helping the model distinguish real flow from boundary clipping artifacts.
 * **Confidence signals:** Max peak values for both self and cross attention serve as confidence indicators, useful for downstream aggregation and detecting ambiguous matches.
+* **Conservative initialization:** Output layer uses small kernel weights (normal(0.02)) with no bias, starting with near-zero predictions and no direction preference.
 
 *Note: Prior features such as Prior Flow (from coarser levels), Quadrant Masses, and explicit Confidence output are deferred for future implementation once this baseline is validated.*
 
@@ -112,7 +126,7 @@ At each level, the predicted residual flows are aggregated across the entire ima
 The model is trained end-to-end using a dual objective that balances structural distinctness with accurate tracking:
 
 1. **Entropy Minimization Loss:** Applied to attention maps at all pyramid levels (Self and Cross). This regularizer prevents embeddings from collapsing into trivial, perfectly smooth solutions. It forces embeddings to remain locally unique and visually distinct.
-2. **Reconstruction Loss (Latent Space):** The network uses the estimated flow field to warp Frame 1 embeddings and minimizes the L2 distance between warped Frame 1 embeddings and Frame 2 embeddings. This ensures features are trackable across frames.
+2. **Reconstruction Loss (Latent Space, Hierarchical):** The network uses the estimated flow field at each pyramid level to warp Frame 1 embeddings and minimizes the L2 distance between warped Frame 1 embeddings and Frame 2 embeddings. This ensures features are trackable across frames.
 
 **Loss combination:**
 ```
@@ -120,17 +134,24 @@ total_loss = entropy_loss + recon_weight * reconstruction_loss
 ```
 
 Where:
-- `entropy_loss`: Primary objective ensuring distinctive embeddings
-- `reconstruction_loss`: Secondary objective ensuring embeddings are trackable  
+- `entropy_loss`: Primary objective ensuring distinctive embeddings (computed hierarchically)
+- `reconstruction_loss`: Secondary objective ensuring embeddings are trackable (averaged across levels)
 - `recon_weight`: Controls relative importance (default: 0.1)
 
 This formulation treats entropy as the foundation (without distinctive embeddings, flow is ambiguous) and reconstruction as a grounding signal (ensuring distinctive features actually correspond across frames).
+
+**Reconstruction loss details (V1):**
+- Computed independently at each pyramid level
+- Each level's embeddings cropped to grid-aligned dimensions (centered crop)
+- Flow at each level used to warp that level's Frame 1 embeddings
+- L2 distance computed between warped and Frame 2 embeddings
+- Loss averaged across all levels for training
 
 **Entropy loss details:**
 - Computed per 16×16 window at each pyramid level
 - Normalized by theoretical maximum `log(window_size²)` to [0, 1] range
 - Aggregated across levels with configurable weighting (default: uniform per-pixel)
-- Temperature scaling (default: 0.2) controls softmax sharpness
+- Temperature scaling (default: 1.0) controls softmax sharpness
 
 By optimizing both simultaneously, the embedding engine learns features that are specifically optimized to be trackable, while entropy loss guarantees those features remain sharply grounded in visual structure.
 
