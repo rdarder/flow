@@ -416,10 +416,10 @@ def _validate_smoke_test_visualizations(log_dir: str):
 
         image_tags = ea.Tags().get("images", [])
 
-        # Expected visualization tags
+        # Expected visualization tags (grouped by level)
         expected_tags = [
-            "Flow/Predicted_Colorwheel",
-            "Flow/Predicted_Arrows",
+            "Level0/flow_colorwheel",
+            "Level0/flow_arrows",
             "Level0/Frame_Grid",
             "Level0/Attention_Maps",
         ]

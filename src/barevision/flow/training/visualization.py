@@ -63,9 +63,7 @@ def log_visualizations(
 
             # Colorwheel visualization with adaptive scaling for better contrast
             flow_rgb = flow_to_colorwheel(flow_viz, max_flow=0.3, adaptive=True)
-            logger.log_image(
-                f"Flow/Level{level_idx}_Predicted_Colorwheel", flow_rgb, step
-            )
+            logger.log_image(f"Level{level_idx}/flow_colorwheel", flow_rgb, step)
 
             # Arrow visualization
             arrows_rgb = flow_to_arrows(
@@ -74,9 +72,7 @@ def log_visualizations(
                 window_size=window_size,
                 grid_density=window_size,
             )
-            logger.log_image(
-                f"Flow/Level{level_idx}_Predicted_Arrows", arrows_rgb, step
-            )
+            logger.log_image(f"Level{level_idx}/flow_arrows", arrows_rgb, step)
 
     # Log visualizations for each pyramid level
     for level_idx in range(num_levels):
