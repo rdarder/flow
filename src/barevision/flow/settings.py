@@ -36,26 +36,6 @@ class DatasetSettings:
     num_workers: int = 4
     seed: int = 42  # Random seed for reproducibility
 
-    @property
-    def img_size(self) -> Tuple[int, int]:
-        """Calculate required input image size based on pyramid configuration.
-
-        Returns:
-            (height, width) tuple for input images
-        """
-        from barevision.flow.embeddings.model import calculate_required_input_size
-
-        # Target coarse dimension: grid_size × window_size
-        target_coarse_dim = self.coarse_grid_size * self.window_size
-
-        # Calculate required input size
-        input_size = calculate_required_input_size(
-            target_coarse_dim=target_coarse_dim,
-            num_levels=self.num_levels,
-        )
-
-        return (input_size, input_size)
-
     def __post_init__(self):
         if self.batch_size < 1:
             raise ValueError(f"batch_size must be >= 1, got {self.batch_size}")

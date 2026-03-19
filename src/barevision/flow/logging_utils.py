@@ -8,12 +8,13 @@ import time
 import jax.numpy as jnp
 import numpy as np
 
-from barevision.utils.logging import JaxLogger
-from barevision.utils.grid import WindowGrid
 from barevision.flow.embeddings.losses import (
     self_attention_entropy_loss,
     cross_attention_entropy_loss,
 )
+from barevision.utils import image
+from barevision.utils.grid import WindowGrid
+from barevision.utils.logging import JaxLogger
 
 
 def log_attention_statistics(
@@ -302,7 +303,12 @@ def print_header(settings):
     )
     print(f"Window size: {settings.model.window_size}×{settings.model.window_size}")
     print(f"Embedding dim: {settings.model.embed_dim}")
-    print(f"Input size: {settings.dataset.img_size}")
+    image_size = image.image_size(
+        settings.dataset.coarse_grid_size,
+        settings.dataset.window_size,
+        settings.dataset.num_levels,
+    )
+    print(f"Image size: {image_size}")
     print()
     print(f"Epochs: {settings.training.epochs}")
     print(f"Batch size: {settings.dataset.batch_size}")

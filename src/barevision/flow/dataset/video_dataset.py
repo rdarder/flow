@@ -18,6 +18,7 @@ import jax.random as jr
 import numpy as np
 from PIL import Image
 
+from barevision.utils import image
 from barevision.utils.path import get_datasets_dir
 
 
@@ -271,11 +272,16 @@ def create_dataloader(
     """
     from barevision.flow.dataset.augmentations import compose_augmentations
 
+    image_size = image.image_size(
+        dataset_settings.coarse_grid_size,
+        dataset_settings.window_size,
+        dataset_settings.num_levels,
+    )
     dataset = VideoFrameDataset(
         split=split,
         min_frame_distance=dataset_settings.min_frame_distance,
         max_frame_distance=dataset_settings.max_frame_distance,
-        img_size=dataset_settings.img_size,
+        img_size=image_size,
         seed=dataset_settings.seed,
     )
 

@@ -216,10 +216,6 @@ def _settings_to_config_dict(settings: Settings) -> Dict[str, Any]:
     """
     # Convert to dict
     config = asdict(settings)
-
-    # Add computed img_size for inference
-    config["dataset"]["img_size"] = settings.dataset.img_size
-
     return config
 
 

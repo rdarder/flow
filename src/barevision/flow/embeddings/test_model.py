@@ -10,7 +10,7 @@ from barevision.flow.embeddings.model import (
     StandardBlock,
     count_parameters,
 )
-from barevision.flow.embeddings.model import (
+from barevision.utils.image import (
     calculate_required_input_size,
     calculate_coarse_output_size,
 )
