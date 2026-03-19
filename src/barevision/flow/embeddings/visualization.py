@@ -60,19 +60,30 @@ def _add_grid_overlay(
         W: Image width in pixels (already cropped to grid-aligned)
         highlighted_window: (row, col) of window to highlight with colored border
     """
-    # Draw grid lines at pixel BOUNDARIES (not centers)
-    # Line at position i separates pixel i-1 from pixel i
+    # Draw grid lines at pixel EDGES, not centers.
+    # When imshow displays an H×W image, pixels are centered at (0, 1, 2, ... H-1)
+    # So pixel edges are at (-0.5, 0.5, 1.5, ... H-0.5)
+    # Grid lines should be at: -0.5, 15.5, 31.5, 47.5, 63.5 for 16-pixel windows
     # Use bright white for better visibility
-    for i in range(0, H + 1, window_size):
-        ax.axhline(i, color="white", linestyle="-", linewidth=1, alpha=0.8)
-    for j in range(0, W + 1, window_size):
-        ax.axvline(j, color="white", linestyle="-", linewidth=1, alpha=0.8)
+    for i in range(0, H, window_size):
+        line_pos = i - 0.5  # Edge of pixel i (not center)
+        ax.axhline(line_pos, color="white", linestyle="-", linewidth=1, alpha=0.8)
+
+    # Right and bottom borders
+    ax.axhline(H - 0.5, color="white", linestyle="-", linewidth=1, alpha=0.8)
+
+    for j in range(0, W, window_size):
+        line_pos = j - 0.5  # Edge of pixel j (not center)
+        ax.axvline(line_pos, color="white", linestyle="-", linewidth=1, alpha=0.8)
+
+    # Right and bottom borders
+    ax.axvline(W - 0.5, color="white", linestyle="-", linewidth=1, alpha=0.8)
 
     # Highlight specific window if requested
     if highlighted_window is not None:
         row, col = highlighted_window
-        y0 = row * window_size
-        x0 = col * window_size
+        y0 = row * window_size - 0.5  # Edge alignment
+        x0 = col * window_size - 0.5  # Edge alignment
 
         rect = Rectangle(
             (x0, y0),
