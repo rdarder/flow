@@ -144,21 +144,19 @@ class LevelFlowEstimator(nnx.Module):
         self.hidden_dim = hidden_dim
         self.max_flow = max_flow
 
-        # Three hidden layers for better capacity with richer features
+        # Two hidden layers: sufficient capacity for 8→2 mapping
+        # Simpler architecture reduces risk of overfitting per-window
         self.linear1 = nnx.Linear(8, hidden_dim, rngs=rngs)
         self.linear2 = nnx.Linear(hidden_dim, hidden_dim, rngs=rngs)
-        self.linear3 = nnx.Linear(hidden_dim, hidden_dim, rngs=rngs)
 
-        # Output layer: initialize with small weights to start with near-zero flow predictions
-        # This is a common pattern in residual networks - start conservative and learn the signal
-        # Using normal(0.02) keeps initial outputs small while maintaining gradient flow
-        # Zero bias ensures no systematic direction bias at initialization
-        # The tanh activation further bounds output to [-1, 1], scaled by max_flow
+        # Output layer: no bias since tanh output is centered at zero
+        # We want to start with no systematic direction preference
+        # Small kernel init keeps initial predictions near zero
         self.linear_out = nnx.Linear(
             hidden_dim,
             2,
+            use_bias=False,  # No bias: output centered at zero flow
             kernel_init=nnx.initializers.normal(0.02),
-            bias_init=nnx.initializers.zeros,
             rngs=rngs,
         )
 
@@ -171,15 +169,14 @@ class LevelFlowEstimator(nnx.Module):
         Returns:
             flow: (B, N, 2) predicted flow [u, v] in normalized coordinates, bounded to [-max_flow, max_flow]
         """
-        # Three hidden layers with ReLU activation
+        # Two hidden layers with ReLU activation
         x = self.linear1(features)
         x = nnx.relu(x)
         x = self.linear2(x)
         x = nnx.relu(x)
-        x = self.linear3(x)
-        x = nnx.relu(x)
 
         # Output layer with tanh activation and scaling
+        # No bias means output is centered at zero (no preferred direction)
         flow_raw = self.linear_out(x)
         flow = jnp.tanh(flow_raw) * self.max_flow
 

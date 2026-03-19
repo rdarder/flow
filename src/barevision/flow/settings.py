@@ -144,7 +144,7 @@ class ModelSettings:
     recon_weight: float = 0.1  # Reconstruction loss weight (entropy is primary)
     entropy_temperature: float = 1.0  # Fixed temperature for entropy loss
     flow_temperature: float = 0.3  # Temperature for flow estimation
-    flow_hidden_dim: int = 24  # Flow estimator hidden dimension
+    flow_hidden_dim: int = 16  # Flow estimator hidden dimension
 
     def __post_init__(self):
         if self.window_size < 1:
@@ -343,7 +343,7 @@ def create_smoke_test_settings() -> Settings:
             recon_weight=0.1,
             entropy_temperature=1.0,
             flow_temperature=0.3,
-            flow_hidden_dim=24,
+            flow_hidden_dim=16,
         ),
         training=TrainingSettings(
             epochs=1,

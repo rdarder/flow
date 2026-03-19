@@ -167,10 +167,9 @@ def test_flow_estimator_parameters():
 
     # Linear(8→32) = 8*32 + 32 = 288
     # Linear(32→32) = 32*32 + 32 = 1056
-    # Linear(32→32) = 32*32 + 32 = 1056
-    # Linear(32→2) = 32*2 + 2 = 66
-    # Total = 2466
-    expected_params = (8 * 32 + 32) + (32 * 32 + 32) + (32 * 32 + 32) + (32 * 2 + 2)
+    # Linear(32→2, no bias) = 32*2 = 64
+    # Total = 1408
+    expected_params = (8 * 32 + 32) + (32 * 32 + 32) + (32 * 2)
     assert params == expected_params, f"Expected {expected_params} params, got {params}"
     print(f"✓ FlowEstimator parameters: {params}")
 
