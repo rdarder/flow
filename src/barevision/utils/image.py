@@ -39,3 +39,5 @@ def image_size(coarsest_grid_size: int, window_size: int, levels: int):
         target_coarse_dim=target_coarse_dim,
         num_levels=levels,
     )
+    return input_size, input_size
+

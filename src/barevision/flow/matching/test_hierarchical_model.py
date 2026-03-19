@@ -50,9 +50,9 @@ def test_hierarchical_flow_estimator_shape():
 
     assert len(flows) == num_levels
     for i, (flow, expected) in enumerate(zip(flows, expected_shapes)):
-        assert flow.shape == expected, (
-            f"Level {i}: expected {expected}, got {flow.shape}"
-        )
+        assert (
+            flow.shape == expected
+        ), f"Level {i}: expected {expected}, got {flow.shape}"
 
     print(f"✓ HierarchicalFlowEstimator shapes: {[f.shape for f in flows]}")
 

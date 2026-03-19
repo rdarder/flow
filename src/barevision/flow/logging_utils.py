@@ -12,6 +12,7 @@ from barevision.flow.embeddings.losses import (
     self_attention_entropy_loss,
     cross_attention_entropy_loss,
 )
+from barevision.flow.settings import LoggingSettings
 from barevision.utils import image
 from barevision.utils.grid import WindowGrid
 from barevision.utils.logging import JaxLogger
@@ -315,3 +316,10 @@ def print_header(settings):
     if settings.dataset.max_samples > 0:
         print(f"Max samples per epoch: {settings.dataset.max_samples}")
     print()
+
+
+def should_log_something(settings: LoggingSettings, step: int):
+    return (
+        step % settings.log_visualizations_every_steps == 0
+        or step % settings.log_every_steps == 0
+    )

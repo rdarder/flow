@@ -163,9 +163,9 @@ def compute_window_attention_losses(
         raise ValueError(f"Width {W} not divisible by window_size {window_size}")
 
     # Validate shapes match
-    assert emb2.shape == emb1.shape, (
-        f"emb2 shape {emb2.shape} != emb1 shape {emb1.shape}"
-    )
+    assert (
+        emb2.shape == emb1.shape
+    ), f"emb2 shape {emb2.shape} != emb1 shape {emb1.shape}"
 
     # Split into windows
     grid = WindowGrid(window_size=window_size)

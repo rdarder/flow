@@ -16,7 +16,7 @@ Training with only small motions (e.g., `max_frame_distance=2`) causes the model
 Train with very low reconstruction weight so embeddings learn to be distinctive without interference from noisy flow predictions:
 
 ```bash
-python -m barevision.flow.training \
+python -m barevision.flow.joint.training \
     --dataset.min_frame_distance=1 \
     --dataset.max_frame_distance=5 \
     --model.recon_weight=0.01 \
@@ -36,7 +36,7 @@ python -m barevision.flow.training \
 Resume from Phase 1's best checkpoint and train with larger motions and higher reconstruction weight:
 
 ```bash
-python -m barevision.flow.training \
+python -m barevision.flow.joint.training \
     --dataset.min_frame_distance=5 \
     --dataset.max_frame_distance=15 \
     --model.recon_weight=0.5 \
@@ -79,7 +79,7 @@ Watch TensorBoard for:
 
 ```bash
 # Phase 1: Embedding pre-training
-python -m barevision.flow.training \
+python -m barevision.flow.joint.training \
     --dataset.max_samples=1000 \
     --dataset.min_frame_distance=1 \
     --dataset.max_frame_distance=5 \
@@ -91,7 +91,7 @@ python -m barevision.flow.training \
 # Check TensorBoard, verify entropy loss is decreasing...
 
 # Phase 2: Large motion training
-python -m barevision.flow.training \
+python -m barevision.flow.joint.training \
     --dataset.max_samples=1000 \
     --dataset.min_frame_distance=5 \
     --dataset.max_frame_distance=15 \

@@ -6,7 +6,7 @@ embedding representations optimized for attention-based matching.
 Subpackages:
 - embeddings: Hierarchical feature pyramid extraction
 - matching: Attention-based feature matching → flow prediction
-- training: Combined training orchestration (Model, losses)
+- joint: Joint training and orchestration (Model, losses)
 """
 
 from barevision.flow.embeddings.model import (
@@ -14,7 +14,7 @@ from barevision.flow.embeddings.model import (
     count_parameters,
 )
 from barevision.flow.embeddings.losses import compute_window_attention_losses
-from barevision.flow.training.model import Model as OpticalFlowModel
+from barevision.flow.joint.model import Model as OpticalFlowModel
 
 __version__ = "0.1.0"
 

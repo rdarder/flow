@@ -7,6 +7,8 @@ currently used by the training script.
 from dataclasses import dataclass
 from typing import Tuple
 
+from barevision.utils.checks import check_value
+
 
 @dataclass
 class DatasetSettings:
@@ -37,26 +39,30 @@ class DatasetSettings:
     seed: int = 42  # Random seed for reproducibility
 
     def __post_init__(self):
-        if self.batch_size < 1:
-            raise ValueError(f"batch_size must be >= 1, got {self.batch_size}")
-        if self.coarse_grid_size < 1:
-            raise ValueError(
-                f"coarse_grid_size must be >= 1, got {self.coarse_grid_size}"
-            )
-        if self.window_size < 1:
-            raise ValueError(f"window_size must be >= 1, got {self.window_size}")
-        if self.num_levels < 1:
-            raise ValueError(f"num_levels must be >= 1, got {self.num_levels}")
-        if self.min_frame_distance < 1:
-            raise ValueError(
-                f"min_frame_distance must be >= 1, got {self.min_frame_distance}"
-            )
-        if self.max_frame_distance < self.min_frame_distance:
-            raise ValueError(
-                f"max_frame_distance ({self.max_frame_distance}) must be >= min_frame_distance ({self.min_frame_distance})"
-            )
-        if self.num_workers < 0:
-            raise ValueError(f"num_workers must be >= 0, got {self.num_workers}")
+        check_value(
+            self.batch_size >= 1, f"batch_size must be >= 1, got {self.batch_size}"
+        )
+        check_value(
+            self.coarse_grid_size >= 1,
+            f"coarse_grid_size must be >= 1, got {self.coarse_grid_size}",
+        )
+        check_value(
+            self.window_size >= 1, f"window_size must be >= 1, got {self.window_size}"
+        )
+        check_value(
+            self.num_levels >= 1, f"num_levels must be >= 1, got {self.num_levels}"
+        )
+        check_value(
+            self.min_frame_distance >= 1,
+            f"min_frame_distance must be >= 1, got {self.min_frame_distance}",
+        )
+        check_value(
+            self.max_frame_distance >= self.min_frame_distance,
+            f"max_frame_distance ({self.max_frame_distance}) must be >= min_frame_distance ({self.min_frame_distance})",
+        )
+        check_value(
+            self.num_workers >= 0, f"num_workers must be >= 0, got {self.num_workers}"
+        )
 
 
 @dataclass
@@ -76,21 +82,14 @@ class LoggingSettings:
     log_visualizations_every_steps: int = 20
 
     def __post_init__(self):
-        if not self.log_dir:
-            raise ValueError("log_dir cannot be empty")
-        if self.log_every_steps < 1:
-            raise ValueError(
-                f"log_every_steps must be >= 1, got {self.log_every_steps}"
-            )
-        if self.log_visualizations_every_steps < 1:
-            raise ValueError(
-                f"log_visualizations_every_steps must be >= 1, got {self.log_visualizations_every_steps}"
-            )
-
-    def should_log_something(self, step: int):
-        return (
-            step % self.log_visualizations_every_steps == 0
-            or step % self.log_every_steps == 0
+        check_value(self.log_dir, "log_dir cannot be empty")
+        check_value(
+            self.log_every_steps >= 1,
+            f"log_every_steps must be >= 1, got {self.log_every_steps}",
+        )
+        check_value(
+            self.log_visualizations_every_steps >= 1,
+            f"log_visualizations_every_steps must be >= 1, got {self.log_visualizations_every_steps}",
         )
 
 
@@ -127,34 +126,39 @@ class ModelSettings:
     flow_hidden_dim: int = 16  # Flow estimator hidden dimension
 
     def __post_init__(self):
-        if self.window_size < 1:
-            raise ValueError(f"window_size must be >= 1, got {self.window_size}")
-        if self.num_levels < 1:
-            raise ValueError(f"num_levels must be >= 1, got {self.num_levels}")
-        if self.embed_dim < 1:
-            raise ValueError(f"embed_dim must be >= 1, got {self.embed_dim}")
-        if self.level_weight_decay < 0:
-            raise ValueError(
-                f"level_weight_decay must be >= 0, got {self.level_weight_decay}"
-            )
-        if not 0 <= self.lambda_entropy <= 1:
-            raise ValueError(
-                f"lambda_entropy must be in [0, 1], got {self.lambda_entropy}"
-            )
-        if self.recon_weight < 0:
-            raise ValueError(f"recon_weight must be >= 0, got {self.recon_weight}")
-        if self.entropy_temperature <= 0:
-            raise ValueError(
-                f"entropy_temperature must be > 0, got {self.entropy_temperature}"
-            )
-        if self.flow_temperature <= 0:
-            raise ValueError(
-                f"flow_temperature must be > 0, got {self.flow_temperature}"
-            )
-        if self.flow_hidden_dim < 1:
-            raise ValueError(
-                f"flow_hidden_dim must be >= 1, got {self.flow_hidden_dim}"
-            )
+        check_value(
+            self.window_size >= 1, f"window_size must be >= 1, got {self.window_size}"
+        )
+        check_value(
+            self.num_levels >= 1, f"num_levels must be >= 1, got {self.num_levels}"
+        )
+        check_value(
+            self.embed_dim >= 1, f"embed_dim must be >= 1, got {self.embed_dim}"
+        )
+        check_value(
+            self.level_weight_decay >= 0,
+            f"level_weight_decay must be >= 0, got {self.level_weight_decay}",
+        )
+        check_value(
+            0 <= self.lambda_entropy <= 1,
+            f"lambda_entropy must be in [0, 1], got {self.lambda_entropy}",
+        )
+        check_value(
+            self.recon_weight >= 0,
+            f"recon_weight must be >= 0, got {self.recon_weight}",
+        )
+        check_value(
+            self.entropy_temperature > 0,
+            f"entropy_temperature must be > 0, got {self.entropy_temperature}",
+        )
+        check_value(
+            self.flow_temperature > 0,
+            f"flow_temperature must be > 0, got {self.flow_temperature}",
+        )
+        check_value(
+            self.flow_hidden_dim >= 1,
+            f"flow_hidden_dim must be >= 1, got {self.flow_hidden_dim}",
+        )
 
 
 @dataclass
@@ -172,12 +176,12 @@ class TrainingSettings:
     learning_rate: float = 1e-4
 
     def __post_init__(self):
-        if self.seed < 0:
-            raise ValueError(f"seed must be >= 0, got {self.seed}")
-        if self.epochs < 1:
-            raise ValueError(f"epochs must be >= 1, got {self.epochs}")
-        if self.learning_rate <= 0:
-            raise ValueError(f"learning_rate must be > 0, got {self.learning_rate}")
+        check_value(self.seed >= 0, f"seed must be >= 0, got {self.seed}")
+        check_value(self.epochs >= 1, f"epochs must be >= 1, got {self.epochs}")
+        check_value(
+            self.learning_rate > 0,
+            f"learning_rate must be > 0, got {self.learning_rate}",
+        )
 
 
 @dataclass
@@ -208,34 +212,34 @@ class AugmentationSettings:
     swap_frames_prob: float = 0.0
 
     def __post_init__(self):
-        if not 0 <= self.horizontal_flip_prob <= 1:
-            raise ValueError(
-                f"horizontal_flip_prob must be in [0, 1], got {self.horizontal_flip_prob}"
-            )
-        if not 0 <= self.vertical_flip_prob <= 1:
-            raise ValueError(
-                f"vertical_flip_prob must be in [0, 1], got {self.vertical_flip_prob}"
-            )
-        if not 0 <= self.rotation_prob <= 1:
-            raise ValueError(
-                f"rotation_prob must be in [0, 1], got {self.rotation_prob}"
-            )
-        if self.rotation_max_angle < 0:
-            raise ValueError(
-                f"rotation_max_angle must be >= 0, got {self.rotation_max_angle}"
-            )
-        if not 0 <= self.color_augmentation_prob <= 1:
-            raise ValueError(
-                f"color_augmentation_prob must be in [0, 1], got {self.color_augmentation_prob}"
-            )
-        if self.color_jitter_strength < 0:
-            raise ValueError(
-                f"color_jitter_strength must be >= 0, got {self.color_jitter_strength}"
-            )
-        if not 0 <= self.swap_frames_prob <= 1:
-            raise ValueError(
-                f"swap_frames_prob must be in [0, 1], got {self.swap_frames_prob}"
-            )
+        check_value(
+            0 <= self.horizontal_flip_prob <= 1,
+            f"horizontal_flip_prob must be in [0, 1], got {self.horizontal_flip_prob}",
+        )
+        check_value(
+            0 <= self.vertical_flip_prob <= 1,
+            f"vertical_flip_prob must be in [0, 1], got {self.vertical_flip_prob}",
+        )
+        check_value(
+            0 <= self.rotation_prob <= 1,
+            f"rotation_prob must be in [0, 1], got {self.rotation_prob}",
+        )
+        check_value(
+            self.rotation_max_angle >= 0,
+            f"rotation_max_angle must be >= 0, got {self.rotation_max_angle}",
+        )
+        check_value(
+            0 <= self.color_augmentation_prob <= 1,
+            f"color_augmentation_prob must be in [0, 1], got {self.color_augmentation_prob}",
+        )
+        check_value(
+            self.color_jitter_strength >= 0,
+            f"color_jitter_strength must be >= 0, got {self.color_jitter_strength}",
+        )
+        check_value(
+            0 <= self.swap_frames_prob <= 1,
+            f"swap_frames_prob must be in [0, 1], got {self.swap_frames_prob}",
+        )
 
 
 @dataclass
@@ -251,8 +255,10 @@ class ValidationSettings:
     save_best: bool = True
 
     def __post_init__(self):
-        if self.every_epochs < 0:
-            raise ValueError(f"every_epochs must be >= 0, got {self.every_epochs}")
+        check_value(
+            self.every_epochs >= 0,
+            f"every_epochs must be >= 0, got {self.every_epochs}",
+        )
 
 
 @dataclass
@@ -274,22 +280,16 @@ class CheckpointSettings:
     resume_from: str = ""  # Empty string = no resume
 
     def __post_init__(self):
-        if self.every_steps < 0:
-            raise ValueError(f"every_steps must be >= 0, got {self.every_steps}")
-        if not self.location:
-            raise ValueError("location cannot be empty")
+        check_value(
+            self.every_steps >= 0,
+            f"every_steps must be >= 0, got {self.every_steps}",
+        )
+        check_value(self.location, "location cannot be empty")
 
 
 @dataclass
 class Settings:
-    """Complete experiment configuration.
-
-    Passed as single parameter to training functions.
-    Uses tyro for CLI parsing with nested dataclass support.
-
-    Attributes:
-        smoke_test: Run minimal smoke test (overrides other settings for quick validation)
-    """
+    """The full settings used for joint the flow model."""
 
     dataset: DatasetSettings
     model: ModelSettings
@@ -299,59 +299,3 @@ class Settings:
     validation: ValidationSettings
     augmentation: AugmentationSettings
     smoke_test: bool = False
-
-
-def create_smoke_test_settings() -> Settings:
-    """Minimal settings for quick validation."""
-    return Settings(
-        dataset=DatasetSettings(
-            batch_size=1,  # Minimum for speed
-            coarse_grid_size=1,  # Phase 2: 1×1 grid at coarsest
-            window_size=16,
-            num_levels=3,  # 3 pyramid levels
-            min_frame_distance=1,  # Adjacent frames
-            max_frame_distance=5,  # Up to 5 frames apart for motion variety
-            max_samples=2,  # Only 2 samples for speed
-            num_workers=0,
-        ),
-        model=ModelSettings(
-            window_size=16,
-            num_levels=3,
-            embed_dim=16,
-            level_weight_decay=1.0,
-            lambda_entropy=0.5,
-            recon_weight=0.1,
-            entropy_temperature=1.0,
-            flow_temperature=0.3,
-            flow_hidden_dim=16,
-        ),
-        training=TrainingSettings(
-            epochs=1,
-            learning_rate=1e-4,
-        ),
-        logging=LoggingSettings(
-            log_dir="runs",
-            run_name_prefix="smoke_test",
-            log_every_steps=1,  # Log everything every step in smoke test
-            log_visualizations_every_steps=1,  # Log visualizations every step in smoke test
-        ),
-        checkpoint=CheckpointSettings(
-            every_steps=0,  # Disable periodic checkpointing in smoke test
-            location="checkpoints",
-            save_final=False,  # Don't save final checkpoint in smoke test
-        ),
-        validation=ValidationSettings(
-            every_epochs=0,  # Disable validation in smoke test for speed
-            save_best=False,
-        ),
-        augmentation=AugmentationSettings(
-            horizontal_flip_prob=0.5,  # Enable horizontal flip in smoke test
-            vertical_flip_prob=0.0,
-            rotation_prob=0.0,
-            rotation_max_angle=15.0,
-            color_augmentation_prob=0.0,
-            color_jitter_strength=0.1,
-            swap_frames_prob=0.0,
-        ),
-        smoke_test=False,  # Already applied by caller
-    )

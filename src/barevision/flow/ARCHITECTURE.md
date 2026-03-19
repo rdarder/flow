@@ -42,11 +42,11 @@ barevision/flow/
 │   ├── test_model.py    # Tests for LevelFlowEstimator and attention features
 │   └── test_hierarchical_model.py  # Tests for HierarchicalFlowEstimator
 │
-├── training/             # Combined training orchestration
+├── joint/               # Joint training orchestration
 │   ├── model.py         # Model (embeddings + HierarchicalFlowEstimator)
 │   ├── losses.py        # Combined loss function (entropy + hierarchical reconstruction)
 │   ├── visualization.py # Orchestrates visualization + window extraction helpers
-│   └── __main__.py      # Entry point: python -m barevision.flow.training
+│   └── training.py      # Entry point: python -m barevision.flow.joint.training
 │
 ├── video_dataset.py      # Data loading (shared)
 ├── settings.py           # Hyperparameters (shared)
@@ -164,7 +164,6 @@ barevision/flow/
 **`settings.py`** — Hyperparameters and CLI.
 - `DatasetSettings`, `ModelSettings`, `TrainingSettings`, `LoggingSettings`
 - `Settings`: Root dataclass, tyro CLI entry point
-- `create_smoke_test_settings`: Quick validation config
 - Change values here, not in code.
 
 **`logging_utils.py`** — Console output helpers.
@@ -270,10 +269,10 @@ Split is configured via `--dataset.seed` (default: 42).
 
 ```bash
 # Training
-python -m barevision.flow.training --dataset.batch_size=4 --training.epochs=10
+python -m barevision.flow.joint.training --dataset.batch_size=4 --training.epochs=10
 
 # Smoke test (quick validation)
-python -m barevision.flow.training --smoke-test
+python -m barevision.flow.joint.smoke_test 
 
 # Inference (estimate flow between two images)
 python -m barevision.flow.inference --checkpoint_path checkpoints/flow_20260317_143052/final \

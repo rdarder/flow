@@ -1,4 +1,4 @@
-"""Training script for optical flow model."""
+"""Training script for joint embeddings + flow estimation model."""
 
 import time
 from functools import partial
@@ -8,21 +8,21 @@ import optax
 import tyro
 from flax import nnx
 
-from barevision.flow.training.model import Model as OpticalFlowModel
-from barevision.flow.training.losses import compute_loss
+from barevision.flow.joint.model import Model as OpticalFlowModel
+from barevision.flow.joint.losses import compute_loss
 from barevision.flow.embeddings.model import count_parameters
 from barevision.flow.logging_utils import (
     log_progress,
     print_footer,
     print_header,
+    should_log_something,
 )
 from barevision.flow.settings import (
     ModelSettings,
     Settings,
-    create_smoke_test_settings,
 )
 from barevision.flow.dataset.video_dataset import create_dataloader
-from barevision.flow.training.visualization import log_visualizations
+from barevision.flow.joint.visualization import log_visualizations
 from barevision.flow.checkpoint_utils import (
     generate_run_name,
     restore_model_from_checkpoint,
@@ -163,7 +163,7 @@ def run_epoch(
 
     for step, (img1, img2, metadata) in enumerate(loader):
         # Determine if we should return aux data (for logging or visualization)
-        should_return_aux = settings.logging.should_log_something(global_step)
+        should_return_aux = should_log_something(settings.logging, global_step)
 
         loss, aux = train_step(
             model,
@@ -267,21 +267,16 @@ def run_validation(
 
 
 def train(settings: Settings):
-    """Main training loop."""
-    is_smoke_test = settings.smoke_test
-    if is_smoke_test:
-        settings = create_smoke_test_settings()
-
+    """Main joint training loop."""
     print_header(settings)
 
     # Generate run name for consistent logging and checkpointing
     run_name = generate_run_name(prefix=settings.logging.run_name_prefix)
 
-    # Use strict mode for smoke tests to catch visualization errors
     logger = JaxLogger(
         log_dir=settings.logging.log_dir,
         run_name=run_name,
-        strict=is_smoke_test,
+        strict=True,
     )
 
     # Create optical flow model (combines embeddings + flow estimation)
@@ -394,67 +389,9 @@ def train(settings: Settings):
         print(f"{'=' * 60}")
 
     logger.close()
-
-    # Validate smoke test: ensure visualizations were logged
-    if is_smoke_test:
-        _validate_smoke_test_visualizations(logger.log_dir)
-
     print_footer()
     return model
 
 
-def _validate_smoke_test_visualizations(log_dir: str):
-    """Validate that expected visualizations were logged during smoke test.
-
-    Raises RuntimeError if expected image tags are missing.
-    """
-    try:
-        from tensorboard.backend.event_processing import event_accumulator
-
-        ea = event_accumulator.EventAccumulator(log_dir, size_guidance={"images": 0})
-        ea.Reload()
-
-        image_tags = ea.Tags().get("images", [])
-
-        # Expected visualization tags (grouped by level)
-        expected_tags = [
-            "Level0/flow_colorwheel",
-            "Level0/flow_arrows",
-            "Level0/Frame_Grid",
-            "Level0/Attention_Maps",
-        ]
-
-        missing_tags = [tag for tag in expected_tags if tag not in image_tags]
-
-        if missing_tags:
-            raise RuntimeError(
-                f"Smoke test validation failed: Missing expected image tags: {missing_tags}. "
-                f"Found tags: {image_tags}"
-            )
-
-        # Verify images were actually logged (not just tags)
-        for tag in expected_tags:
-            images = ea.Images(tag)
-            if len(images) == 0:
-                raise RuntimeError(
-                    f"Smoke test validation failed: Tag '{tag}' has no images logged"
-                )
-
-        print(
-            f"✓ Smoke test validation passed: {len(expected_tags)} image tags verified"
-        )
-
-    except ImportError:
-        print("Warning: tensorboard not available for smoke test validation")
-    except Exception as e:
-        raise RuntimeError(f"Smoke test validation error: {e}") from e
-
-
-def main():
-    """Entry point."""
-    settings = tyro.cli(Settings)
-    train(settings)
-
-
 if __name__ == "__main__":
-    main()
+    tyro.cli(train)
