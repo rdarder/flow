@@ -79,9 +79,14 @@ def log_visualizations(
         level_emb = pyramid1[level_idx]
         B, H_emb, W_emb, _ = level_emb.shape
 
-        # Calculate number of windows at this level
-        num_windows_h = H_emb // window_size
-        num_windows_w = W_emb // window_size
+        # Crop to grid-aligned dimensions (same as flow estimation)
+        # This ensures visualization matches the actual processing
+        crop_h = (H_emb // window_size) * window_size
+        crop_w = (W_emb // window_size) * window_size
+
+        # Calculate number of windows at this level (after cropping)
+        num_windows_h = crop_h // window_size
+        num_windows_w = crop_w // window_size
 
         # Skip levels that are too small
         if num_windows_h == 0 or num_windows_w == 0:
@@ -93,12 +98,13 @@ def log_visualizations(
         window_col = int(rng.integers(0, num_windows_w))
         window_indices = (window_row, window_col)
 
-        # Downscale original images to match this level's embedding dimensions
+        # Downscale original images to match CROPPED dimensions (not original)
+        # This ensures the grid overlay matches the actual window boundaries used
         img1_downscaled = jax.image.resize(
-            img1[0], (H_emb, W_emb, 3), method="bilinear"
+            img1[0], (crop_h, crop_w, 3), method="bilinear"
         )
         img2_downscaled = jax.image.resize(
-            img2[0], (H_emb, W_emb, 3), method="bilinear"
+            img2[0], (crop_h, crop_w, 3), method="bilinear"
         )
 
         # Extract attention data from aux if available

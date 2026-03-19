@@ -56,15 +56,17 @@ def _add_grid_overlay(
     Args:
         ax: Matplotlib axis
         window_size: Size of windows (typically 16)
-        H: Image height in pixels
-        W: Image width in pixels
+        H: Image height in pixels (already cropped to grid-aligned)
+        W: Image width in pixels (already cropped to grid-aligned)
         highlighted_window: (row, col) of window to highlight with colored border
     """
-    # Draw grid lines
+    # Draw grid lines at pixel BOUNDARIES (not centers)
+    # Line at position i separates pixel i-1 from pixel i
+    # Use bright white for better visibility
     for i in range(0, H + 1, window_size):
-        ax.axhline(i, color="gray", linestyle="-", linewidth=0.5, alpha=0.5)
+        ax.axhline(i, color="white", linestyle="-", linewidth=1, alpha=0.8)
     for j in range(0, W + 1, window_size):
-        ax.axvline(j, color="gray", linestyle="-", linewidth=0.5, alpha=0.5)
+        ax.axvline(j, color="white", linestyle="-", linewidth=1, alpha=0.8)
 
     # Highlight specific window if requested
     if highlighted_window is not None:
