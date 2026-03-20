@@ -174,7 +174,7 @@ def run_epoch(
             return_aux=should_return_aux,
         )
 
-        if global_step % settings.logging.log_every_steps == 0:
+        if global_step % settings.logging.every_steps == 0:
             log_progress(
                 logger,
                 model,
@@ -187,7 +187,7 @@ def run_epoch(
                 settings.model.window_size,
             )
 
-        if global_step % settings.logging.log_visualizations_every_steps == 0:
+        if global_step % settings.logging.visualizations_every_steps == 0:
             # Get pyramids and flows from aux_data
             pyramid1 = aux["model"]["pyramid1"]
             pyramid2 = aux["model"]["pyramid2"]
@@ -274,7 +274,7 @@ def train(settings: Settings):
     run_name = generate_run_name(prefix=settings.logging.run_name_prefix)
 
     logger = JaxLogger(
-        log_dir=settings.logging.log_dir,
+        log_dir=settings.logging.tensorboard_dir,
         run_name=run_name,
         strict=True,
     )

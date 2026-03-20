@@ -320,6 +320,6 @@ def print_header(settings):
 
 def should_log_something(settings: LoggingSettings, step: int):
     return (
-        step % settings.log_visualizations_every_steps == 0
-        or step % settings.log_every_steps == 0
+        step % settings.visualizations_every_steps == 0
+        or step % settings.every_steps == 0
     )

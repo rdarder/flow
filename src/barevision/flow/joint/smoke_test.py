@@ -40,10 +40,10 @@ def create_smoke_test_settings() -> Settings:
             learning_rate=1e-4,
         ),
         logging=LoggingSettings(
-            log_dir="runs",
+            tensorboard_dir="runs",
             run_name_prefix="smoke_test",
-            log_every_steps=1,  # Log everything every step in smoke test
-            log_visualizations_every_steps=1,  # Log visualizations every step in smoke test
+            every_steps=1,  # Log everything every step in smoke test
+            visualizations_every_steps=1,  # Log visualizations every step in smoke test
         ),
         checkpoint=CheckpointSettings(
             every_steps=0,  # Disable periodic checkpointing in smoke test

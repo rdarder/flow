@@ -66,26 +66,26 @@ class LoggingSettings:
     """TensorBoard logging configuration.
 
     Attributes:
-        log_dir: Root directory for TensorBoard logs
+        tensorboard_dir: Root directory for TensorBoard logs
         run_name_prefix: Prefix for auto-generated run names
-        log_every_steps: Log metrics, statistics, and console output every N steps
-        log_visualizations_every_steps: Generate and log visualization figures every N steps
+        every_steps: Log metrics, statistics, and console output every N steps
+        visualizations_every_steps: Generate and log visualization figures every N steps
     """
 
-    log_dir: str = "runs"
-    run_name_prefix: str = "embeddings"
-    log_every_steps: int = 10
-    log_visualizations_every_steps: int = 20
+    tensorboard_dir: str = "runs"
+    run_name_prefix: str = "flow"
+    every_steps: int = 100
+    visualizations_every_steps: int = 100
 
     def __post_init__(self):
-        check_value(self.log_dir, "log_dir cannot be empty")
+        check_value(self.tensorboard_dir, "log_dir cannot be empty")
         check_value(
-            self.log_every_steps >= 1,
-            f"log_every_steps must be >= 1, got {self.log_every_steps}",
+            self.every_steps >= 1,
+            f"log_every_steps must be >= 1, got {self.every_steps}",
         )
         check_value(
-            self.log_visualizations_every_steps >= 1,
-            f"log_visualizations_every_steps must be >= 1, got {self.log_visualizations_every_steps}",
+            self.visualizations_every_steps >= 1,
+            f"log_visualizations_every_steps must be >= 1, got {self.visualizations_every_steps}",
         )
 
 
@@ -119,7 +119,7 @@ class ModelSettings:
     recon_weight: float = 0.1  # Reconstruction loss weight (entropy is primary)
     entropy_temperature: float = 1.0  # Fixed temperature for entropy loss
     flow_temperature: float = 0.3  # Temperature for flow estimation
-    flow_hidden_dim: int = 16  # Flow estimator hidden dimension
+    flow_hidden_dim: int = 16  # Flow estimator hidden layers dimensions
 
     def __post_init__(self):
         check_value(
@@ -169,7 +169,7 @@ class TrainingSettings:
 
     seed: int = 42
     epochs: int = 1
-    learning_rate: float = 1e-4
+    learning_rate: float = 1e-3
 
     def __post_init__(self):
         check_value(self.seed >= 0, f"seed must be >= 0, got {self.seed}")
@@ -294,4 +294,3 @@ class Settings:
     checkpoint: CheckpointSettings
     validation: ValidationSettings
     augmentation: AugmentationSettings
-    smoke_test: bool = False
