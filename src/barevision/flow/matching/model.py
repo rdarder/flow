@@ -258,6 +258,7 @@ class HierarchicalFlowEstimator(nnx.Module):
         window_size: int,
         hidden_dim: int,
         max_flow: float,
+        temperature: float,
         *,
         rngs: nnx.Rngs,
     ):
@@ -267,11 +268,13 @@ class HierarchicalFlowEstimator(nnx.Module):
             num_levels: Number of pyramid levels
             window_size: Size of attention windows (default 16)
             hidden_dim: Hidden dimension for LevelFlowEstimator
+            temperature: attention softmax temperature
             max_flow: Maximum flow magnitude (default 0.5 = half-window)
             rngs: NNX RNGs for parameter initialization
         """
         self.num_levels = num_levels
         self.window_size = window_size
+        self.temperature = temperature
 
         # Create independent LevelFlowEstimator per level
         # V2: Could share weights across levels, but V1 uses independent estimators
@@ -291,7 +294,6 @@ class HierarchicalFlowEstimator(nnx.Module):
         self,
         pyramid1: List[jnp.ndarray],
         pyramid2: List[jnp.ndarray],
-        temperature: float = 0.2,
     ) -> List[jnp.ndarray]:
         """Estimate flow at all pyramid levels.
 
@@ -354,8 +356,8 @@ class HierarchicalFlowEstimator(nnx.Module):
             self_logits = flat_emb1 @ flat_emb1.transpose(0, 2, 1)
             cross_logits = flat_emb1 @ flat_emb2.transpose(0, 2, 1)
 
-            self_attn = jax.nn.softmax(self_logits / temperature, axis=-1)
-            cross_attn = jax.nn.softmax(cross_logits / temperature, axis=-1)
+            self_attn = jax.nn.softmax(self_logits / self.temperature, axis=-1)
+            cross_attn = jax.nn.softmax(cross_logits / self.temperature, axis=-1)
 
             # Create source position grid
             src_pos = create_source_position_grid(window_size=self.window_size)

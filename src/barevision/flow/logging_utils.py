@@ -211,7 +211,7 @@ def log_diagnostics(logger: JaxLogger, model, img1, step: int, window_size: int 
     # Get pyramid and use coarsest level
     # Support both OpticalFlowModel and HierarchicalEmbeddingModel
     if hasattr(model, "extract_embeddings"):
-        pyramid = model.extract_embeddings(img1)
+        pyramid = model.embedding_model(img1)
     else:
         pyramid = model(img1)
 

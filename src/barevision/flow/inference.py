@@ -21,7 +21,7 @@ from barevision.flow.checkpoint_utils import (
     config_from_checkpoint,
     restore_model_from_checkpoint,
 )
-from barevision.flow.joint.model import Model as OpticalFlowModel
+from barevision.flow.joint.model import JointEmbeddingFlotModel as OpticalFlowModel
 
 
 def load_image(path: Path, target_size: tuple[int, int]) -> jnp.ndarray:

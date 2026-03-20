@@ -28,6 +28,7 @@ def test_hierarchical_flow_estimator_shape():
         window_size=window_size,
         hidden_dim=hidden_dim,
         max_flow=0.5,
+        temperature=0.2,
         rngs=nnx.Rngs(42),
     )
 
@@ -46,7 +47,7 @@ def test_hierarchical_flow_estimator_shape():
     ]
 
     # Estimate flow
-    flows = flow_model(pyramid, pyramid, temperature=0.2)
+    flows = flow_model(pyramid, pyramid)
 
     assert len(flows) == num_levels
     for i, (flow, expected) in enumerate(zip(flows, expected_shapes)):
@@ -77,6 +78,7 @@ def test_hierarchical_reconstruction_loss_shape():
         window_size=window_size,
         hidden_dim=hidden_dim,
         max_flow=0.5,
+        temperature=0.2,
         rngs=nnx.Rngs(42),
     )
 
@@ -88,7 +90,7 @@ def test_hierarchical_reconstruction_loss_shape():
     pyramid2 = embed_model(test_input)
 
     # Estimate flow
-    flows = flow_model(pyramid1, pyramid2, temperature=0.2)
+    flows = flow_model(pyramid1, pyramid2)
 
     # Compute loss
     loss, aux = hierarchical_reconstruction_loss(pyramid1, pyramid2, flows)
@@ -128,6 +130,7 @@ def test_hierarchical_reconstruction_loss_zero():
         window_size=window_size,
         hidden_dim=hidden_dim,
         max_flow=0.5,
+        temperature=0.2,
         rngs=nnx.Rngs(42),
     )
 
@@ -138,7 +141,7 @@ def test_hierarchical_reconstruction_loss_zero():
     pyramid2 = embed_model(test_input)
 
     # Flow should be near-zero for identical frames
-    flows = flow_model(pyramid1, pyramid2, temperature=0.2)
+    flows = flow_model(pyramid1, pyramid2)
 
     # Compute loss
     loss, aux = hierarchical_reconstruction_loss(pyramid1, pyramid2, flows)
@@ -171,6 +174,7 @@ def test_hierarchical_flow_estimator_gradient_flow():
         window_size=window_size,
         hidden_dim=hidden_dim,
         max_flow=0.5,
+        temperature=0.2,
         rngs=nnx.Rngs(42),
     )
 
@@ -180,7 +184,7 @@ def test_hierarchical_flow_estimator_gradient_flow():
         # Reconstruct model from params (simplified - just check loss is differentiable)
         pyramid1 = embed_model(test_input)
         pyramid2 = embed_model(test_input)
-        flows = flow_model(pyramid1, pyramid2, temperature=0.2)
+        flows = flow_model(pyramid1, pyramid2)
         loss, _ = hierarchical_reconstruction_loss(pyramid1, pyramid2, flows)
         return loss
 

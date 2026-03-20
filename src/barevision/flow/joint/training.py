@@ -8,15 +8,19 @@ import optax
 import tyro
 from flax import nnx
 
-from barevision.flow.joint.model import Model as OpticalFlowModel
-from barevision.flow.joint.losses import compute_loss
-from barevision.flow.embeddings.model import count_parameters
+from barevision.flow.joint.model import JointEmbeddingFlotModel as OpticalFlowModel
+from barevision.flow.joint.losses import combined_entropy_reconstruction_loss
+from barevision.flow.embeddings.model import (
+    count_parameters,
+    HierarchicalEmbeddingModel,
+)
 from barevision.flow.logging_utils import (
     log_progress,
     print_footer,
     print_header,
     should_log_something,
 )
+from barevision.flow.matching import HierarchicalFlowEstimator
 from barevision.flow.settings import (
     ModelSettings,
     Settings,
@@ -65,7 +69,7 @@ def train_step(
         )
 
         # Compute loss (uses entropy_temperature for entropy loss)
-        loss, loss_aux = compute_loss(
+        loss, loss_aux = combined_entropy_reconstruction_loss(
             pyramid1,
             pyramid2,
             flows=flows,
@@ -126,7 +130,7 @@ def validation_step(
     )
 
     # Compute loss (uses entropy_temperature for entropy loss)
-    loss, _ = compute_loss(
+    loss, _ = combined_entropy_reconstruction_loss(
         pyramid1,
         pyramid2,
         flows=flows,
@@ -282,14 +286,21 @@ def train(settings: Settings):
     # - hidden_dim=32: intermediate feature dimension in convolution blocks
     # - num_groups=8: grouped convolution groups (32/8 = 4 channels per group)
     # - rngs initialized from training.seed for reproducibility across runs
-    model = OpticalFlowModel(
+
+    rngs = nnx.Rngs(settings.training.seed)
+    embedding_model = HierarchicalEmbeddingModel(
         hidden_dim=32,
         embed_dim=settings.model.embed_dim,
         num_groups=8,
         num_levels=settings.model.num_levels,
-        flow_hidden_dim=settings.model.flow_hidden_dim,
+        rngs=rngs,
+    )
+    flow_model = HierarchicalFlowEstimator(
+        num_levels=settings.model.num_levels,
         window_size=settings.model.window_size,
-        rngs=nnx.Rngs(settings.training.seed),
+        hidden_dim=settings.model.flow_hidden_dim,
+        max_flow=0.5,  # Maximum 0.5 = half-window displacement
+        rngs=rngs,
     )
 
     # Single optimizer for all parameters

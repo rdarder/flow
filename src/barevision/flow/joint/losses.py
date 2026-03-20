@@ -19,7 +19,7 @@ from barevision.flow.embeddings.losses import compute_hierarchical_entropy_loss
 from barevision.flow.matching.losses import hierarchical_reconstruction_loss
 
 
-def compute_loss(
+def combined_entropy_reconstruction_loss(
     pyramid1,
     pyramid2,
     flows: List[jnp.ndarray],
