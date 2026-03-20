@@ -61,14 +61,6 @@ def log_attention_statistics(
         f"{prefix}/cross_entropy", np.array(cross_entropy.flatten()), step
     )
 
-    # Log histograms
-    logger.log_histogram(
-        f"{prefix}/self_entropy", np.array(self_entropy.flatten()), step
-    )
-    logger.log_histogram(
-        f"{prefix}/cross_entropy", np.array(cross_entropy.flatten()), step
-    )
-
     # Log summary statistics
     logger.log_scalar(f"{prefix}/self_entropy_mean", float(np.mean(self_entropy)), step)
     logger.log_scalar(f"{prefix}/self_entropy_std", float(np.std(self_entropy)), step)
