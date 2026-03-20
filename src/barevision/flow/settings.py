@@ -23,20 +23,16 @@ class DatasetSettings:
         max_frame_distance: Maximum temporal distance for frame pairs
         max_samples: Maximum samples per epoch (-1 for full dataset)
         num_workers: Number of worker processes for data loading (0 = main process only)
-        seed: Random seed for train/val split and data loading
     """
 
-    batch_size: int = 4
-    coarse_grid_size: int = 1  # Phase 2: 1×1 grid at coarsest level (16×16 window)
+    batch_size: int = 8
+    coarse_grid_size: int = 1
     window_size: int = 16
     num_levels: int = 3
     min_frame_distance: int = 1  # Minimum k for frame pairs (t, t+k)
-    max_frame_distance: int = (
-        2  # Phase 2: Restrict to adjacent frames for deep supervision
-    )
+    max_frame_distance: int = 5
     max_samples: int = -1
     num_workers: int = 4
-    seed: int = 42  # Random seed for reproducibility
 
     def __post_init__(self):
         check_value(

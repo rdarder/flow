@@ -282,7 +282,7 @@ def create_dataloader(
         min_frame_distance=dataset_settings.min_frame_distance,
         max_frame_distance=dataset_settings.max_frame_distance,
         img_size=image_size,
-        seed=dataset_settings.seed,
+        seed=random_seed,
     )
 
     max_samples = (
