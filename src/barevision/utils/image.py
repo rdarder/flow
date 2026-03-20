@@ -30,6 +30,7 @@ def calculate_coarse_output_size(
             size = (size - kernel_size) // stride + 1
     return size
 
+
 def image_size(coarsest_grid_size: int, window_size: int, levels: int):
     # Target coarse dimension: grid_size × window_size
     target_coarse_dim = coarsest_grid_size * window_size
@@ -40,4 +41,3 @@ def image_size(coarsest_grid_size: int, window_size: int, levels: int):
         num_levels=levels,
     )
     return input_size, input_size
-

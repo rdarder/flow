@@ -12,7 +12,7 @@ from flax import nnx
 from torch.utils.tensorboard import SummaryWriter
 
 
-class JaxLogger:
+class TensorboardLogger:
     """TensorBoard logger for training metrics.
 
     Attributes:
@@ -114,7 +114,7 @@ class JaxLogger:
 
 
 def log_module_histograms(
-    logger: JaxLogger,
+    logger: TensorboardLogger,
     module: nnx.Module,
     step: int,
     prefix: str = "Module",

@@ -18,11 +18,13 @@ Phase 2 (Deep Supervision):
 - Normalizes entropy by theoretical maximum to [0, 1] range
 """
 
-from typing import List, Tuple
+from typing import List
 
 import jax
 import jax.numpy as jnp
 
+from barevision.flow.settings import EmbeddingLossSettings
+from barevision.utils.checks import check_value
 from barevision.utils.grid import WindowGrid, crop_to_grid_aligned
 
 
@@ -177,9 +179,9 @@ def windowed_attention_losses(
         raise ValueError(f"Width {W} not divisible by window_size {window_size}")
 
     # Validate shapes match
-    assert emb2.shape == emb1.shape, (
-        f"emb2 shape {emb2.shape} != emb1 shape {emb1.shape}"
-    )
+    assert (
+        emb2.shape == emb1.shape
+    ), f"emb2 shape {emb2.shape} != emb1 shape {emb1.shape}"
 
     # Split into windows
     grid = WindowGrid(window_size=window_size)
@@ -342,3 +344,81 @@ def compute_hierarchical_entropy_loss(
     )
 
     return total_loss, aux
+
+
+class HierarchicalEmbeddingLoss:
+    def __init__(self, settings: EmbeddingLossSettings):
+        self.settings = settings
+
+    def __call__(self, pyramid_pair: tuple[list[jnp.ndarray], list[jnp.ndarray]]):
+        pyramid1, pyramid2 = pyramid_pair
+
+        check_value(
+            len(pyramid1) == len(pyramid2),
+            f"Pyramid level mismatch: {len(pyramid1)} vs {len(pyramid2)}",
+        )
+
+        num_levels = len(pyramid1)
+        weights = self._get_normalized_weights(num_levels)
+        total_loss = jnp.array(0.0)
+        levels_aux = []
+
+        for i, (emb1, emb2, weight) in enumerate(zip(pyramid1, pyramid2, weights)):
+            level_loss, level_aux = self._level_loss(emb1, emb2, weight, i)
+            total_loss += level_loss
+            levels_aux.append(level_aux)
+
+        aux = dict(
+            self_loss=sum(level_aux["self_loss"] for level_aux in levels_aux),
+            cross_loss=sum(level_aux["cross_loss"] for level_aux in levels_aux),
+            loss=total_loss,
+            levels=levels_aux,
+        )
+
+        return total_loss, aux
+
+    def _get_normalized_weights(self, levels: int):
+        raw_weights = jnp.arange(levels) ** self.settings.level_weight_decay
+        return raw_weights / jnp.sum(raw_weights)
+
+    def _level_loss(self, emb1: jnp.ndarray, emb2: jnp.ndarray, weight, i):
+        level_weight = self.settings.level_weight_decay**weight
+        window_size = self.settings.window_size
+
+        # Crop to grid-aligned dimensions
+        emb1_cropped = crop_to_grid_aligned(emb1, window_size)
+        emb2_cropped = crop_to_grid_aligned(emb2, window_size)
+
+        B, H, W, D = emb1_cropped.shape
+
+        # Validate we have at least one window
+        num_windows_h = H // window_size
+        num_windows_w = W // window_size
+        check_value(
+            num_windows_h > 0 and num_windows_w > 0,
+            f"Level {i}: Cropped dimensions ({H}x{W}) "
+            f"too small for window_size {window_size}",
+        )
+
+        # Delegate to single-level loss function (always returns aux with attention weights)
+        level_loss, level_aux = windowed_attention_losses(
+            emb1_cropped,
+            emb2_cropped,
+            window_size=window_size,
+            lambda_entropy=self.settings.lambda_entropy,
+            temperature=self.settings.entropy_temperature,
+        )
+
+        # Apply level weight
+        level_loss_weighted = level_loss * level_weight
+
+        aux = dict(
+            weighted_loss=level_loss_weighted,
+            raw_loss=level_loss,
+            weight=level_weight,
+            weighted_self_loss=level_aux["self_loss"] * level_weight,
+            weighted_cross_loss=level_aux["cross_loss"] * level_weight,
+            **level_aux,
+        )
+
+        return level_loss_weighted, aux

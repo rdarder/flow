@@ -195,6 +195,9 @@ def restore_model_from_checkpoint(
     Returns:
         Global step from checkpoint
     """
+    if not checkpoint_path.exists():
+        raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
+
     checkpoint_data = load_checkpoint(checkpoint_path)
 
     # Restore model state

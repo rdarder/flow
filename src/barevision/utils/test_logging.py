@@ -2,12 +2,12 @@
 
 import numpy as np
 
-from barevision.utils.logging import JaxLogger
+from barevision.utils.logging import TensorboardLogger
 
 
 def test_jax_logger_smoke():
     """Test basic logger functionality."""
-    logger = JaxLogger(log_dir="test_runs", run_name_prefix="test")
+    logger = TensorboardLogger(log_dir="test_runs", run_name_prefix="test")
 
     # Test scalar logging
     logger.log_scalar("Test/loss", 0.5, 0)

@@ -42,6 +42,8 @@ from typing import List, Optional, Tuple
 import jax.numpy as jnp
 from flax import nnx
 
+from barevision.flow.settings import EmbeddingLossSettings, EmbeddingModelSettings
+
 
 class StemBlock(nnx.Module):
     """Root block of the pyramid (Level 0 only).
@@ -263,26 +265,11 @@ class HierarchicalEmbeddingModel(nnx.Module):
 
     def __init__(
         self,
-        hidden_dim: int,
-        embed_dim: int,
-        num_groups: int,
-        num_levels: int,
+        settings: EmbeddingModelSettings,
         *,
         rngs: nnx.Rngs,
     ):
-        """Initialize the hierarchical embedding model.
-
-        Args:
-            hidden_dim: Hidden feature dimension for intermediate convolutions
-            embed_dim: Output embedding dimension per level
-            num_groups: Number of groups for grouped convolutions
-            num_levels: Number of pyramid levels
-            rngs: NNX RNGs for parameter initialization
-        """
-        self.hidden_dim = hidden_dim
-        self.embed_dim = embed_dim
-        self.num_groups = num_groups
-        self.num_levels = num_levels
+        self.settings = settings
 
         # Build pyramid levels
         self.blocks = nnx.List()
@@ -290,21 +277,21 @@ class HierarchicalEmbeddingModel(nnx.Module):
         # StemBlock for Level 0
         self.blocks.append(
             StemBlock(
-                hidden_dim=hidden_dim,
-                embed_dim=embed_dim,
-                num_groups=num_groups,
+                hidden_dim=settings.hidden_dim,
+                embed_dim=settings.embed_dim,
+                num_groups=settings.num_groups,
                 rngs=rngs,
             )
         )
 
         # StandardBlocks for Levels 1 to N-1
-        for i in range(1, num_levels):
-            is_last = i == num_levels - 1
+        for i in range(1, settings.num_levels):
+            is_last = i == settings.num_levels - 1
             self.blocks.append(
                 StandardBlock(
-                    hidden_dim=hidden_dim,
-                    embed_dim=embed_dim,
-                    num_groups=num_groups,
+                    hidden_dim=settings.hidden_dim,
+                    embed_dim=settings.embed_dim,
+                    num_groups=settings.num_groups,
                     is_last_level=is_last,
                     rngs=rngs,
                 )

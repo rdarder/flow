@@ -189,12 +189,12 @@ def test_flow_estimator_bounded():
     flow = flow_estimator(features)
 
     # Check that flow is bounded
-    assert flow.max() <= max_flow + 1e-6, (
-        f"Flow max {flow.max()} exceeds max_flow {max_flow}"
-    )
-    assert flow.min() >= -max_flow - 1e-6, (
-        f"Flow min {flow.min()} below -max_flow {-max_flow}"
-    )
+    assert (
+        flow.max() <= max_flow + 1e-6
+    ), f"Flow max {flow.max()} exceeds max_flow {max_flow}"
+    assert (
+        flow.min() >= -max_flow - 1e-6
+    ), f"Flow min {flow.min()} below -max_flow {-max_flow}"
 
     print(
         f"✓ FlowEstimator bounded: range [{flow.min():.4f}, {flow.max():.4f}] within [-{max_flow}, {max_flow}]"

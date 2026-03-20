@@ -5,7 +5,6 @@ currently used by the training script.
 """
 
 from dataclasses import dataclass
-from typing import Tuple
 
 from barevision.utils.checks import check_value
 
@@ -90,71 +89,137 @@ class LoggingSettings:
 
 
 @dataclass(frozen=True)
-class ModelSettings:
-    """Model architecture configuration.
-
-    Attributes:
-        window_size: Attention window size in pixels (must divide img_size dimensions)
-        num_levels: Number of pyramid levels (default 3)
-        embed_dim: Output embedding dimension per level (default 16)
-        level_weight_decay: Loss weight decay factor per level (default 1.0 = uniform)
-                           Coarser levels get higher weight: level_i weight = decay^i.
-                           Set to 1.0 for uniform weighting across levels.
-        lambda_entropy: Cross-attention loss weight in [0, 1] (default 0.5 = equal weighting)
-                       entropy_loss = (1 - lambda_entropy) * self_loss + lambda_entropy * cross_loss
-        recon_weight: Reconstruction loss weight (default 0.1)
-                      total_loss = entropy_loss + recon_weight * reconstruction_loss
-                      Higher values prioritize tracking accuracy over embedding distinctness.
-        entropy_temperature: Temperature for entropy loss computation (default 1.0)
-                            Fixed temperature for entropy calculation. Lower = sharper peaks in loss.
-        flow_temperature: Temperature for flow estimation attention (default 0.3)
-                         Used during inference. Lower = sharper attention, higher = smoother.
+class EmbeddingModelSettings:
+    """
+    num_levels: Number of pyramid levels (default 3)
+    embed_dim: Output embedding dimension per level (default 16)
     """
 
-    window_size: int = 16
-    num_levels: int = 3
     embed_dim: int = 16
-    level_weight_decay: float = 1.0  # Uniform weighting across levels
-    lambda_entropy: float = 0.5  # Equal weighting between self and cross entropy
-    recon_weight: float = 0.1  # Reconstruction loss weight (entropy is primary)
-    entropy_temperature: float = 1.0  # Fixed temperature for entropy loss
-    flow_temperature: float = 0.3  # Temperature for flow estimation
-    flow_hidden_dim: int = 16  # Flow estimator hidden layers dimensions
+    hidden_dim: int = 16
+    num_groups: int = 4
+    num_levels: int = 3
 
     def __post_init__(self):
-        check_value(
-            self.window_size >= 1, f"window_size must be >= 1, got {self.window_size}"
-        )
         check_value(
             self.num_levels >= 1, f"num_levels must be >= 1, got {self.num_levels}"
         )
         check_value(
             self.embed_dim >= 1, f"embed_dim must be >= 1, got {self.embed_dim}"
         )
-        check_value(
-            self.level_weight_decay >= 0,
-            f"level_weight_decay must be >= 0, got {self.level_weight_decay}",
-        )
+
+
+@dataclass(frozen=True)
+class EmbeddingLossSettings:
+    """
+    window_size: Attention window size in pixels (must divide img_size dimensions)
+    level_weight_decay: Loss weight decay factor per level (default 1.0 = uniform)
+                       Coarser levels get higher weight: level_i weight = decay^i.
+                       Set to 1.0 for uniform weighting across levels.
+    lambda_entropy: Cross-attention loss weight in [0, 1] (default 0.5 = equal weighting)
+                   entropy_loss = (1 - lambda_entropy) * self_loss + lambda_entropy * cross_loss
+    entropy_temperature: Temperature for entropy loss computation (default 1.0)
+                        Fixed temperature for entropy calculation. Lower = sharper peaks in loss.
+    """
+
+    window_size: int = 16
+    level_weight_decay: float = 1.0  # Uniform weighting across levels
+    entropy_temperature: float = 1.0  # Fixed temperature for entropy loss
+    lambda_entropy: float = 0.5  # Equal weighting between self and cross entropy
+
+    def __post_init__(self):
         check_value(
             0 <= self.lambda_entropy <= 1,
             f"lambda_entropy must be in [0, 1], got {self.lambda_entropy}",
         )
         check_value(
-            self.recon_weight >= 0,
-            f"recon_weight must be >= 0, got {self.recon_weight}",
+            self.level_weight_decay >= 0,
+            f"level_weight_decay must be >= 0, got {self.level_weight_decay}",
         )
         check_value(
             self.entropy_temperature > 0,
             f"entropy_temperature must be > 0, got {self.entropy_temperature}",
         )
         check_value(
-            self.flow_temperature > 0,
-            f"flow_temperature must be > 0, got {self.flow_temperature}",
+            self.window_size >= 1, f"window_size must be >= 1, got {self.window_size}"
+        )
+
+
+@dataclass(frozen=True)
+class FlowLossSettings:
+    level_weight_decay: float = 1.0
+
+
+@dataclass(frozen=True)
+class JointEmbeddingFlowSettings:
+    """
+    recon_weight: Reconstruction loss weight (default 0.1)
+      total_loss = entropy_loss + recon_weight * reconstruction_loss
+      Higher values prioritize tracking accuracy over embedding distinctness.
+    """
+
+    recon_weight: float = 0.1  # Reconstruction loss weight (entropy is primary)
+    entropy_weight: float = 0.9
+
+    def __post_init__(self):
+        check_value(self.recon_weight >= 0, "recon_weight cannot be negative")
+        check_value(self.entropy_weight >= 0, "entropy_weight cannot be negative")
+        check_value(
+            self.entropy_weight + self.recon_weight >= 0.1,
+            "both entropy_weight and recon_weight are too small.",
+        )
+
+
+@dataclass(frozen=True)
+class LossSetting:
+    joint: JointEmbeddingFlowSettings
+    flow: FlowLossSettings
+    embedding: EmbeddingLossSettings
+
+
+@dataclass(frozen=True)
+class FlowModelSettings:
+    """
+    flow_temperature: Temperature for flow estimation attention (default 0.3)
+                 Used during inference. Lower = sharper attention, higher = smoother.
+    """
+
+    temperature: float = 0.3  # Temperature for flow estimation
+    hidden_dim: int = 16  # Flow estimator hidden layers dimensions
+    window_size: int = 16
+
+    def __post_init__(self):
+        check_value(
+            self.window_size >= 1, f"window_size must be >= 1, got {self.window_size}"
         )
         check_value(
-            self.flow_hidden_dim >= 1,
-            f"flow_hidden_dim must be >= 1, got {self.flow_hidden_dim}",
+            self.temperature > 0,
+            f"Temperature must be > 0, got {self.temperature}",
         )
+        check_value(
+            self.hidden_dim >= 1,
+            f"hidden dimension must be >= 1, got {self.hidden_dim}",
+        )
+
+
+@dataclass(frozen=True)
+class LossSettings:
+    joint: JointEmbeddingFlowSettings
+    embedding: EmbeddingLossSettings
+    flow: FlowLossSettings
+
+
+@dataclass(frozen=True)
+class JointEmbeddingFlowModelSettings:
+    pass
+
+
+@dataclass(frozen=True)
+class ModelSettings:
+
+    embedding: EmbeddingModelSettings
+    flow: FlowModelSettings
+    joint: JointEmbeddingFlowModelSettings
 
 
 @dataclass
@@ -214,7 +279,6 @@ class CheckpointSettings:
 
     every_steps: int = 100
     location: str = "checkpoints"
-    save_final: bool = True
     resume_from: str = ""  # Empty string = no resume
 
     def __post_init__(self):
@@ -231,6 +295,7 @@ class Settings:
 
     dataset: DatasetSettings
     model: ModelSettings
+    loss: LossSettings
     training: TrainingSettings
     logging: LoggingSettings
     checkpoint: CheckpointSettings

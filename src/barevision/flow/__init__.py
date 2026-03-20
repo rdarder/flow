@@ -13,7 +13,7 @@ from barevision.flow.embeddings.model import (
     HierarchicalEmbeddingModel,
     count_parameters,
 )
-from barevision.flow.joint.model import JointEmbeddingFlotModel as OpticalFlowModel
+from barevision.flow.joint.model import JointEmbeddingFlowModel as OpticalFlowModel
 
 __version__ = "0.1.0"
 

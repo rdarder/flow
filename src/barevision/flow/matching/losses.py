@@ -7,6 +7,10 @@ import jax
 import jax.numpy as jnp
 from jax.scipy.ndimage import map_coordinates
 
+from barevision.flow.settings import FlowLossSettings
+from barevision.utils.checks import check_value
+from barevision.utils.grid import crop_to_grid_aligned
+
 
 def warp_embeddings(embeddings: jnp.ndarray, flow: jnp.ndarray) -> jnp.ndarray:
     """Backward warp embeddings using flow field.
@@ -136,3 +140,73 @@ def hierarchical_reconstruction_loss(
     }
 
     return total_loss, aux
+
+
+class HierarchicalReconstructionLoss:
+    def __init__(self, settings: FlowLossSettings):
+        self.settings = settings
+
+    def __call__(
+        self,
+        embeddings_pyramid_pairs: tuple[list[jnp.ndarray], list[jnp.ndarray]],
+        flows: list[jnp.ndarray],
+    ) -> tuple[jnp.ndarray, dict]:
+
+        pyramid1, pyramid2 = embeddings_pyramid_pairs
+        check_value(
+            len(pyramid1) == len(pyramid2) == len(flows),
+            f" pyramid1 ({len(pyramid1)}), pyramid2 ({len(pyramid2)}), "
+            f"and flows ({len(flows)}) must have same length",
+        )
+
+        num_levels = len(pyramid1)
+        weights = self._get_normalized_weights(num_levels)
+        total_loss = jnp.array(0.0)
+        levels_aux = []
+
+        for emb1, emb2, flow, weight in zip(pyramid1, pyramid2, flows, weights):
+            level_loss, level_aux = self._level_loss(emb1, emb2, flow, weight)
+            total_loss += level_loss
+            levels_aux.append(level_aux)
+
+        aux = {"loss": total_loss, "levels": levels_aux, "extra": self._debug_trace()}
+
+        return total_loss, aux
+
+    def _debug_trace(self):
+        jax.debug.print("Calculating auxiliary data....")
+        return 10
+
+    def _get_normalized_weights(self, levels: int):
+        raw_weights = jnp.arange(levels) ** self.settings.level_weight_decay
+        return raw_weights / jnp.sum(raw_weights)
+
+    def _level_loss(
+        self,
+        emb1: jnp.ndarray,
+        emb2: jnp.ndarray,
+        flow: jnp.ndarray,
+        weight: jnp.ndarray,
+    ) -> tuple[jnp.ndarray, dict]:
+        level_weight = self.settings.level_weight_decay**weight
+
+        # Crop to grid-aligned (centered crop, same as flow estimation)
+        # Use window_size=16 for all levels
+        emb1_cropped = crop_to_grid_aligned(emb1, window_size=16)
+        emb2_cropped = crop_to_grid_aligned(emb2, window_size=16)
+
+        # Warp embeddings using flow
+        warped = warp_embeddings(emb1_cropped, flow)
+
+        # Compute loss at this level
+        level_loss = reconstruction_loss_core(warped, emb2_cropped)
+
+        level_loss_weighted = level_loss * level_weight
+
+        aux = dict(
+            weighted_loss=level_loss_weighted,
+            raw_loss=level_loss,
+            weight=level_weight,
+            warped=warped,
+        )
+        return level_loss, aux

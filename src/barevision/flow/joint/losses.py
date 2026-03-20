@@ -11,78 +11,79 @@ Where:
     - recon_weight: Controls relative importance of reconstruction (default 0.1)
 """
 
-from typing import List
-
 import jax.numpy as jnp
 
-from barevision.flow.embeddings.losses import compute_hierarchical_entropy_loss
-from barevision.flow.matching.losses import hierarchical_reconstruction_loss
+from barevision.flow.embeddings.losses import HierarchicalEmbeddingLoss
+from barevision.flow.matching.losses import HierarchicalReconstructionLoss
+from barevision.flow.settings import JointEmbeddingFlowSettings
 
 
-def combined_entropy_reconstruction_loss(
-    pyramid1,
-    pyramid2,
-    flows: List[jnp.ndarray],
-    window_size: int,
-    lambda_entropy: float,
-    level_weight_decay: float,
-    recon_weight: float,
-    entropy_temperature: float,
+def combine_entropy_reconstruction_losses(
+    entropy_loss: jnp.ndarray,
+    reconstruction_loss: jnp.ndarray,
+    entropy_aux: dict,
+    reconstruction_aux: dict,
+    reconstruction_loss_weight: float,
 ) -> tuple[jnp.ndarray, dict]:
-    """Compute combined entropy + reconstruction loss for optical flow training.
 
-    Loss formulation:
-        total = entropy_loss + recon_weight * reconstruction_loss
-
-    This makes entropy the primary objective (ensuring distinctive embeddings)
-    and reconstruction a secondary objective (ensuring embeddings are trackable).
-
-    V1: Uses hierarchical reconstruction loss across all pyramid levels.
-
-    Args:
-        pyramid1: List of feature maps from frame 1, one per level
-        pyramid2: List of feature maps from frame 2, one per level
-        flows: List of flow fields, one per level
-        window_size: Size of attention windows
-        lambda_entropy: Cross-attention loss weight in [0, 1]
-        level_weight_decay: Weight multiplier per level
-        recon_weight: Reconstruction loss weight
-        entropy_temperature: Temperature for entropy loss
-
-    Returns:
-        Tuple of (total_loss, aux_dict)
-    """
     # Compute entropy loss (always returns aux with attention weights)
-    entropy_loss, entropy_aux = compute_hierarchical_entropy_loss(
-        pyramid1,
-        pyramid2,
-        window_size=window_size,
-        lambda_entropy=lambda_entropy,
-        level_weight_decay=level_weight_decay,
-        temperature=entropy_temperature,
-    )
 
-    # Compute hierarchical reconstruction loss
-    recon_loss, recon_aux = hierarchical_reconstruction_loss(
-        pyramid1,
-        pyramid2,
-        flows,
-    )
-
+    weighted_recon_loss = reconstruction_loss_weight * reconstruction_loss
     # Combine losses: entropy is primary, reconstruction is secondary
-    total_loss = entropy_loss + recon_weight * recon_loss
+    total_loss = entropy_loss + weighted_recon_loss
 
+    loss_parts = dict(
+        entropy=entropy_loss,
+        weighted_reconstruction_loss=weighted_recon_loss,
+        reconstruction=reconstruction_loss,
+        total=total_loss,
+    )
     aux = dict(
-        self_loss=entropy_aux["self_loss"],
-        cross_loss=entropy_aux["cross_loss"],
-        entropy_loss=entropy_loss,
-        reconstruction_loss=recon_loss,
-        total_loss=total_loss,
-        level_self_attention_weights=entropy_aux["level_self_attention_weights"],
-        level_cross_attention_weights=entropy_aux["level_cross_attention_weights"],
-        level_self_entropy_maps=entropy_aux["level_self_entropy_maps"],
-        level_cross_entropy_maps=entropy_aux["level_cross_entropy_maps"],
-        level_reconstruction_losses=recon_aux["level_losses"],
+        entropy=entropy_aux,
+        reconstruction=reconstruction_aux,
+        loss=loss_parts,
     )
 
     return total_loss, aux
+
+
+class JointEmbeddingReconstructionLoss:
+    def __init__(
+        self,
+        embedding_loss: HierarchicalEmbeddingLoss,
+        reconstruction_loss: HierarchicalReconstructionLoss,
+        settings: JointEmbeddingFlowSettings,
+    ):
+        self.embedding_loss = embedding_loss
+        self.reconstruction_loss = reconstruction_loss
+        self.settings = settings
+
+    def __call__(
+        self,
+        embedding_pyramid_pair: tuple[list[jnp.ndarray], list[jnp.ndarray]],
+        flows: list[jnp.ndarray],
+    ) -> tuple[jnp.ndarray, dict]:
+        total_weight = self.settings.recon_weight + self.settings.entropy_weight
+        norm_recon_weight = self.settings.recon_weight / total_weight
+        norm_entropy_weight = self.settings.entropy_weight / total_weight
+
+        entropy_loss, entropy_aux = self.embedding_loss(embedding_pyramid_pair)
+        reconstruction_loss, reconstruction_aux = self.reconstruction_loss(
+            embedding_pyramid_pair, flows
+        )
+
+        weighted_recon_loss = norm_recon_weight * reconstruction_loss
+        weighted_entropy_loss = norm_entropy_weight * entropy_loss
+        total_loss = weighted_recon_loss + weighted_entropy_loss
+        aux = dict(
+            entropy=entropy_aux,
+            reconstruction=reconstruction_aux,
+            loss=total_loss,
+            weighted_recon_weight=weighted_recon_loss,
+            weighted_entropy_weight=weighted_entropy_loss,
+            recon_weight=norm_recon_weight,
+            entropy_weight=norm_entropy_weight,
+            embeddings=embedding_pyramid_pair,
+            flows=flows,
+        )
+        return total_loss, aux

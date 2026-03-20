@@ -6,6 +6,7 @@ from flax import nnx
 from barevision.flow.embeddings.model import HierarchicalEmbeddingModel
 from barevision.flow.matching.model import HierarchicalFlowEstimator
 from barevision.flow.matching.losses import hierarchical_reconstruction_loss
+from barevision.flow.settings import EmbeddingModelSettings, FlowModelSettings
 
 
 def test_hierarchical_flow_estimator_shape():
@@ -16,19 +17,21 @@ def test_hierarchical_flow_estimator_shape():
 
     # Create models
     embed_model = HierarchicalEmbeddingModel(
-        hidden_dim=32,
-        embed_dim=16,
-        num_groups=8,
-        num_levels=num_levels,
+        EmbeddingModelSettings(
+            hidden_dim=32,
+            embed_dim=16,
+            num_groups=8,
+            num_levels=num_levels,
+        ),
         rngs=nnx.Rngs(42),
     )
 
     flow_model = HierarchicalFlowEstimator(
-        num_levels=num_levels,
-        window_size=window_size,
-        hidden_dim=hidden_dim,
-        max_flow=0.5,
-        temperature=0.2,
+        FlowModelSettings(
+            window_size=window_size,
+            temperature=0.2,
+            hidden_dim=hidden_dim,
+        ),
         rngs=nnx.Rngs(42),
     )
 
@@ -47,7 +50,7 @@ def test_hierarchical_flow_estimator_shape():
     ]
 
     # Estimate flow
-    flows = flow_model(pyramid, pyramid)
+    flows = flow_model((pyramid, pyramid))
 
     assert len(flows) == num_levels
     for i, (flow, expected) in enumerate(zip(flows, expected_shapes)):
@@ -66,19 +69,21 @@ def test_hierarchical_reconstruction_loss_shape():
 
     # Create models
     embed_model = HierarchicalEmbeddingModel(
-        hidden_dim=32,
-        embed_dim=16,
-        num_groups=8,
-        num_levels=num_levels,
+        EmbeddingModelSettings(
+            hidden_dim=32,
+            embed_dim=16,
+            num_groups=8,
+            num_levels=num_levels,
+        ),
         rngs=nnx.Rngs(42),
     )
 
     flow_model = HierarchicalFlowEstimator(
-        num_levels=num_levels,
-        window_size=window_size,
-        hidden_dim=hidden_dim,
-        max_flow=0.5,
-        temperature=0.2,
+        FlowModelSettings(
+            window_size=window_size,
+            hidden_dim=hidden_dim,
+            temperature=0.2,
+        ),
         rngs=nnx.Rngs(42),
     )
 
@@ -90,7 +95,7 @@ def test_hierarchical_reconstruction_loss_shape():
     pyramid2 = embed_model(test_input)
 
     # Estimate flow
-    flows = flow_model(pyramid1, pyramid2)
+    flows = flow_model((pyramid1, pyramid2))
 
     # Compute loss
     loss, aux = hierarchical_reconstruction_loss(pyramid1, pyramid2, flows)
@@ -118,19 +123,21 @@ def test_hierarchical_reconstruction_loss_zero():
 
     # Create models
     embed_model = HierarchicalEmbeddingModel(
-        hidden_dim=32,
-        embed_dim=16,
-        num_groups=8,
-        num_levels=num_levels,
+        EmbeddingModelSettings(
+            hidden_dim=32,
+            embed_dim=16,
+            num_groups=8,
+            num_levels=num_levels,
+        ),
         rngs=nnx.Rngs(42),
     )
 
     flow_model = HierarchicalFlowEstimator(
-        num_levels=num_levels,
-        window_size=window_size,
-        hidden_dim=hidden_dim,
-        max_flow=0.5,
-        temperature=0.2,
+        FlowModelSettings(
+            window_size=window_size,
+            hidden_dim=hidden_dim,
+            temperature=0.2,
+        ),
         rngs=nnx.Rngs(42),
     )
 
@@ -141,7 +148,7 @@ def test_hierarchical_reconstruction_loss_zero():
     pyramid2 = embed_model(test_input)
 
     # Flow should be near-zero for identical frames
-    flows = flow_model(pyramid1, pyramid2)
+    flows = flow_model((pyramid1, pyramid2))
 
     # Compute loss
     loss, aux = hierarchical_reconstruction_loss(pyramid1, pyramid2, flows)
@@ -162,19 +169,21 @@ def test_hierarchical_flow_estimator_gradient_flow():
 
     # Create models
     embed_model = HierarchicalEmbeddingModel(
-        hidden_dim=32,
-        embed_dim=16,
-        num_groups=8,
-        num_levels=num_levels,
+        EmbeddingModelSettings(
+            hidden_dim=32,
+            embed_dim=16,
+            num_groups=8,
+            num_levels=num_levels,
+        ),
         rngs=nnx.Rngs(42),
     )
 
     flow_model = HierarchicalFlowEstimator(
-        num_levels=num_levels,
-        window_size=window_size,
-        hidden_dim=hidden_dim,
-        max_flow=0.5,
-        temperature=0.2,
+        FlowModelSettings(
+            window_size=window_size,
+            hidden_dim=hidden_dim,
+            temperature=0.2,
+        ),
         rngs=nnx.Rngs(42),
     )
 
@@ -184,7 +193,7 @@ def test_hierarchical_flow_estimator_gradient_flow():
         # Reconstruct model from params (simplified - just check loss is differentiable)
         pyramid1 = embed_model(test_input)
         pyramid2 = embed_model(test_input)
-        flows = flow_model(pyramid1, pyramid2)
+        flows = flow_model((pyramid1, pyramid2))
         loss, _ = hierarchical_reconstruction_loss(pyramid1, pyramid2, flows)
         return loss
 

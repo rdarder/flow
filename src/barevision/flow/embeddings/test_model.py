@@ -10,6 +10,7 @@ from barevision.flow.embeddings.model import (
     StandardBlock,
     count_parameters,
 )
+from barevision.flow.settings import EmbeddingModelSettings
 from barevision.utils.image import (
     calculate_required_input_size,
     calculate_coarse_output_size,
@@ -100,10 +101,12 @@ class TestHierarchicalEmbeddingModel:
     def test_pyramid_output(self):
         """Test that model returns list of feature maps."""
         model = HierarchicalEmbeddingModel(
-            hidden_dim=32,
-            embed_dim=16,
-            num_groups=8,
-            num_levels=3,
+            EmbeddingModelSettings(
+                hidden_dim=32,
+                embed_dim=16,
+                num_groups=8,
+                num_levels=3,
+            ),
             rngs=nnx.Rngs(jr.PRNGKey(0)),
         )
         # For 3 levels targeting 16×16 at coarsest: input must be 83×83
@@ -146,10 +149,12 @@ class TestHierarchicalEmbeddingModel:
     def test_single_level(self):
         """Test model with single level."""
         model = HierarchicalEmbeddingModel(
-            hidden_dim=32,
-            embed_dim=16,
-            num_groups=8,
-            num_levels=1,
+            EmbeddingModelSettings(
+                hidden_dim=32,
+                embed_dim=16,
+                num_groups=8,
+                num_levels=1,
+            ),
             rngs=nnx.Rngs(jr.PRNGKey(0)),
         )
         # For 1 level (Stem only) targeting any size: input drops 4
@@ -164,10 +169,12 @@ class TestHierarchicalEmbeddingModel:
     def test_batch_processing(self):
         """Test batch processing."""
         model = HierarchicalEmbeddingModel(
-            hidden_dim=32,
-            embed_dim=16,
-            num_groups=8,
-            num_levels=3,
+            EmbeddingModelSettings(
+                hidden_dim=32,
+                embed_dim=16,
+                num_groups=8,
+                num_levels=3,
+            ),
             rngs=nnx.Rngs(jr.PRNGKey(0)),
         )
         x = jnp.ones((4, 83, 83, 3))
@@ -180,10 +187,12 @@ class TestHierarchicalEmbeddingModel:
     def test_parameter_count(self):
         """Test parameter counting with new Decoupled Cascade architecture."""
         model = HierarchicalEmbeddingModel(
-            hidden_dim=32,
-            embed_dim=16,
-            num_groups=8,
-            num_levels=3,
+            EmbeddingModelSettings(
+                hidden_dim=32,
+                embed_dim=16,
+                num_groups=8,
+                num_levels=3,
+            ),
             rngs=nnx.Rngs(jr.PRNGKey(0)),
         )
         param_count = count_parameters(model)
@@ -218,10 +227,12 @@ class TestHierarchicalEmbeddingModel:
         from jax import grad
 
         model = HierarchicalEmbeddingModel(
-            hidden_dim=32,
-            embed_dim=16,
-            num_groups=8,
-            num_levels=3,
+            EmbeddingModelSettings(
+                hidden_dim=32,
+                embed_dim=16,
+                num_groups=8,
+                num_levels=3,
+            ),
             rngs=nnx.Rngs(jr.PRNGKey(0)),
         )
         x = jnp.ones((1, 83, 83, 3))

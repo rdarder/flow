@@ -3,10 +3,10 @@
 Combines embedding pyramid with flow matching for end-to-end training.
 """
 
-from barevision.flow.joint.model import JointEmbeddingFlotModel
-from barevision.flow.joint.losses import combined_entropy_reconstruction_loss
+from barevision.flow.joint.model import JointEmbeddingFlowModel
+from barevision.flow.joint.losses import combine_entropy_reconstruction_losses
 
 __all__ = [
-    "JointEmbeddingFlotModel",
-    "combined_entropy_reconstruction_loss",
+    "JointEmbeddingFlowModel",
+    "combine_entropy_reconstruction_losses",
 ]

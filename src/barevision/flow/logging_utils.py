@@ -12,14 +12,14 @@ from barevision.flow.embeddings.losses import (
     self_attention_entropy_loss,
     cross_attention_entropy_loss,
 )
-from barevision.flow.settings import LoggingSettings
+from barevision.flow.settings import LoggingSettings, Settings
 from barevision.utils import image
 from barevision.utils.grid import WindowGrid
-from barevision.utils.logging import JaxLogger
+from barevision.utils.logging import TensorboardLogger
 
 
 def log_attention_statistics(
-    logger: JaxLogger,
+    logger: TensorboardLogger,
     embeddings: jnp.ndarray,
     step: int,
     window_size: int = 16,
@@ -71,7 +71,7 @@ def log_attention_statistics(
 
 
 def log_embedding_statistics(
-    logger: JaxLogger,
+    logger: TensorboardLogger,
     embeddings: jnp.ndarray,
     step: int,
     prefix: str = "Embeddings",
@@ -106,7 +106,7 @@ def log_embedding_statistics(
 
 
 def log_gradient_statistics(
-    logger: JaxLogger,
+    logger: TensorboardLogger,
     optimizer,
     model,
     step: int,
@@ -181,27 +181,18 @@ def log_gradient_statistics(
         traceback.print_exc()
 
 
-def log_metrics(logger: JaxLogger, loss, aux, step: int):
+def log_metrics(logger: TensorboardLogger, loss, aux, step: int):
     """Log loss metrics to TensorBoard."""
-    logger.log_scalar("Loss/train_step", float(loss), step)
-
-    # Handle nested aux structure (from return_aux=True) or flat structure
-    loss_aux = aux.get("loss", aux) if isinstance(aux, dict) else {}
-
-    if "self_loss" in loss_aux:
-        logger.log_scalar("Loss/self_entropy", float(loss_aux["self_loss"]), step)
-    if "cross_loss" in loss_aux:
-        logger.log_scalar("Loss/cross_entropy", float(loss_aux["cross_loss"]), step)
-
-    # Log reconstruction loss if available (flow estimation)
-    if "reconstruction_loss" in loss_aux:
-        logger.log_scalar(
-            "Loss/reconstruction", float(loss_aux["reconstruction_loss"]), step
-        )
-        logger.log_scalar("Loss/entropy", float(loss_aux["entropy_loss"]), step)
+    logger.log_scalar("Loss/total", float(loss), step)
+    logger.log_scalar("Loss/entropy/self", float(aux["entropy"]["self_loss"]), step)
+    logger.log_scalar("Loss/entropy/cross", float(aux["entropy"]["cross_loss"]), step)
+    logger.log_scalar("Loss/reconstruction", float(aux["reconstruction"]["loss"]), step)
+    logger.log_scalar("Loss/entropy/total", float(aux["entropy"]["loss"]), step)
 
 
-def log_diagnostics(logger: JaxLogger, model, img1, step: int, window_size: int = 16):
+def log_diagnostics(
+    logger: TensorboardLogger, model, img1, step: int, window_size: int = 16
+):
     """Log gradient statistics, embeddings, and attention statistics.
 
     For hierarchical models, uses coarsest pyramid level.
@@ -209,11 +200,7 @@ def log_diagnostics(logger: JaxLogger, model, img1, step: int, window_size: int 
     log_gradient_statistics(logger, None, model, step)
 
     # Get pyramid and use coarsest level
-    # Support both OpticalFlowModel and HierarchicalEmbeddingModel
-    if hasattr(model, "extract_embeddings"):
-        pyramid = model.embedding_model(img1)
-    else:
-        pyramid = model(img1)
+    pyramid = model.embedding_model(img1)
 
     embeddings = pyramid[-1]  # Coarsest level
     log_embedding_statistics(logger, embeddings, step)
@@ -229,14 +216,17 @@ def format_progress_line(
     # Start with basic info
     parts = [f"Epoch {epoch} | Step {step} | Loss: {loss:.4f}"]
 
-    # Handle nested aux structure
-    loss_aux = aux.get("loss", aux) if isinstance(aux, dict) else {}
-
     # Add loss breakdown if available
-    if loss_aux and "entropy_loss" in loss_aux and "reconstruction_loss" in loss_aux:
-        entropy = float(loss_aux["entropy_loss"])
-        recon = float(loss_aux["reconstruction_loss"])
-        parts.append(f"Entropy: {entropy:.4f} | Recon: {recon:.4f}")
+
+    self_entropy = float(aux["entropy"]["self_loss"])
+    cross_entropy = float(aux["entropy"]["cross_loss"])
+    total_entropy = float(aux["entropy"]["loss"])
+    reconstruction = float(aux["reconstruction"]["loss"])
+    parts.append(
+        f"Entropy: {total_entropy:.4f} "
+        f"(self: {self_entropy:.2f} | cross: {cross_entropy:.2f}) "
+        f"| Recon: {reconstruction:.4f}"
+    )
 
     parts.append(f"{steps_per_sec:.1f} steps/sec")
 
@@ -244,7 +234,7 @@ def format_progress_line(
 
 
 def log_progress(
-    logger: JaxLogger,
+    logger: TensorboardLogger,
     model,
     img1,
     epoch: int,
@@ -285,17 +275,19 @@ def print_footer():
     print("=" * 60)
 
 
-def print_header(settings):
+def print_header(settings: Settings):
     print("=" * 60)
     print("OPTICAL FLOW TRAINING")
     print("=" * 60)
     print()
-    print(f"Pyramid levels: {settings.model.num_levels}")
+    print(f"Pyramid levels: {settings.model.embedding.num_levels}")
     print(
         f"Coarse grid: {settings.dataset.coarse_grid_size}×{settings.dataset.coarse_grid_size}"
     )
-    print(f"Window size: {settings.model.window_size}×{settings.model.window_size}")
-    print(f"Embedding dim: {settings.model.embed_dim}")
+    print(
+        f"Window size: {settings.loss.embedding.window_size}×{settings.loss.embedding.window_size}"
+    )
+    print(f"Embedding dim: {settings.model.embedding.embed_dim}")
     image_size = image.image_size(
         settings.dataset.coarse_grid_size,
         settings.dataset.window_size,
