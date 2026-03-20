@@ -54,15 +54,6 @@ def create_smoke_test_settings() -> Settings:
             every_epochs=0,  # Disable validation in smoke test for speed
             save_best=False,
         ),
-        augmentation=AugmentationSettings(
-            horizontal_flip_prob=0.5,  # Enable horizontal flip in smoke test
-            vertical_flip_prob=0.0,
-            rotation_prob=0.0,
-            rotation_max_angle=15.0,
-            color_augmentation_prob=0.0,
-            color_jitter_strength=0.1,
-            swap_frames_prob=0.0,
-        ),
     )
 
 

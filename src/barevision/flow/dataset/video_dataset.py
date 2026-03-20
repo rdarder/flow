@@ -255,7 +255,6 @@ def create_dataloader(
     split: str,
     shuffle: bool = True,
     random_seed: int | None = None,
-    augmentation_settings=None,
 ) -> Iterator[tuple[jnp.ndarray, jnp.ndarray, list[dict]]]:
     """Yield batches of frame pairs.
 
@@ -264,13 +263,10 @@ def create_dataloader(
         split: 'train' or 'val'
         shuffle: Whether to shuffle the dataset (default True for train)
         random_seed: Random seed for shuffling (for reproducibility)
-        augmentation_settings: AugmentationSettings object for on-the-fly augmentation.
-                              If None, no augmentation is applied.
 
     Yields:
         Tuple of (img1_batch, img2_batch, metadata_batch)
     """
-    from barevision.flow.dataset.augmentations import compose_augmentations
 
     image_size = image.image_size(
         dataset_settings.coarse_grid_size,
@@ -294,42 +290,18 @@ def create_dataloader(
         list(range(len(dataset))), shuffle, max_samples, random_seed
     )
 
-    # Create base RNG for augmentation seeding
-    base_rng = random.Random(random_seed)
-
     # Yield batches
     for i in range(0, len(indices), dataset_settings.batch_size):
         batch_indices = indices[i : i + dataset_settings.batch_size]
         if len(batch_indices) < dataset_settings.batch_size:
             continue
 
-        # Load and augment batch
         batch_imgs1 = []
         batch_imgs2 = []
         batch_metadata = []
 
         for idx in batch_indices:
             img1, img2, metadata = dataset[idx]
-
-            # Apply augmentations on-the-fly with per-sample deterministic seeding
-            if augmentation_settings is not None and split == "train":
-                # Create deterministic RNG for this sample
-                # Seed is derived from sample index to ensure same augmentation across epochs
-                sample_rng = random.Random(base_rng.randint(0, 2**31 - 1))
-
-                img1, img2 = compose_augmentations(
-                    img1,
-                    img2,
-                    sample_rng,
-                    horizontal_flip_prob=augmentation_settings.horizontal_flip_prob,
-                    vertical_flip_prob=augmentation_settings.vertical_flip_prob,
-                    rotation_prob=augmentation_settings.rotation_prob,
-                    rotation_max_angle=augmentation_settings.rotation_max_angle,
-                    color_augmentation_prob=augmentation_settings.color_augmentation_prob,
-                    color_jitter_strength=augmentation_settings.color_jitter_strength,
-                    swap_frames_prob=augmentation_settings.swap_frames_prob,
-                )
-
             batch_imgs1.append(img1)
             batch_imgs2.append(img2)
             batch_metadata.append(metadata)
