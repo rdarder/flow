@@ -46,12 +46,20 @@ def self_attention_entropy_loss(
 ) -> tuple[jnp.ndarray, dict]:
     """Compute self-attention entropy loss on a batch of windows.
 
-    Pure math - no splitting, no dimension rearranging. Just the loss computation.
-    Returns POSITIVE entropy so minimizing loss = minimizing entropy.
-
-    No masking, no penalties. Self naturally has highest attention (q·q = ||q||²).
-    Low entropy means: "only self should dominate, no other pixel competes"
+    Self attention (without masking) naturally has highest attention (q·q = ||q||²)
+    on itself. This is expected.
+    Low entropy means: "only self should dominate, there shouldn't be that many other
+    positions with high attention"
     This encourages unique embeddings.
+    What we really want is "an unique, small / tight region of embeddings with high
+    attention that includes self". entropy is only a proxy for that.
+    While one could expect to find the lowest possible entropy (self is the only
+    position with attention, it concentrates all of it), in reality embeddings close
+    to each other will have similar spatial traits so it's expected that they're
+    also similar. we want as unique as possible without becoming
+    so brittle that a small pose change makes the embedding for the same object
+    change drastically. what we do want to avoid is to have scattered matches across
+    a lookup window. this loss doesn't help much in disincentivizing that.
 
     Args:
         windows: (B, H, W, D) batch of windows (already split and flattened)
@@ -91,7 +99,13 @@ def cross_attention_entropy_loss(
 ) -> tuple[jnp.ndarray, dict]:
     """Compute cross-attention entropy loss on a batch of windows.
 
-    Pure math - no splitting, no dimension rearranging. Just the loss computation.
+    Similarly to self_attention, here we expect self to find an unique match on the corresponding
+    other frame. This complements self attention. together they incentivize:
+    - make unique embeddings for patterns within an image small area (self attention entropy low)
+    - that are similar to the same pattern that will likely be present in the other frame (cross attention entropy low)
+
+    without cross attention, self attention could just concentrate on noise: it's the most unique aspet of each position
+    in an image. This forces it to also be matchable and robust across slight transformations.
 
     Args:
         windows1: (B, H, W, D) batch of windows from frame 1
@@ -126,16 +140,17 @@ def cross_attention_entropy_loss(
     }
 
 
-def compute_window_attention_losses(
+def windowed_attention_losses(
     emb1: jnp.ndarray,
     emb2: jnp.ndarray,
     window_size: int,
     lambda_entropy: float,
     temperature: float,
 ) -> tuple[jnp.ndarray, dict]:
-    """Compute combined self and cross attention losses for a single pyramid level.
+    """Compute combined self and cross attention losses for a pair of frames consisting of embeddings.
+    The losses only happen in fixed size windows that make up the frames.
 
-    Handles window splitting and returns scalar loss values.
+    Handles window splitting and returns scalar loss values per frame pair in the batch.
     Fails explicitly if input resolution is not aligned with window_size.
 
     Entropy is normalized by log(window_size²) to bring it into [0, 1] range.
@@ -149,7 +164,7 @@ def compute_window_attention_losses(
 
     Returns:
         Tuple of (combined_loss, aux_dict) where:
-            - combined_loss: scalar combined loss value (normalized to [0, 1])
+            - combined_loss: scalar combined loss value (normalized to [0, 1]) shape (B, 1)
             - aux_dict: {'self_loss': scalar, 'cross_loss': scalar,
                         'self_attention_weights': (B*N, N, N), 'cross_attention_weights': (B*N, N, N),
                         'self_entropy_maps': (B, H, W), 'cross_entropy_maps': (B, H, W)}
@@ -315,7 +330,7 @@ def compute_hierarchical_entropy_loss(
             )
 
         # Delegate to single-level loss function (always returns aux with attention weights)
-        level_loss, level_aux = compute_window_attention_losses(
+        level_loss, level_aux = windowed_attention_losses(
             emb1_cropped,
             emb2_cropped,
             window_size=window_size,

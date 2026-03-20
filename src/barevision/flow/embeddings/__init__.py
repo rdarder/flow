@@ -12,7 +12,7 @@ from barevision.flow.embeddings.model import (
 from barevision.flow.embeddings.losses import (
     self_attention_entropy_loss,
     cross_attention_entropy_loss,
-    compute_window_attention_losses,
+    windowed_attention_losses,
     compute_hierarchical_entropy_loss,
     crop_to_grid_aligned,
 )
@@ -24,7 +24,7 @@ __all__ = [
     "count_parameters",
     "self_attention_entropy_loss",
     "cross_attention_entropy_loss",
-    "compute_window_attention_losses",
+    "windowed_attention_losses",
     "compute_hierarchical_entropy_loss",
     "crop_to_grid_aligned",
 ]

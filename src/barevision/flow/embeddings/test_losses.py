@@ -8,7 +8,7 @@ import pytest
 from barevision.flow.embeddings.losses import (
     self_attention_entropy_loss,
     cross_attention_entropy_loss,
-    compute_window_attention_losses,
+    windowed_attention_losses,
     compute_hierarchical_entropy_loss,
     crop_to_grid_aligned,
 )
@@ -102,7 +102,7 @@ class TestCombinedLoss:
         """Test that combined loss returns scalar values."""
         emb1 = jr.normal(jr.PRNGKey(0), (2, 32, 32, 16))
         emb2 = jr.normal(jr.PRNGKey(1), (2, 32, 32, 16))
-        loss, aux = compute_window_attention_losses(
+        loss, aux = windowed_attention_losses(
             emb1, emb2, window_size=16, lambda_entropy=0.5, temperature=1.0
         )
 
@@ -114,7 +114,7 @@ class TestCombinedLoss:
         """Test that combined loss is finite."""
         emb1 = jr.normal(jr.PRNGKey(0), (2, 32, 32, 16))
         emb2 = jr.normal(jr.PRNGKey(1), (2, 32, 32, 16))
-        loss, aux = compute_window_attention_losses(
+        loss, aux = windowed_attention_losses(
             emb1, emb2, window_size=16, lambda_entropy=0.5, temperature=1.0
         )
 
@@ -128,7 +128,7 @@ class TestCombinedLoss:
         emb2 = jr.normal(jr.PRNGKey(1), (1, 31, 32, 16))
 
         with pytest.raises(ValueError, match="Height.*not divisible"):
-            compute_window_attention_losses(
+            windowed_attention_losses(
                 emb1, emb2, window_size=16, lambda_entropy=0.5, temperature=1.0
             )
 
@@ -138,7 +138,7 @@ class TestCombinedLoss:
         emb2 = jr.normal(jr.PRNGKey(1), (1, 32, 33, 16))
 
         with pytest.raises(ValueError, match="Width.*not divisible"):
-            compute_window_attention_losses(
+            windowed_attention_losses(
                 emb1, emb2, window_size=16, lambda_entropy=0.5, temperature=1.0
             )
 
@@ -148,7 +148,7 @@ class TestCombinedLoss:
         emb2 = jr.normal(jr.PRNGKey(1), (1, 32, 32, 8))  # Different D
 
         with pytest.raises(AssertionError):
-            compute_window_attention_losses(
+            windowed_attention_losses(
                 emb1, emb2, window_size=16, lambda_entropy=0.5, temperature=1.0
             )
 
@@ -156,7 +156,7 @@ class TestCombinedLoss:
         """Test gradients flow through combined loss."""
 
         def loss_fn(e1, e2):
-            loss, _ = compute_window_attention_losses(
+            loss, _ = windowed_attention_losses(
                 e1, e2, window_size=16, lambda_entropy=0.5, temperature=1.0
             )
             return loss
@@ -175,13 +175,13 @@ class TestCombinedLoss:
         emb1 = jr.normal(jr.PRNGKey(0), (1, 32, 32, 16))
         emb2 = jr.normal(jr.PRNGKey(1), (1, 32, 32, 16))
 
-        loss1, aux1 = compute_window_attention_losses(
+        loss1, aux1 = windowed_attention_losses(
             emb1, emb2, window_size=16, lambda_entropy=0.0, temperature=1.0
         )  # Self only
-        loss2, aux2 = compute_window_attention_losses(
+        loss2, aux2 = windowed_attention_losses(
             emb1, emb2, window_size=16, lambda_entropy=1.0, temperature=1.0
         )  # Cross only
-        loss3, aux3 = compute_window_attention_losses(
+        loss3, aux3 = windowed_attention_losses(
             emb1, emb2, window_size=16, lambda_entropy=0.5, temperature=1.0
         )  # Equal mix
 
@@ -206,7 +206,7 @@ class TestLossIntegration:
         emb2 = jr.normal(jr.PRNGKey(1), (B, H, W, D))
 
         def train_loss(e1, e2):
-            loss, _ = compute_window_attention_losses(
+            loss, _ = windowed_attention_losses(
                 e1, e2, window_size=16, lambda_entropy=0.5, temperature=1.0
             )
             return loss
@@ -227,7 +227,7 @@ class TestLossIntegration:
         for h, w in [(16, 16), (32, 32)]:
             emb1 = jr.normal(jr.PRNGKey(0), (1, h, w, 16))
             emb2 = jr.normal(jr.PRNGKey(1), (1, h, w, 16))
-            loss, aux = compute_window_attention_losses(
+            loss, aux = windowed_attention_losses(
                 emb1, emb2, window_size=16, lambda_entropy=0.5, temperature=1.0
             )
             assert jnp.isscalar(loss) or loss.shape == ()
