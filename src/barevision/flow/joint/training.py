@@ -21,7 +21,7 @@ from barevision.flow.settings import (
     ModelSettings,
     Settings,
 )
-from barevision.flow.dataset.video_dataset import create_dataloader
+from barevision.flow.dataset.video import create_dataloader
 from barevision.flow.joint.visualization import log_visualizations
 from barevision.flow.checkpoint_utils import (
     generate_run_name,

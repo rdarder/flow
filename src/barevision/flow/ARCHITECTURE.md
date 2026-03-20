@@ -6,21 +6,21 @@ This document maps concepts to source files. It tells you **what is where**, not
 
 ## Quick Map
 
-| Concept | Primary File | What's There |
-|---------|-------------|--------------|
+| Concept | Primary File          | What's There |
+|---------|-----------------------|--------------|
 | Embedding Pyramid | `embeddings/model.py` | `StemBlock`, `StandardBlock`, `HierarchicalEmbeddingModel` |
 | Entropy Loss | `embeddings/losses.py` | Self/cross attention loss, hierarchical aggregation, `crop_to_grid_aligned` |
-| Level Flow Estimator | `matching/model.py` | `LevelFlowEstimator` (MLP), `AttentionFeatures` (8 features) |
-| Hierarchical Flow | `matching/model.py` | `HierarchicalFlowEstimator` (orchestrates multi-level estimation) |
-| Reconstruction Loss | `matching/losses.py` | `warp_embeddings`, `reconstruction_loss_core`, `hierarchical_reconstruction_loss` |
-| Training Orchestrator | `training/model.py` | `Model` (combines embeddings + hierarchical flow) |
-| Combined Loss | `training/losses.py` | `compute_loss` (entropy + hierarchical reconstruction) |
+| Level Flow Estimator | `matching/model.py`   | `LevelFlowEstimator` (MLP), `AttentionFeatures` (8 features) |
+| Hierarchical Flow | `matching/model.py`   | `HierarchicalFlowEstimator` (orchestrates multi-level estimation) |
+| Reconstruction Loss | `matching/losses.py`  | `warp_embeddings`, `reconstruction_loss_core`, `hierarchical_reconstruction_loss` |
+| Training Orchestrator | `training/model.py`   | `Model` (combines embeddings + hierarchical flow) |
+| Combined Loss | `training/losses.py`  | `compute_loss` (entropy + hierarchical reconstruction) |
 | Training Loop | `training/__main__.py` | `train_step`, `run_epoch`, `train` |
 | Visualization (Embeddings) | `embeddings/visualization.py` | Grid overlays, attention map figures |
 | Visualization (Matching) | `matching/visualization.py` | Flow colorwheel, arrow visualizations |
 | Visualization (Orchestrator) | `training/visualization.py` | Combines both packages for training logs |
-| Data Loading | `video_dataset.py` | Frame pair generation, batching |
-| Hyperparameters | `settings.py` | tyro CLI config, dataclasses |
+| Data Loading | `dataset/video.py`    | Frame pair generation, batching |
+| Hyperparameters | `settings.py`         | tyro CLI config, dataclasses |
 
 ---
 
@@ -48,7 +48,7 @@ barevision/flow/
 │   ├── visualization.py # Orchestrates visualization + window extraction helpers
 │   └── training.py      # Entry point: python -m barevision.flow.joint.training
 │
-├── video_dataset.py      # Data loading (shared)
+├── dataset/video.py      # Data loading (shared)
 ├── settings.py           # Hyperparameters (shared)
 ├── checkpoint_utils.py   # Model persistence and restoration
 ├── inference.py          # Inference script for flow estimation
@@ -156,7 +156,7 @@ barevision/flow/
 
 ### Shared Modules
 
-**`video_dataset.py`** — Data pipeline.
+**`dataset/video.py`** — Data pipeline.
 - `VideoFrameDataset`: Frame pair (t, t+k) generation
 - `create_dataloader`: Batch iterator
 - Only touch for dataset or pairing logic changes.
@@ -284,7 +284,7 @@ python -m barevision.flow.inference --checkpoint_path checkpoints/flow_20260317_
 pytest src/barevision/flow/embeddings/test_model.py
 pytest src/barevision/flow/embeddings/test_losses.py
 pytest src/barevision/flow/matching/test_model.py
-pytest src/barevision/flow/test_video_dataset.py
+pytest src/barevision/flow/dataset/test_video.py
 pytest src/barevision/flow/test_visualization.py
 ```
 
@@ -292,16 +292,16 @@ pytest src/barevision/flow/test_visualization.py
 
 ## Typical Workflows
 
-| Task | Files to Read |
-|------|---------------|
-| Change pyramid depth/channels | `embeddings/model.py`, `settings.py` |
-| Modify embedding loss | `embeddings/losses.py` |
-| Change matching architecture | `matching/model.py` |
-| Modify reconstruction loss | `matching/losses.py` |
-| Change training loop | `training/__main__.py` |
-| Add logging metric | `training/__main__.py`, `logging_utils.py` |
-| Change dataset format | `video_dataset.py` |
-| Adjust hyperparameters | `settings.py` (CLI or code) |
+| Task | Files to Read                                                                           |
+|------|-----------------------------------------------------------------------------------------|
+| Change pyramid depth/channels | `embeddings/model.py`, `settings.py`                                                    |
+| Modify embedding loss | `embeddings/losses.py`                                                                  |
+| Change matching architecture | `matching/model.py`                                                                     |
+| Modify reconstruction loss | `matching/losses.py`                                                                    |
+| Change training loop | `training/__main__.py`                                                                  |
+| Add logging metric | `training/__main__.py`, `logging_utils.py`                                              |
+| Change dataset format | `dataset/video.py`                                                                      |
+| Adjust hyperparameters | `settings.py` (CLI or code)                                                             |
 | Modify visualization | `embeddings/visualization.py`, `matching/visualization.py`, `training/visualization.py` |
 
 ---

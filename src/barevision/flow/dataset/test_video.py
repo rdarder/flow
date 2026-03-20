@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from barevision.flow.dataset.video_dataset import VideoFrameDataset
+from barevision.flow.dataset.video import VideoFrameDataset
 
 
 class TestVideoFrameDataset:
