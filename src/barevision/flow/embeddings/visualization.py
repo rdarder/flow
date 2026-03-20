@@ -317,21 +317,3 @@ def create_attention_maps_figure(
 
     plt.tight_layout()
     return _figure_to_array(fig)
-
-
-def compute_embedding_statistics(embeddings: np.ndarray) -> dict:
-    """Compute statistics for embedding tensor.
-
-    Args:
-        embeddings: (B, H, W, D) embedding tensor
-
-    Returns:
-        Dictionary with mean, std, min, max, sparsity
-    """
-    return {
-        "mean": float(embeddings.mean()),
-        "std": float(embeddings.std()),
-        "min": float(embeddings.min()),
-        "max": float(embeddings.max()),
-        "sparsity": float((np.abs(embeddings) < 0.01).mean()),
-    }
