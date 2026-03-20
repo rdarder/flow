@@ -120,3 +120,31 @@ class WindowGrid:
         embeddings = windows.reshape(batch_size, h, w, channels)
 
         return embeddings
+
+
+def crop_to_grid_aligned(feature_map: jnp.ndarray, window_size: int) -> jnp.ndarray:
+    """Crop feature map to dimensions divisible by window_size.
+
+    Ensures each pyramid level can be cleanly split into windows.
+    Uses centered crop to maximize spatial buffer on all sides for flow estimation.
+    This provides symmetric buffer space for motion in any direction.
+
+    Args:
+        feature_map: (B, H, W, D) feature map
+        window_size: Window size for attention
+
+    Returns:
+        Cropped feature map with H and W divisible by window_size
+    """
+    B, H, W, D = feature_map.shape
+
+    # Calculate cropped dimensions
+    crop_h = (H // window_size) * window_size
+    crop_w = (W // window_size) * window_size
+
+    # Centered crop: compute start position to center the crop
+    # If H=79 and crop_h=64, start_h = (79-64)//2 = 7, end at 71 (removes 7 top, 8 bottom)
+    start_h = (H - crop_h) // 2
+    start_w = (W - crop_w) // 2
+
+    return feature_map[:, start_h : start_h + crop_h, start_w : start_w + crop_w, :]

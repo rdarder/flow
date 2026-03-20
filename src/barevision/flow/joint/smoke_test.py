@@ -6,7 +6,6 @@ from barevision.flow.settings import (
     LoggingSettings,
     CheckpointSettings,
     ValidationSettings,
-    AugmentationSettings,
 )
 from barevision.flow.joint.training import train
 

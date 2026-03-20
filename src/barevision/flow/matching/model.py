@@ -307,8 +307,7 @@ class HierarchicalFlowEstimator(nnx.Module):
             Each flow field has shape (B, H_l, W_l, 2) where H_l, W_l are
             the cropped dimensions at that level.
         """
-        from barevision.flow.embeddings.losses import crop_to_grid_aligned
-        from barevision.utils.grid import WindowGrid
+        from barevision.utils.grid import WindowGrid, crop_to_grid_aligned
 
         if len(pyramid1) != len(pyramid2) != self.num_levels:
             raise ValueError(

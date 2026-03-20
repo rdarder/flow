@@ -13,7 +13,6 @@ from barevision.flow.embeddings.model import (
     HierarchicalEmbeddingModel,
     count_parameters,
 )
-from barevision.flow.embeddings.losses import windowed_attention_losses
 from barevision.flow.joint.model import Model as OpticalFlowModel
 
 __version__ = "0.1.0"
@@ -22,5 +21,4 @@ __all__ = [
     "OpticalFlowModel",
     "HierarchicalEmbeddingModel",
     "count_parameters",
-    "windowed_attention_losses",
 ]

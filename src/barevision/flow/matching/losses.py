@@ -102,7 +102,7 @@ def hierarchical_reconstruction_loss(
             - total_loss: Mean of per-level losses
             - aux_dict: {'level_losses': [...], 'level_warped': [...]}
     """
-    from barevision.flow.embeddings.losses import crop_to_grid_aligned
+    from barevision.utils.grid import crop_to_grid_aligned
 
     if len(pyramid1) != len(pyramid2) != len(flows):
         raise ValueError(

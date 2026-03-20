@@ -181,64 +181,6 @@ class TrainingSettings:
 
 
 @dataclass
-class AugmentationSettings:
-    """Data augmentation configuration.
-
-    Augmentations are applied on-the-fly during training with per-sample deterministic seeding.
-    This means the same sample always gets the same augmentation within and across epochs,
-    but different samples get different augmentations.
-
-    Attributes:
-        horizontal_flip_prob: Probability of horizontal flip (left-right mirror), default 0.5
-        vertical_flip_prob: Probability of vertical flip (up-down mirror), default 0.0
-        rotation_prob: Probability of random rotation, default 0.0
-        rotation_max_angle: Maximum rotation angle in degrees (rotation is uniform in [-angle, +angle])
-        color_augmentation_prob: Probability of color augmentation (brightness/contrast), default 0.0
-        color_jitter_strength: Strength of color jitter (multiplier for brightness/contrast changes)
-        swap_frames_prob: Probability of swapping (img1, img2) order, default 0.0
-                          Note: For self-supervised reconstruction loss, no flow negation needed.
-    """
-
-    horizontal_flip_prob: float = 0.5
-    vertical_flip_prob: float = 0.0
-    rotation_prob: float = 0.0
-    rotation_max_angle: float = 15.0
-    color_augmentation_prob: float = 0.0
-    color_jitter_strength: float = 0.1
-    swap_frames_prob: float = 0.0
-
-    def __post_init__(self):
-        check_value(
-            0 <= self.horizontal_flip_prob <= 1,
-            f"horizontal_flip_prob must be in [0, 1], got {self.horizontal_flip_prob}",
-        )
-        check_value(
-            0 <= self.vertical_flip_prob <= 1,
-            f"vertical_flip_prob must be in [0, 1], got {self.vertical_flip_prob}",
-        )
-        check_value(
-            0 <= self.rotation_prob <= 1,
-            f"rotation_prob must be in [0, 1], got {self.rotation_prob}",
-        )
-        check_value(
-            self.rotation_max_angle >= 0,
-            f"rotation_max_angle must be >= 0, got {self.rotation_max_angle}",
-        )
-        check_value(
-            0 <= self.color_augmentation_prob <= 1,
-            f"color_augmentation_prob must be in [0, 1], got {self.color_augmentation_prob}",
-        )
-        check_value(
-            self.color_jitter_strength >= 0,
-            f"color_jitter_strength must be >= 0, got {self.color_jitter_strength}",
-        )
-        check_value(
-            0 <= self.swap_frames_prob <= 1,
-            f"swap_frames_prob must be in [0, 1], got {self.swap_frames_prob}",
-        )
-
-
-@dataclass
 class ValidationSettings:
     """Validation configuration.
 
@@ -293,4 +235,3 @@ class Settings:
     logging: LoggingSettings
     checkpoint: CheckpointSettings
     validation: ValidationSettings
-    augmentation: AugmentationSettings
