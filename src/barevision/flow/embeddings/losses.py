@@ -179,9 +179,9 @@ def windowed_attention_losses(
         raise ValueError(f"Width {W} not divisible by window_size {window_size}")
 
     # Validate shapes match
-    assert (
-        emb2.shape == emb1.shape
-    ), f"emb2 shape {emb2.shape} != emb1 shape {emb1.shape}"
+    assert emb2.shape == emb1.shape, (
+        f"emb2 shape {emb2.shape} != emb1 shape {emb1.shape}"
+    )
 
     # Split into windows
     grid = WindowGrid(window_size=window_size)
@@ -350,7 +350,11 @@ class HierarchicalEmbeddingLoss:
     def __init__(self, settings: EmbeddingLossSettings):
         self.settings = settings
 
-    def __call__(self, pyramid_pair: tuple[list[jnp.ndarray], list[jnp.ndarray]]):
+    def __call__(
+        self,
+        pyramid_pair: tuple[list[jnp.ndarray], list[jnp.ndarray]],
+        need_aux: bool = True,
+    ):
         pyramid1, pyramid2 = pyramid_pair
 
         check_value(
@@ -364,16 +368,20 @@ class HierarchicalEmbeddingLoss:
         levels_aux = []
 
         for i, (emb1, emb2, weight) in enumerate(zip(pyramid1, pyramid2, weights)):
-            level_loss, level_aux = self._level_loss(emb1, emb2, weight, i)
+            level_loss, level_aux = self._level_loss(emb1, emb2, weight, i, need_aux)
             total_loss += level_loss
-            levels_aux.append(level_aux)
+            if need_aux:
+                levels_aux.append(level_aux)
 
-        aux = dict(
-            self_loss=sum(level_aux["self_loss"] for level_aux in levels_aux),
-            cross_loss=sum(level_aux["cross_loss"] for level_aux in levels_aux),
-            loss=total_loss,
-            levels=levels_aux,
-        )
+        if need_aux:
+            aux = dict(
+                self_loss=sum(level_aux["self_loss"] for level_aux in levels_aux),
+                cross_loss=sum(level_aux["cross_loss"] for level_aux in levels_aux),
+                loss=total_loss,
+                levels=levels_aux,
+            )
+        else:
+            aux = {}
 
         return total_loss, aux
 
@@ -381,7 +389,9 @@ class HierarchicalEmbeddingLoss:
         raw_weights = jnp.arange(levels) ** self.settings.level_weight_decay
         return raw_weights / jnp.sum(raw_weights)
 
-    def _level_loss(self, emb1: jnp.ndarray, emb2: jnp.ndarray, weight, i):
+    def _level_loss(
+        self, emb1: jnp.ndarray, emb2: jnp.ndarray, weight, i, need_aux: bool = True
+    ):
         level_weight = self.settings.level_weight_decay**weight
         window_size = self.settings.window_size
 
@@ -412,13 +422,16 @@ class HierarchicalEmbeddingLoss:
         # Apply level weight
         level_loss_weighted = level_loss * level_weight
 
-        aux = dict(
-            weighted_loss=level_loss_weighted,
-            raw_loss=level_loss,
-            weight=level_weight,
-            weighted_self_loss=level_aux["self_loss"] * level_weight,
-            weighted_cross_loss=level_aux["cross_loss"] * level_weight,
-            **level_aux,
-        )
+        if need_aux:
+            aux = dict(
+                weighted_loss=level_loss_weighted,
+                raw_loss=level_loss,
+                weight=level_weight,
+                weighted_self_loss=level_aux["self_loss"] * level_weight,
+                weighted_cross_loss=level_aux["cross_loss"] * level_weight,
+                **level_aux,
+            )
+        else:
+            aux = {}
 
         return level_loss_weighted, aux

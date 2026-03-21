@@ -41,36 +41,38 @@ from barevision.utils.console import ConsoleLogger
 from barevision.utils.logging import TensorboardLogger
 
 
-def loss_fn(img_pair, model, loss):
+def loss_fn(model, img_pair, loss, need_aux: bool):
     embeddings_pair, flows = model(img_pair)
-    total_loss, aux = loss(embeddings_pair, flows)
+    total_loss, aux = loss(embeddings_pair, flows, need_aux=need_aux)
     return total_loss, aux
 
 
-@partial(nnx.jit, static_argnames=("loss", "return_aux"))
+@partial(nnx.jit, static_argnames=("loss_calculator", "return_aux"))
 def train_step(
     model: JointEmbeddingFlowModel,
-    loss: JointEmbeddingReconstructionLoss,
+    loss_calculator: JointEmbeddingReconstructionLoss,
     optimizer: nnx.Optimizer,
     img_pair: tuple[jnp.ndarray, jnp.ndarray],
     return_aux: bool,
 ):
     loss_derivative = nnx.value_and_grad(loss_fn, has_aux=True)
-    (total_loss, aux), grads = loss_derivative(img_pair, model, loss)
-    optimizer.update(grads)
+    (total_loss, aux), grads = loss_derivative(
+        model, img_pair, loss_calculator, return_aux
+    )
+    optimizer.update(model, grads)
     if not return_aux:
-        return loss, {}
+        return total_loss, {}
     aux["img_pair"] = img_pair
-    return loss, aux
+    return total_loss, aux
 
 
-@partial(nnx.jit)
+@partial(nnx.jit, static_argnames="loss_calculator")
 def validation_step(
     model: JointEmbeddingFlowModel,
-    loss: JointEmbeddingReconstructionLoss,
+    loss_calculator: JointEmbeddingReconstructionLoss,
     img_pair: tuple[jnp.ndarray, jnp.ndarray],
 ):
-    total_loss, _ = loss_fn(img_pair, model, loss)
+    total_loss, _ = loss_fn(model, img_pair, loss_calculator, need_aux=False)
     return total_loss
 
 
@@ -219,9 +221,8 @@ class Trainer:
 
             if global_step % self.settings.logging.visualizations_every_steps == 0:
                 # Get pyramids and flows from aux_data
-                pyramid1 = aux["model"]["pyramid1"]
-                pyramid2 = aux["model"]["pyramid2"]
-                flows = aux["model"].get("flows", None)
+                pyramid1, pyramid2 = aux["embeddings"]
+                flows = aux.get("flows", None)
 
                 # Pass original images for visualization (not embeddings)
                 log_visualizations(
@@ -276,8 +277,7 @@ class Trainer:
             loss = validation_step(
                 self.model,
                 self.loss_calculator,
-                img1,
-                img2,
+                (img1, img2),
             )
             total_loss += float(loss)
             num_batches += 1
@@ -290,5 +290,5 @@ class Trainer:
 
 
 if __name__ == "__main__":
-    trainer = tyro.cli(Trainer)
-    trainer()
+    settings = tyro.cli(Settings)
+    Trainer(settings)()

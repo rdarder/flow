@@ -96,7 +96,7 @@ class EmbeddingModelSettings:
     """
 
     embed_dim: int = 16
-    hidden_dim: int = 16
+    hidden_dim: int = 32
     num_groups: int = 4
     num_levels: int = 3
 
@@ -123,9 +123,9 @@ class EmbeddingLossSettings:
     """
 
     window_size: int = 16
-    level_weight_decay: float = 1.0  # Uniform weighting across levels
-    entropy_temperature: float = 1.0  # Fixed temperature for entropy loss
-    lambda_entropy: float = 0.5  # Equal weighting between self and cross entropy
+    level_weight_decay: float = 2.0  # Uniform weighting across levels
+    entropy_temperature: float = 0.3  # Fixed temperature for entropy loss
+    lambda_entropy: float = 0.6  # Equal weighting between self and cross entropy
 
     def __post_init__(self):
         check_value(
@@ -147,7 +147,7 @@ class EmbeddingLossSettings:
 
 @dataclass(frozen=True)
 class FlowLossSettings:
-    level_weight_decay: float = 1.0
+    level_weight_decay: float = 1.5
 
 
 @dataclass(frozen=True)
@@ -158,8 +158,8 @@ class JointEmbeddingFlowSettings:
       Higher values prioritize tracking accuracy over embedding distinctness.
     """
 
-    recon_weight: float = 0.1  # Reconstruction loss weight (entropy is primary)
-    entropy_weight: float = 0.9
+    recon_weight: float = 0.2  # Reconstruction loss weight (entropy is primary)
+    entropy_weight: float = 0.8
 
     def __post_init__(self):
         check_value(self.recon_weight >= 0, "recon_weight cannot be negative")
@@ -233,7 +233,7 @@ class TrainingSettings:
     """
 
     seed: int = 42
-    epochs: int = 1
+    epochs: int = 10
     learning_rate: float = 1e-3
 
     def __post_init__(self):

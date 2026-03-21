@@ -62,28 +62,36 @@ class JointEmbeddingReconstructionLoss:
         self,
         embedding_pyramid_pair: tuple[list[jnp.ndarray], list[jnp.ndarray]],
         flows: list[jnp.ndarray],
+        need_aux: bool = True,
     ) -> tuple[jnp.ndarray, dict]:
         total_weight = self.settings.recon_weight + self.settings.entropy_weight
         norm_recon_weight = self.settings.recon_weight / total_weight
         norm_entropy_weight = self.settings.entropy_weight / total_weight
 
-        entropy_loss, entropy_aux = self.embedding_loss(embedding_pyramid_pair)
+        entropy_loss, entropy_aux = self.embedding_loss(
+            embedding_pyramid_pair, need_aux=need_aux
+        )
         reconstruction_loss, reconstruction_aux = self.reconstruction_loss(
-            embedding_pyramid_pair, flows
+            embedding_pyramid_pair, flows, need_aux=need_aux
         )
 
         weighted_recon_loss = norm_recon_weight * reconstruction_loss
         weighted_entropy_loss = norm_entropy_weight * entropy_loss
         total_loss = weighted_recon_loss + weighted_entropy_loss
-        aux = dict(
-            entropy=entropy_aux,
-            reconstruction=reconstruction_aux,
-            loss=total_loss,
-            weighted_recon_weight=weighted_recon_loss,
-            weighted_entropy_weight=weighted_entropy_loss,
-            recon_weight=norm_recon_weight,
-            entropy_weight=norm_entropy_weight,
-            embeddings=embedding_pyramid_pair,
-            flows=flows,
-        )
+
+        if need_aux:
+            aux = dict(
+                entropy=entropy_aux,
+                reconstruction=reconstruction_aux,
+                loss=total_loss,
+                weighted_recon_weight=weighted_recon_loss,
+                weighted_entropy_weight=weighted_entropy_loss,
+                recon_weight=norm_recon_weight,
+                entropy_weight=norm_entropy_weight,
+                embeddings=embedding_pyramid_pair,
+                flows=flows,
+            )
+        else:
+            aux = {}
+
         return total_loss, aux

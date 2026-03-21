@@ -150,6 +150,7 @@ class HierarchicalReconstructionLoss:
         self,
         embeddings_pyramid_pairs: tuple[list[jnp.ndarray], list[jnp.ndarray]],
         flows: list[jnp.ndarray],
+        need_aux: bool = True,
     ) -> tuple[jnp.ndarray, dict]:
 
         pyramid1, pyramid2 = embeddings_pyramid_pairs
@@ -165,17 +166,14 @@ class HierarchicalReconstructionLoss:
         levels_aux = []
 
         for emb1, emb2, flow, weight in zip(pyramid1, pyramid2, flows, weights):
-            level_loss, level_aux = self._level_loss(emb1, emb2, flow, weight)
+            level_loss, level_aux = self._level_loss(emb1, emb2, flow, weight, need_aux)
             total_loss += level_loss
-            levels_aux.append(level_aux)
+            if need_aux:
+                levels_aux.append(level_aux)
 
-        aux = {"loss": total_loss, "levels": levels_aux, "extra": self._debug_trace()}
+        aux = {"loss": total_loss, "levels": levels_aux} if need_aux else {}
 
         return total_loss, aux
-
-    def _debug_trace(self):
-        jax.debug.print("Calculating auxiliary data....")
-        return 10
 
     def _get_normalized_weights(self, levels: int):
         raw_weights = jnp.arange(levels) ** self.settings.level_weight_decay
@@ -187,6 +185,7 @@ class HierarchicalReconstructionLoss:
         emb2: jnp.ndarray,
         flow: jnp.ndarray,
         weight: jnp.ndarray,
+        need_aux: bool = True,
     ) -> tuple[jnp.ndarray, dict]:
         level_weight = self.settings.level_weight_decay**weight
 
@@ -203,10 +202,14 @@ class HierarchicalReconstructionLoss:
 
         level_loss_weighted = level_loss * level_weight
 
-        aux = dict(
-            weighted_loss=level_loss_weighted,
-            raw_loss=level_loss,
-            weight=level_weight,
-            warped=warped,
-        )
+        if need_aux:
+            aux = dict(
+                weighted_loss=level_loss_weighted,
+                raw_loss=level_loss,
+                weight=level_weight,
+                warped=warped,
+            )
+        else:
+            aux = {}
+
         return level_loss, aux

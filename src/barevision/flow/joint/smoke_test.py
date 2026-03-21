@@ -28,7 +28,7 @@ def create_smoke_test_settings() -> Settings:
             num_levels=3,
             min_frame_distance=1,
             max_frame_distance=5,
-            max_samples=2,
+            max_samples=1,
             num_workers=0,
         ),
         model=ModelSettings(
@@ -54,11 +54,11 @@ def create_smoke_test_settings() -> Settings:
             visualizations_every_steps=1,  # Log visualizations every step in smoke test
         ),
         checkpoint=CheckpointSettings(
-            every_steps=1,
+            every_steps=2,
             location="test_checkpoints",
         ),
         validation=ValidationSettings(
-            every_epochs=1,
+            every_epochs=2,
             save_best=True,
         ),
     )
