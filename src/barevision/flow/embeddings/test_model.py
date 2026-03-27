@@ -9,6 +9,8 @@ from barevision.flow.embeddings.model import (
     StemBlock,
     StandardBlock,
     count_parameters,
+    gaussian_kernel_2d,
+    depthwise_gaussian_initializer,
 )
 from barevision.flow.settings import EmbeddingModelSettings
 from barevision.utils.image import (
@@ -53,7 +55,7 @@ class TestStemBlock:
         assert "conv1" in grad_state
         assert "conv2" in grad_state
         assert "embed_conv" in grad_state
-        assert "downsample_conv" in grad_state
+        assert "mean_conv" in grad_state  # mean_conv is learnable
 
 
 class TestStandardBlock:
@@ -95,6 +97,155 @@ class TestStandardBlock:
         assert downsampled is None  # type: ignore
 
 
+class TestSymmetricMeanSubtraction:
+    """Tests for Local Contrast Normalization and mean subtraction."""
+
+    def test_gaussian_kernel_properties(self):
+        """Test Gaussian kernel initialization."""
+        kernel = gaussian_kernel_2d(sigma=1.0)
+
+        # Should be 3x3
+        assert kernel.shape == (3, 3)
+
+        # Should sum to 1.0
+        assert jnp.allclose(jnp.sum(kernel), 1.0)
+
+        # Center should be highest value
+        center = kernel[1, 1]
+        assert all(
+            center > kernel[i, j]
+            for i in range(3)
+            for j in range(3)
+            if (i, j) != (1, 1)
+        )
+
+        # Corners should be lowest values
+        corner = kernel[0, 0]
+        assert all(
+            corner <= kernel[i, j]
+            for i in range(3)
+            for j in range(3)
+            if (i, j) not in [(0, 0), (0, 2), (2, 0), (2, 2)]
+        )
+
+    def test_depthwise_gaussian_initializer(self):
+        """Test depthwise Gaussian initializer creates block-diagonal kernels."""
+        init_fn = depthwise_gaussian_initializer(sigma=1.0)
+
+        # Create kernel for 32 input/output channels
+        key = jr.PRNGKey(0)
+        # Shape: (height, width, in_features, out_features)
+        input_shape = (3, 3, 32, 32)
+        kernel = init_fn(key, input_shape)
+
+        assert kernel.shape == (3, 3, 32, 32)
+
+        # Each channel should have its own 3x3 Gaussian
+        # Check that off-diagonal channels are zero
+        for i in range(32):
+            for j in range(32):
+                if i != j:
+                    assert jnp.allclose(kernel[:, :, i, j], 0.0), (
+                        f"Off-diagonal channel [{i},{j}] should be zero"
+                    )
+                else:
+                    # Diagonal should sum to 1.0 (Gaussian kernel)
+                    channel_sum = jnp.sum(kernel[:, :, i, i])
+                    assert jnp.allclose(channel_sum, 1.0), (
+                        f"Diagonal channel [{i}] should sum to 1.0"
+                    )
+
+    def test_lcn_subtraction_preserves_dimensions(self):
+        """Test that LCN subtraction preserves spatial dimensions."""
+        model = StemBlock(
+            hidden_dim=32, embed_dim=16, num_groups=8, rngs=nnx.Rngs(jr.PRNGKey(0))
+        )
+        x = jnp.ones((1, 83, 83, 3))
+
+        # Get intermediate features by running forward pass manually
+        h = model.conv1(x)
+        h = model.norm1(h)
+        h = nnx.gelu(h)
+        h = model.conv2(h)
+        h = model.norm2(h)
+        rich_features = nnx.gelu(h)
+
+        # mean_conv with SAME padding should preserve dimensions
+        local_mean = model.mean_conv(rich_features)
+        assert local_mean.shape == rich_features.shape, (
+            "mean_conv should preserve dimensions with SAME padding"
+        )
+
+        # Subtraction should preserve dimensions
+        x_unique = rich_features - local_mean
+        assert x_unique.shape == rich_features.shape
+
+    def test_strided_slice_downsampling(self):
+        """Test that strided slice produces correct downsampling dimensions."""
+        model = StemBlock(
+            hidden_dim=32, embed_dim=16, num_groups=8, rngs=nnx.Rngs(jr.PRNGKey(0))
+        )
+        x = jnp.ones((1, 83, 83, 3))
+
+        embedding, downsampled = model(x)
+
+        # After mean_conv (SAME): still 79x79
+        # After strided slice [1:-1:2]: (79-2)//2 = 38... wait let me recalculate
+        # For H=79: indices [1, 3, 5, ..., 77] → 39 values
+        # This should match (79-3)//2 + 1 = 39 (original VALID stride=2 conv)
+        assert downsampled.shape == (1, 39, 39, 32), f"Got {downsampled.shape}"
+
+    def test_lcn_removes_low_frequency_content(self):
+        """Test that LCN subtraction removes common background signals."""
+        model = StemBlock(
+            hidden_dim=32, embed_dim=16, num_groups=8, rngs=nnx.Rngs(jr.PRNGKey(0))
+        )
+
+        # Create input with uniform signal + small unique variation
+        uniform = jnp.ones((1, 20, 20, 32)) * 5.0  # Strong uniform signal
+        variation = jr.normal(jr.PRNGKey(1), (1, 20, 20, 32)) * 0.1  # Small variation
+        rich_features = uniform + variation
+
+        # Apply mean convolution (should extract the uniform component)
+        local_mean = model.mean_conv(rich_features)
+
+        # After subtraction, mean should be close to zero
+        x_unique = rich_features - local_mean
+
+        # The uniform component should be mostly removed
+        # Mean of residuals should be much smaller than original mean
+        original_mean = jnp.mean(jnp.abs(rich_features))
+        residual_mean = jnp.mean(jnp.abs(x_unique))
+
+        assert residual_mean < original_mean, "LCN should reduce mean magnitude"
+
+    def test_mean_conv_is_learnable(self):
+        """Test that mean_conv parameters are trainable."""
+        from jax import grad
+
+        model = StemBlock(
+            hidden_dim=32, embed_dim=16, num_groups=8, rngs=nnx.Rngs(jr.PRNGKey(0))
+        )
+        x = jnp.ones((1, 83, 83, 3))
+
+        def loss_fn(m, inp):
+            emb, _ = m(inp)
+            return emb.sum()
+
+        grads = grad(loss_fn, argnums=0)(model, x)
+        grad_state = nnx.state(grads)
+
+        # mean_conv should have gradients
+        assert "mean_conv" in grad_state
+        assert "kernel" in grad_state["mean_conv"]
+
+        # Gradients should be non-zero
+        mean_grad = grad_state["mean_conv"]["kernel"]
+        assert not jnp.allclose(mean_grad, 0.0), (
+            "mean_conv should have non-zero gradients"
+        )
+
+
 class TestHierarchicalEmbeddingModel:
     """Tests for HierarchicalEmbeddingModel forward pass and parameter counting."""
 
@@ -122,9 +273,9 @@ class TestHierarchicalEmbeddingModel:
 
         # Spatial dimensions should decrease at each level
         for i in range(len(pyramid) - 1):
-            assert (
-                pyramid[i].shape[1] > pyramid[i + 1].shape[1]
-            ), f"Level {i} should be larger than level {i+1}"
+            assert pyramid[i].shape[1] > pyramid[i + 1].shape[1], (
+                f"Level {i} should be larger than level {i + 1}"
+            )
 
         # Verify exact dimensions
         # Level 0: 83 - 4 = 79
@@ -185,7 +336,7 @@ class TestHierarchicalEmbeddingModel:
             assert level.shape[0] == 4, "Batch size should be preserved"
 
     def test_parameter_count(self):
-        """Test parameter counting with new Decoupled Cascade architecture."""
+        """Test parameter counting with Symmetric Mean Subtraction architecture."""
         model = HierarchicalEmbeddingModel(
             EmbeddingModelSettings(
                 hidden_dim=32,
@@ -202,25 +353,26 @@ class TestHierarchicalEmbeddingModel:
         #   Norm1 (GroupNorm, 32 ch): 32 + 32 = 64
         #   Conv2 (grouped 3×3, 8g, 32→32): 8*4*4*9 + 32 = 1184
         #   Norm2 (GroupNorm, 32 ch): 64
+        #   Mean Conv (depthwise 3×3, 32g, 32→32): 32*9 + 32 = 320
         #   Embed conv (1×1, 32→16): 32*16 + 16 = 528
-        #   Downsample (grouped 3×3, 8g, 32→32): 1184
-        #   Stem total: 896 + 64 + 1184 + 64 + 528 + 1184 = 3,920
+        #   Stem total: 896 + 64 + 1184 + 64 + 320 + 528 = 3,056
         #
         # Standard Block 1 (non-last):
         #   Conv1 (grouped 3×3, 8g, 32→32): 1184
         #   Norm1 (GroupNorm, 32 ch): 64
+        #   Mean Conv (depthwise 3×3, 32g, 32→32): 320
         #   Embed conv (1×1, 32→16): 528
-        #   Downsample (grouped 3×3, 8g, 32→32): 1184
-        #   Standard 1 total: 1184 + 64 + 528 + 1184 = 2,960
+        #   Standard 1 total: 1184 + 64 + 320 + 528 = 2,096
         #
         # Standard Block 2 (last):
         #   Conv1: 1184
         #   Norm1: 64
+        #   Mean Conv: 320
         #   Embed conv: 528
-        #   Standard 2 total: 1184 + 64 + 528 = 1,776
+        #   Standard 2 total: 1184 + 64 + 320 + 528 = 2,096
         #
-        # Total: 3,920 + 2,960 + 1,776 = 8,656
-        assert param_count == 8656, f"Expected 8656 parameters, got {param_count}"
+        # Total: 3,056 + 2,096 + 2,096 = 7,248
+        assert param_count == 7248, f"Expected 7248 parameters, got {param_count}"
 
     def test_gradient_flow(self):
         """Test that gradients flow through the model."""
@@ -252,11 +404,17 @@ class TestHierarchicalEmbeddingModel:
         stem_grads = grad_state["blocks"][0]  # type: ignore
         assert "conv1" in stem_grads
         assert "conv2" in stem_grads
+        assert "mean_conv" in stem_grads  # New: mean_conv should have gradients
 
         # Verify gradients exist for level 0
         level0_conv1 = stem_grads["conv1"]["kernel"]  # type: ignore
         assert level0_conv1 is not None
         assert level0_conv1.shape == (3, 3, 3, 32)
+
+        # Verify mean_conv gradients exist
+        level0_mean = stem_grads["mean_conv"]["kernel"]  # type: ignore
+        assert level0_mean is not None
+        assert level0_mean.shape == (3, 3, 32, 32)  # Depthwise
 
 
 class TestDimensionalMath:
@@ -303,9 +461,9 @@ class TestDimensionalMath:
         # Calculate output from that input
         output = calculate_coarse_output_size(required_input, num_levels)
 
-        assert (
-            output == target
-        ), f"Roundtrip failed: {required_input} -> {output} (expected {target})"
+        assert output == target, (
+            f"Roundtrip failed: {required_input} -> {output} (expected {target})"
+        )
 
     def test_single_level_math(self):
         """Test dimensional math for single level."""

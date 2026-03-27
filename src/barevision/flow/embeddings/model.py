@@ -2,37 +2,45 @@
 
 Multi-scale feature pyramid for coarse-to-fine patch matching.
 
-Architecture (Decoupled Cascade, 3 levels, stride=2 downsampling):
+Architecture (Decoupled Cascade with Symmetric Mean Subtraction, 3 levels):
     Input: (B, H, W, 3) RGB
       ↓
     StemBlock (Level 0):
       - Conv1: 3×3, stride=1, dense (3→32 ch) → GroupNorm → GELU
       - Conv2: 3×3, stride=1, grouped (8 groups, 32→32 ch) → GroupNorm → GELU
+      - Mean Conv: 3×3, stride=1, depthwise (32 groups, SAME padding) → local_mean
+      - Local Contrast Normalization: rich_features - local_mean
       - Branch A (Embed): 1×1 Conv (32→16 ch) → L2 Norm
-      - Branch B (Downsample): 3×3, stride=2, grouped (32→32 ch)
+      - Branch B (Downsample): strided slice of local_mean [:, 1:-1:2, 1:-1:2, :]
       ↓
     StandardBlock (Level 1):
       - Conv1: 3×3, stride=1, grouped (8 groups, 32→32 ch) → GroupNorm → GELU
+      - Mean Conv: 3×3, stride=1, depthwise (32 groups, SAME padding) → local_mean
+      - Local Contrast Normalization: rich_features - local_mean
       - Branch A (Embed): 1×1 Conv (32→16 ch) → L2 Norm
-      - Branch B (Downsample): 3×3, stride=2, grouped (32→32 ch)
+      - Branch B (Downsample): strided slice of local_mean [:, 1:-1:2, 1:-1:2, :]
       ↓
     StandardBlock (Level 2, last):
       - Conv1: 3×3, stride=1, grouped (8 groups, 32→32 ch) → GroupNorm → GELU
+      - Mean Conv: 3×3, stride=1, depthwise (32 groups, SAME padding) → local_mean
+      - Local Contrast Normalization: rich_features - local_mean
       - Branch A (Embed): 1×1 Conv (32→16 ch) → L2 Norm
       - Branch B: None (last level)
 
 Output: List of feature maps [Level_0, Level_1, Level_2]
         Each level has 16 channels, spatial dimensions halve at each level.
 
-Note: Uses VALID padding (no padding), so spatial dimensions shrink at each level.
+Note: Uses VALID padding for feature convs, SAME padding for mean_conv.
       Receptive field expands through stacked stride=1 convolutions before downsampling.
       Stem Block: 25 pixel RF (two 3×3 stacked)
       Standard Block: Inherits RF from previous levels + 2 pixel expansion
 
-Decoupled Cascade Design:
-    - Feature extraction (stride=1) builds deep structural understanding
-    - Downsampling (stride=2) is separate from feature extraction
-    - Receptive field expands before projection to embedding space
+Symmetric Mean Subtraction Design:
+    - Depthwise 3×3 convolution computes local mean per channel (learnable Gaussian init)
+    - Subtracting local mean removes common background signals from hidden features
+    - Local Contrast Normalization boosts uniqueness of local textures
+    - 1×1 embed mixer receives "cleaned" residuals, can focus on unique signatures
+    - Strided slice of mean_conv output provides pyramid downsampling (mimics VALID stride=2)
     - GELU activation preserves more gradient flow than ReLU
     - No activation on embeddings before L2 normalization
 """
@@ -46,16 +54,80 @@ from flax import nnx
 from barevision.flow.settings import EmbeddingLossSettings, EmbeddingModelSettings
 
 
+def gaussian_kernel_2d(sigma: float = 1.0) -> jnp.ndarray:
+    """Create a 2D Gaussian kernel for initialization.
+
+    Args:
+        sigma: Standard deviation of the Gaussian distribution
+
+    Returns:
+        3x3 kernel normalized to sum to 1.0
+    """
+    # Create 3x3 grid centered at 0
+    ax = jnp.arange(-1, 2, dtype=jnp.float32)
+    xx, yy = jnp.meshgrid(ax, ax)
+
+    # 2D Gaussian
+    kernel = jnp.exp(-(xx**2 + yy**2) / (2 * sigma**2))
+
+    # Normalize to sum to 1
+    kernel = kernel / jnp.sum(kernel)
+
+    return kernel
+
+
+def depthwise_gaussian_initializer(
+    sigma: float = 1.0,
+):
+    """Create an initializer for depthwise convolution with Gaussian kernels.
+
+    This creates a separate Gaussian kernel for each input channel.
+
+    Args:
+        sigma: Standard deviation of the Gaussian distribution
+
+    Returns:
+        Initializer function compatible with nnx.Conv
+    """
+
+    def init(key, input_shape, dtype=jnp.float32):
+        # input_shape: (height, width, in_features, out_features)
+        # For depthwise: out_features = in_features
+        _, _, in_features, out_features = input_shape
+
+        # Create single 3x3 Gaussian kernel
+        single_kernel = gaussian_kernel_2d(sigma).astype(dtype)
+
+        # For depthwise convolution, we need shape (3, 3, in_features, out_features)
+        # where each input channel connects to corresponding output channel
+        # Block diagonal structure: each channel has its own kernel
+        kernel = jnp.zeros((3, 3, in_features, out_features), dtype=dtype)
+
+        # Fill diagonal blocks (each input channel → corresponding output channel)
+        for i in range(min(in_features, out_features)):
+            kernel = kernel.at[:, :, i, i].set(single_kernel)
+
+        return kernel
+
+    return init
+
+
 class StemBlock(nnx.Module):
     """Root block of the pyramid (Level 0 only).
 
     Uses two stacked 3×3 convolutions to expand receptive field from 9 to 25 pixels
-    before splitting into embedding and downsampling branches.
+    before applying Local Contrast Normalization and splitting into embedding and
+    downsampling branches.
 
     Input: (B, H, W, 3) RGB
     Returns: (embedding, downsampled_output)
         - embedding: (B, H-4, W-4, embed_dim) L2-normalized
         - downsampled_output: (B, (H-7)//2, (W-7)//2, hidden_dim)
+
+    Symmetric Mean Subtraction:
+        - depthwise 3x3 conv computes local mean per channel (SAME padding)
+        - Subtracts local mean from rich_features to boost uniqueness
+        - Strided slice of mean output provides downsampling for next level
     """
 
     def __init__(
@@ -106,23 +178,25 @@ class StemBlock(nnx.Module):
             num_groups=num_groups // 2, num_features=hidden_dim, rngs=rngs
         )
 
-        # Branch A: 1×1 Conv for embedding projection
+        # Mean Conv: Depthwise 3×3, stride=1, SAME padding
+        # Computes local mean for contrast normalization
+        self.mean_conv = nnx.Conv(
+            in_features=hidden_dim,
+            out_features=hidden_dim,
+            kernel_size=(3, 3),
+            strides=(1, 1),
+            padding="SAME",
+            feature_group_count=hidden_dim,  # Depthwise convolution
+            kernel_init=depthwise_gaussian_initializer(sigma=1.0),
+            rngs=rngs,
+        )
+
+        # Branch A: 1×1 Conv for embedding projection (operates on residuals)
         self.embed_conv = nnx.Conv(
             in_features=hidden_dim,
             out_features=embed_dim,
             kernel_size=(1, 1),
             padding="VALID",
-            rngs=rngs,
-        )
-
-        # Branch B: 3×3 Conv for downsampling
-        self.downsample_conv = nnx.Conv(
-            in_features=hidden_dim,
-            out_features=hidden_dim,
-            kernel_size=(3, 3),
-            strides=(2, 2),
-            padding="VALID",
-            feature_group_count=num_groups,
             rngs=rngs,
         )
 
@@ -146,13 +220,23 @@ class StemBlock(nnx.Module):
         x = nnx.gelu(x)
         rich_features = x
 
-        # Branch A: Embedding projection
-        embedding = self.embed_conv(rich_features)
+        # Local Contrast Normalization
+        # Depthwise conv computes per-channel local mean (preserves dimensions via SAME)
+        local_mean = self.mean_conv(rich_features)
+
+        # Subtract local mean to remove common background signals
+        # This boosts uniqueness of local textures before embedding projection
+        x_unique = rich_features - local_mean
+
+        # Branch A: Embedding projection (operates on residuals)
+        embedding = self.embed_conv(x_unique)
         norm = jnp.linalg.norm(embedding, axis=-1, keepdims=True)
         embedding = embedding / (norm + 1e-8)
 
-        # Branch B: Downsampling
-        downsampled = self.downsample_conv(rich_features)
+        # Branch B: Downsampling via strided slice of local_mean
+        # Mimics 3x3 VALID stride=2 convolution behavior
+        # Slice [1:-1:2] starts at index 1, ends before last, stride 2
+        downsampled = local_mean[:, 1:-1:2, 1:-1:2, :]
 
         return embedding, downsampled
 
@@ -161,12 +245,18 @@ class StandardBlock(nnx.Module):
     """Standard block for pyramid levels 1 to N.
 
     Uses a single 3×3 convolution (inherits receptive field from previous levels)
-    before splitting into embedding and downsampling branches.
+    before applying Local Contrast Normalization and splitting into embedding and
+    downsampling branches.
 
     Input: (B, H, W, hidden_dim)
     Returns: (embedding, downsampled_output or None)
         - embedding: (B, H-2, W-2, embed_dim) L2-normalized
         - downsampled_output: (B, (H-5)//2, (W-5)//2, hidden_dim) or None if last level
+
+    Symmetric Mean Subtraction:
+        - depthwise 3x3 conv computes local mean per channel (SAME padding)
+        - Subtracts local mean from rich_features to boost uniqueness
+        - Strided slice of mean output provides downsampling for next level
     """
 
     def __init__(
@@ -206,7 +296,20 @@ class StandardBlock(nnx.Module):
             num_groups=num_groups // 2, num_features=hidden_dim, rngs=rngs
         )
 
-        # Branch A: 1×1 Conv for embedding projection
+        # Mean Conv: Depthwise 3×3, stride=1, SAME padding
+        # Computes local mean for contrast normalization
+        self.mean_conv = nnx.Conv(
+            in_features=hidden_dim,
+            out_features=hidden_dim,
+            kernel_size=(3, 3),
+            strides=(1, 1),
+            padding="SAME",
+            feature_group_count=hidden_dim,  # Depthwise convolution
+            kernel_init=depthwise_gaussian_initializer(sigma=1.0),
+            rngs=rngs,
+        )
+
+        # Branch A: 1×1 Conv for embedding projection (operates on residuals)
         self.embed_conv = nnx.Conv(
             in_features=hidden_dim,
             out_features=embed_dim,
@@ -214,18 +317,6 @@ class StandardBlock(nnx.Module):
             padding="VALID",
             rngs=rngs,
         )
-
-        # Branch B: 3×3 Conv for downsampling (only if not last level)
-        if not is_last_level:
-            self.downsample_conv = nnx.Conv(
-                in_features=hidden_dim,
-                out_features=hidden_dim,
-                kernel_size=(3, 3),
-                strides=(2, 2),
-                padding="VALID",
-                feature_group_count=num_groups,
-                rngs=rngs,
-            )
 
     def __call__(self, x: jnp.ndarray) -> Tuple[jnp.ndarray, Optional[jnp.ndarray]]:
         """Forward pass through StandardBlock.
@@ -242,15 +333,24 @@ class StandardBlock(nnx.Module):
         x = nnx.gelu(x)
         rich_features = x
 
-        # Branch A: Embedding projection
-        embedding = self.embed_conv(rich_features)
+        # Local Contrast Normalization
+        # Depthwise conv computes per-channel local mean (preserves dimensions via SAME)
+        local_mean = self.mean_conv(rich_features)
+
+        # Subtract local mean to remove common background signals
+        # This boosts uniqueness of local textures before embedding projection
+        x_unique = rich_features - local_mean
+
+        # Branch A: Embedding projection (operates on residuals)
+        embedding = self.embed_conv(x_unique)
         norm = jnp.linalg.norm(embedding, axis=-1, keepdims=True)
         embedding = embedding / (norm + 1e-8)
 
-        # Branch B: Downsampling (if not last level)
+        # Branch B: Downsampling via strided slice of local_mean (if not last level)
+        # Mimics 3x3 VALID stride=2 convolution behavior
         downsampled = None
         if not self.is_last_level:
-            downsampled = self.downsample_conv(rich_features)
+            downsampled = local_mean[:, 1:-1:2, 1:-1:2, :]
 
         return embedding, downsampled
 

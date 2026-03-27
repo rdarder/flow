@@ -11,25 +11,30 @@ This document outlines the design and architecture of the Barevision optical flo
 
 The embedding engine processes raw RGB frames into a multi-scale pyramid of dense, visually unique feature embeddings. It is designed to be highly efficient on NPUs by strictly utilizing dense and grouped convolutions without complex routing or spatial padding.
 
-### Architecture: The "Decoupled Cascade"
+### Architecture: The "Decoupled Cascade" with Symmetric Mean Subtraction
 
-To prevent the destruction of high-frequency structural details during downsampling, feature extraction is strictly decoupled from spatial reduction.
+To prevent the destruction of high-frequency structural details during downsampling, feature extraction is strictly decoupled from spatial reduction. Additionally, Local Contrast Normalization (LCN) is applied to boost the uniqueness of local textures.
 
 * **Strictly `VALID` Padding:** The network uses no artificial padding (`padding='VALID'`). This drops edge pixels at every convolution, structurally preventing misleading boundary data (zero-padding) from corrupting the embeddings.
 * **L2 Normalized Hypersphere:** The final embeddings at each level are L2 normalized to unit length. Crucially, no ReLU activation is applied before normalization, allowing the network to utilize the full [-1.0, 1.0] cosine similarity space.
+* **Symmetric Mean Subtraction:** A depthwise 3×3 convolution with SAME padding computes a local mean per channel, which is subtracted from the hidden features before embedding projection. This removes common background signals and boosts local uniqueness.
 
 **Pyramid Blocks:**
 
 1. **StemBlock (Level 0):** Operates on raw 3-channel RGB. Expands the receptive field to 25 pixels using two stacked 3x3 `stride=1` convolutions.
    * `Conv(Dense, 3→32)` → `GroupNorm` → `GELU`
    * `Conv(Groups=8, 32→32)` → `GroupNorm` → `GELU`
-   * *Branch A (Embed):* 1x1 Conv (32→16) → L2 Norm
-   * *Branch B (Downsample):* 3x3 Conv, `stride=2`, `VALID`
+   * **Mean Conv:** `Conv(Depthwise, 3×3, stride=1, SAME)` → local_mean per channel
+   * **Local Contrast Normalization:** `rich_features - local_mean`
+   * *Branch A (Embed):* 1x1 Conv (32→16) → L2 Norm (operates on residuals)
+   * *Branch B (Downsample):* Strided slice `local_mean[:, 1:-1:2, 1:-1:2, :]`
 
 2. **StandardBlock (Levels 1 to N):** Refines features for coarser levels.
    * `Conv(Groups=8, 32→32)` → `GroupNorm` → `GELU`
-   * *Branch A (Embed):* 1x1 Conv (32→16) → L2 Norm
-   * *Branch B (Downsample):* 3x3 Conv, `stride=2`, `VALID` (Omitted on the final level).
+   * **Mean Conv:** `Conv(Depthwise, 3×3, stride=1, SAME)` → local_mean per channel
+   * **Local Contrast Normalization:** `rich_features - local_mean`
+   * *Branch A (Embed):* 1x1 Conv (32→16) → L2 Norm (operates on residuals)
+   * *Branch B (Downsample):* Strided slice `local_mean[:, 1:-1:2, 1:-1:2, :]` (Omitted on the final level).
 
 ### Resolution and the Spatial Buffer
 

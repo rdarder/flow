@@ -108,8 +108,15 @@ Replaces entropy minimization with spatial variance to encourage spatially conce
 ### Embeddings Package (`embeddings/`)
 
 **`model.py`** — Hierarchical embedding pyramid.
-- `StemBlock`: Level 0, RGB input, two stacked 3×3 convs
-- `StandardBlock`: Levels 1-N, single 3×3 conv with group normalization
+- `gaussian_kernel_2d`: Creates 3x3 Gaussian kernel for initialization
+- `depthwise_gaussian_initializer`: Initializer for depthwise mean_conv with Gaussian weights
+- `StemBlock`: Level 0, RGB input, two stacked 3×3 convs + mean subtraction
+  - `mean_conv`: Depthwise 3×3, SAME padding, Gaussian-initialized
+  - Computes `local_mean = mean_conv(rich_features)`
+  - Applies LCN: `x_unique = rich_features - local_mean`
+  - Downsampling via strided slice: `local_mean[:, 1:-1:2, 1:-1:2, :]`
+- `StandardBlock`: Levels 1-N, single 3×3 conv + mean subtraction
+  - Same mean subtraction and strided slice as StemBlock
 - `HierarchicalEmbeddingModel`: Full pyramid, L2-normalized outputs
 - `count_parameters`: Utility for parameter counting
 - Read this for embedding architecture changes.
