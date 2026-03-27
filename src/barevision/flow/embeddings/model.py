@@ -39,6 +39,7 @@ Decoupled Cascade Design:
 
 from typing import List, Optional, Tuple
 
+import jax
 import jax.numpy as jnp
 from flax import nnx
 

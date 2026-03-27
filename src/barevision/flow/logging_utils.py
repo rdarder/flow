@@ -48,15 +48,15 @@ def log_attention_statistics(
     flat_windows = windows.reshape(B * num_windows, window_size, window_size, D)
 
     # Precompute coordinates
-    coords, coords_sq = _generate_normalized_coordinates(window_size)
+    coords = _generate_normalized_coordinates(window_size)
 
     # Compute spatial variances (both return tuple of (loss, aux))
     # Use temperature=0.3 for diagnostic logging (same as training)
     self_variance, self_aux = self_attention_spatial_variance(
-        flat_windows, temperature=0.3, coords=coords, coords_sq=coords_sq
+        flat_windows, temperature=0.3, coords=coords
     )
     cross_variance, cross_aux = cross_attention_spatial_variance(
-        flat_windows, flat_windows, temperature=0.3, coords=coords, coords_sq=coords_sq
+        flat_windows, flat_windows, temperature=0.3, coords=coords
     )
 
     # Log histograms

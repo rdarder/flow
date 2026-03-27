@@ -31,16 +31,16 @@ class TestCoordinateGeneration:
     def test_coordinates_shape(self):
         """Coordinates should have shape (N, 2) where N = window_size^2."""
         window_size = 4
-        coords, coords_sq = _generate_normalized_coordinates(window_size)
+        coords = _generate_normalized_coordinates(window_size)
 
         N = window_size * window_size
         assert coords.shape == (N, 2)
-        assert coords_sq.shape == (N, 2)
+        
 
     def test_coordinates_normalized_to_unit_interval(self):
         """Coordinates should be in [0, 1] range."""
         window_size = 16
-        coords, _ = _generate_normalized_coordinates(window_size)
+        coords = _generate_normalized_coordinates(window_size)
 
         assert jnp.all(coords >= 0.0)
         assert jnp.all(coords <= 1.0)
@@ -48,7 +48,7 @@ class TestCoordinateGeneration:
     def test_coordinates_span_full_range(self):
         """Min and max coordinates should be 0 and 1."""
         window_size = 16
-        coords, _ = _generate_normalized_coordinates(window_size)
+        coords = _generate_normalized_coordinates(window_size)
 
         assert jnp.isclose(coords.min(), 0.0)
         assert jnp.isclose(coords.max(), 1.0)
@@ -62,8 +62,8 @@ class TestSpatialVarianceComputation:
         B, N = 2, 256  # 16x16 window
         attention_weights = jnp.ones((B, N, N)) / N  # Uniform attention
 
-        coords, coords_sq = _generate_normalized_coordinates(16)
-        variance = _compute_spatial_variance(attention_weights, coords, coords_sq)
+        coords = _generate_normalized_coordinates(16)
+        variance = _compute_spatial_variance(attention_weights, coords)
 
         assert variance.shape == (B, N)
 
@@ -75,8 +75,8 @@ class TestSpatialVarianceComputation:
         # Uniform attention (all positions equally weighted)
         uniform_attn = jnp.ones((1, N, N)) / N
 
-        coords, coords_sq = _generate_normalized_coordinates(window_size)
-        variance = _compute_spatial_variance(uniform_attn, coords, coords_sq)
+        coords = _generate_normalized_coordinates(window_size)
+        variance = _compute_spatial_variance(uniform_attn, coords)
 
         # Variance should be relatively high (spread out attention)
         assert jnp.all(variance > 0.01)  # Non-zero variance
@@ -89,8 +89,8 @@ class TestSpatialVarianceComputation:
         # Concentrated attention (all weight on single position)
         concentrated_attn = jax.nn.one_hot(jnp.zeros((1, N), dtype=jnp.int32), N)
 
-        coords, coords_sq = _generate_normalized_coordinates(window_size)
-        variance = _compute_spatial_variance(concentrated_attn, coords, coords_sq)
+        coords = _generate_normalized_coordinates(window_size)
+        variance = _compute_spatial_variance(concentrated_attn, coords)
 
         # Variance should be zero (or very close) for perfectly concentrated attention
         assert jnp.all(variance < 1e-6)
@@ -107,8 +107,8 @@ class TestSpatialVarianceComputation:
         gaussian_attn = gaussian / gaussian.sum()
         gaussian_attn = jnp.tile(gaussian_attn, (1, N, 1))
 
-        coords, coords_sq = _generate_normalized_coordinates(window_size)
-        variance = _compute_spatial_variance(gaussian_attn, coords, coords_sq)
+        coords = _generate_normalized_coordinates(window_size)
+        variance = _compute_spatial_variance(gaussian_attn, coords)
 
         # Variance should be between uniform and concentrated
         assert jnp.all(variance > 1e-6)  # Not perfectly concentrated
@@ -123,9 +123,9 @@ class TestSelfAttentionVariance:
         B, H, W, D = 2, 16, 16, 16
         windows = jax.random.normal(jax.random.PRNGKey(0), (B, H, W, D))
 
-        coords, coords_sq = _generate_normalized_coordinates(H)
+        coords = _generate_normalized_coordinates(H)
         loss, aux = self_attention_spatial_variance(
-            windows, temperature=0.3, coords=coords, coords_sq=coords_sq
+            windows, temperature=0.3, coords=coords
         )
 
         assert loss.shape == (B, H, W)
@@ -146,13 +146,13 @@ class TestSelfAttentionVariance:
         # Uniform embeddings → uniform attention (high variance)
         windows_uniform = jnp.ones((B, H, W, D))
 
-        coords, coords_sq = _generate_normalized_coordinates(window_size)
+        coords = _generate_normalized_coordinates(window_size)
 
         loss_random, _ = self_attention_spatial_variance(
-            windows_random, temperature=0.3, coords=coords, coords_sq=coords_sq
+            windows_random, temperature=0.3, coords=coords
         )
         loss_uniform, _ = self_attention_spatial_variance(
-            windows_uniform, temperature=0.3, coords=coords, coords_sq=coords_sq
+            windows_uniform, temperature=0.3, coords=coords
         )
 
         # Note: This test may fail depending on random initialization
@@ -168,9 +168,9 @@ class TestCrossAttentionVariance:
         windows1 = jax.random.normal(jax.random.PRNGKey(0), (B, H, W, D))
         windows2 = jax.random.normal(jax.random.PRNGKey(1), (B, H, W, D))
 
-        coords, coords_sq = _generate_normalized_coordinates(H)
+        coords = _generate_normalized_coordinates(H)
         loss, aux = cross_attention_spatial_variance(
-            windows1, windows2, temperature=0.3, coords=coords, coords_sq=coords_sq
+            windows1, windows2, temperature=0.3, coords=coords
         )
 
         assert loss.shape == (B, H, W)
@@ -185,9 +185,9 @@ class TestCrossAttentionVariance:
         # Identical embeddings → should match to self position
         windows = jax.random.normal(jax.random.PRNGKey(0), (B, H, W, D))
 
-        coords, coords_sq = _generate_normalized_coordinates(window_size)
+        coords = _generate_normalized_coordinates(window_size)
         loss, aux = cross_attention_spatial_variance(
-            windows, windows, temperature=0.3, coords=coords, coords_sq=coords_sq
+            windows, windows, temperature=0.3, coords=coords
         )
 
         # Cross-attention should be concentrated (low variance)
@@ -356,11 +356,11 @@ class TestGradientFlow:
         B, H, W, D = 2, 16, 16, 16
         windows = jax.random.normal(jax.random.PRNGKey(0), (B, H, W, D))
 
-        coords, coords_sq = _generate_normalized_coordinates(H)
+        coords = _generate_normalized_coordinates(H)
 
         def loss_fn(w):
             loss, _ = self_attention_spatial_variance(
-                w, temperature=0.3, coords=coords, coords_sq=coords_sq
+                w, temperature=0.3, coords=coords
             )
             return loss.mean()
 
@@ -377,11 +377,11 @@ class TestGradientFlow:
         windows1 = jax.random.normal(jax.random.PRNGKey(0), (B, H, W, D))
         windows2 = jax.random.normal(jax.random.PRNGKey(1), (B, H, W, D))
 
-        coords, coords_sq = _generate_normalized_coordinates(H)
+        coords = _generate_normalized_coordinates(H)
 
         def loss_fn(w1, w2):
             loss, _ = cross_attention_spatial_variance(
-                w1, w2, temperature=0.3, coords=coords, coords_sq=coords_sq
+                w1, w2, temperature=0.3, coords=coords
             )
             return loss.mean()
 

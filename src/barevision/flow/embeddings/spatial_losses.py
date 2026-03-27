@@ -26,9 +26,7 @@ from barevision.utils.checks import check_value
 from barevision.utils.grid import crop_to_grid_aligned, WindowGrid
 
 
-def _generate_normalized_coordinates(
-    window_size: int,
-) -> Tuple[jnp.ndarray, jnp.ndarray]:
+def _generate_normalized_coordinates(window_size: int) -> jnp.ndarray:
     """Generate normalized coordinate grids for a window.
 
     Coordinates are normalized to [0, 1] range.
@@ -37,9 +35,7 @@ def _generate_normalized_coordinates(
         window_size: Window dimension
 
     Returns:
-        Tuple of (coords, coords_squared) where:
-            - coords: (N, 2) array of (y, x) positions
-            - coords_squared: (N, 2) array of squared coordinates
+        coords: (N, 2) array of (y, x) positions where N = window_size²
     """
     # Generate 1D coordinate arrays normalized to [0, 1]
     ys = jnp.arange(window_size).astype(jnp.float32) / (window_size - 1)
@@ -47,44 +43,42 @@ def _generate_normalized_coordinates(
 
     # Create 2D grid and reshape to (N, 2)
     coords_2d = jnp.stack(jnp.meshgrid(ys, xs, indexing="ij"), axis=-1)
-    coords = coords_2d.reshape(-1, 2)  # (N, 2)
-
-    # Precompute squared coordinates for efficiency
-    coords_sq = coords**2
-
-    return coords, coords_sq
+    return coords_2d.reshape(-1, 2)  # (N, 2)
 
 
 def _compute_spatial_variance(
     attention_weights: jnp.ndarray,
     coords: jnp.ndarray,
-    coords_sq: jnp.ndarray,
 ) -> jnp.ndarray:
-    """Compute spatial variance of attention weights.
+    """Compute spatial variance using weighted squared differences.
 
     For each query position, measures how spatially concentrated vs
-    spread out its attention pattern is using the variance formula:
-    Var(X) = E[X²] - E[X]²
+    spread out its attention pattern is. This stable formulation avoids
+    the E[X²] - E[X]² subtraction which can suffer from numerical instability.
+
+    Instead computes: Σ_j (attention[j] * ||coords[j] - mean_pos||²)
 
     Args:
         attention_weights: (B, N, N) softmax-normalized attention matrix
         coords: (N, 2) normalized coordinate positions
-        coords_sq: (N, 2) precomputed squared coordinates
 
     Returns:
         (B, N) variance per query position
     """
-    B, N, _ = attention_weights.shape
+    # 1. Compute mean position (B, N, 2)
+    mean_pos = jnp.einsum("bnk,kd->bnd", attention_weights, coords)
 
-    # E[coords] = weighted mean position for each query
-    # Einsum: for each (b, n), sum over k of (attention[b,n,k] * coords[k,d])
-    mean_pos = jnp.einsum("bnk,kd->bnd", attention_weights, coords)  # (B, N, 2)
+    # 2. Compute squared distance from mean for every key position
+    # mean_pos: (B, N, 1, 2) to broadcast against coords: (N, 2)
+    diff_sq = (
+        coords[jnp.newaxis, jnp.newaxis, :, :] - mean_pos[:, :, jnp.newaxis, :]
+    ) ** 2
+    # sum along the (y, x) dimension: (B, N, N)
+    dist_sq = jnp.sum(diff_sq, axis=-1)
 
-    # E[coords²] = expected squared coordinates
-    expected_sq = jnp.einsum("bnk,kd->bnd", attention_weights, coords_sq)  # (B, N, 2)
-
-    # Variance = E[X²] - E[X]², summed across y,x dimensions
-    variance = jnp.sum(expected_sq - mean_pos**2, axis=-1)  # (B, N)
+    # 3. Weighted sum of squared distances
+    # Sum over the 'k' dimension (the attention distribution)
+    variance = jnp.einsum("bnk,bnk->bn", attention_weights, dist_sq)
 
     return variance
 
@@ -93,7 +87,6 @@ def self_attention_spatial_variance(
     windows: jnp.ndarray,
     temperature: float,
     coords: jnp.ndarray,
-    coords_sq: jnp.ndarray,
 ) -> Tuple[jnp.ndarray, dict]:
     """Compute self-attention spatial variance loss on a batch of windows.
 
@@ -104,7 +97,6 @@ def self_attention_spatial_variance(
         windows: (B, H, W, D) batch of windows (already split and flattened)
         temperature: Softmax temperature for attention sharpness
         coords: (N, 2) precomputed normalized coordinates
-        coords_sq: (N, 2) precomputed squared coordinates
 
     Returns:
         Tuple of (loss, aux_dict) where:
@@ -124,7 +116,7 @@ def self_attention_spatial_variance(
     attn_weights = jax.nn.softmax(logits / temperature, axis=-1)
 
     # Compute spatial variance
-    variance = _compute_spatial_variance(attn_weights, coords, coords_sq)
+    variance = _compute_spatial_variance(attn_weights, coords)
 
     # Reshape back to spatial grid
     variance_grid = variance.reshape(B, H, W)
@@ -140,7 +132,6 @@ def cross_attention_spatial_variance(
     windows2: jnp.ndarray,
     temperature: float,
     coords: jnp.ndarray,
-    coords_sq: jnp.ndarray,
 ) -> Tuple[jnp.ndarray, dict]:
     """Compute cross-attention spatial variance loss on a batch of windows.
 
@@ -152,7 +143,6 @@ def cross_attention_spatial_variance(
         windows2: (B, H, W, D) batch of windows from frame 2
         temperature: Softmax temperature for attention sharpness
         coords: (N, 2) precomputed normalized coordinates (for window2)
-        coords_sq: (N, 2) precomputed squared coordinates
 
     Returns:
         Tuple of (loss, aux_dict) where:
@@ -173,7 +163,7 @@ def cross_attention_spatial_variance(
     attn_weights = jax.nn.softmax(logits / temperature, axis=-1)
 
     # Compute spatial variance
-    variance = _compute_spatial_variance(attn_weights, coords, coords_sq)
+    variance = _compute_spatial_variance(attn_weights, coords)
 
     # Reshape back to spatial grid
     variance_grid = variance.reshape(B, H, W)
@@ -227,7 +217,7 @@ def windowed_spatial_variance_losses(
     )
 
     # Precompute coordinates for this window size
-    coords, coords_sq = _generate_normalized_coordinates(window_size)
+    coords = _generate_normalized_coordinates(window_size)
 
     # Split into windows
     grid = WindowGrid(window_size=window_size)
@@ -244,14 +234,12 @@ def windowed_spatial_variance_losses(
         flat_windows1,
         temperature=self_temperature,
         coords=coords,
-        coords_sq=coords_sq,
     )
     cross_variance_flat, cross_aux = cross_attention_spatial_variance(
         flat_windows1,
         flat_windows2,
         temperature=cross_temperature,
         coords=coords,
-        coords_sq=coords_sq,
     )
 
     # Reshape back to spatial grid

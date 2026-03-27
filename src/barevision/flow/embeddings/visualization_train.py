@@ -173,6 +173,11 @@ def _variance_map_to_heatmap(variance_map: np.ndarray) -> np.ndarray:
     else:
         normalized = np.zeros_like(variance_map)
 
+    # Flip vertically to match image coordinate system (y=0 at top)
+    # The variance map comes from array indexing where row 0 is top,
+    # but we need to flip for correct visual alignment with frames
+    normalized = np.flipud(normalized)
+
     # Use viridis colormap (matplotlib)
     import matplotlib
 
@@ -180,7 +185,7 @@ def _variance_map_to_heatmap(variance_map: np.ndarray) -> np.ndarray:
     import matplotlib.pyplot as plt
 
     fig, ax = plt.subplots(1, 1, figsize=(6, 6))
-    im = ax.imshow(normalized, cmap="viridis", vmin=0, vmax=1)
+    im = ax.imshow(normalized, cmap="viridis", vmin=0, vmax=1, origin="lower")
     ax.set_title("Spatial Variance (lower = more concentrated)", fontsize=12)
     ax.axis("off")
     plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
