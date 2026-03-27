@@ -1,6 +1,6 @@
 """Embedding model and losses for Barevision.
 
-Provides hierarchical embedding pyramid with entropy-based self-supervised training.
+Provides hierarchical embedding pyramid with spatial variance-based self-supervised training.
 """
 
 from barevision.flow.embeddings.model import (
@@ -9,12 +9,22 @@ from barevision.flow.embeddings.model import (
     StandardBlock,
     count_parameters,
 )
-from barevision.flow.embeddings.losses import compute_hierarchical_entropy_loss
+from barevision.flow.embeddings.spatial_losses import (
+    HierarchicalSpatialVarianceLoss,
+    compute_hierarchical_spatial_variance_loss,
+    windowed_spatial_variance_losses,
+    self_attention_spatial_variance,
+    cross_attention_spatial_variance,
+)
 
 __all__ = [
     "HierarchicalEmbeddingModel",
     "StemBlock",
     "StandardBlock",
     "count_parameters",
-    "compute_hierarchical_entropy_loss",
+    "HierarchicalSpatialVarianceLoss",
+    "compute_hierarchical_spatial_variance_loss",
+    "windowed_spatial_variance_losses",
+    "self_attention_spatial_variance",
+    "cross_attention_spatial_variance",
 ]

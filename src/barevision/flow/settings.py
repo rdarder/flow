@@ -110,6 +110,51 @@ class EmbeddingModelSettings:
 
 
 @dataclass(frozen=True)
+class SpatialVarianceLossSettings:
+    """Settings for spatial variance loss.
+
+    Attributes:
+        window_size: Attention window size in pixels (must divide feature map dimensions)
+        level_weight_decay: Loss weight decay factor per level (default 1.0 = uniform)
+                           Coarser levels get higher weight: level_i weight = decay^i.
+                           Set to 1.0 for uniform weighting across levels.
+        lambda_self: Self-attention loss weight in [0, 1] (default 0.5 = equal weighting)
+                    loss = lambda_self * self_loss + (1 - lambda_self) * cross_loss
+        self_temperature: Temperature for self-attention softmax (default 0.3)
+                         Lower = sharper attention peaks
+        cross_temperature: Temperature for cross-attention softmax (default 0.3)
+                          Lower = sharper attention peaks
+    """
+
+    window_size: int = 16
+    level_weight_decay: float = 1.0
+    lambda_self: float = 0.5
+    self_temperature: float = 0.3
+    cross_temperature: float = 0.3
+
+    def __post_init__(self):
+        check_value(
+            0 <= self.lambda_self <= 1,
+            f"lambda_self must be in [0, 1], got {self.lambda_self}",
+        )
+        check_value(
+            self.level_weight_decay >= 0,
+            f"level_weight_decay must be >= 0, got {self.level_weight_decay}",
+        )
+        check_value(
+            self.self_temperature > 0,
+            f"self_temperature must be > 0, got {self.self_temperature}",
+        )
+        check_value(
+            self.cross_temperature > 0,
+            f"cross_temperature must be > 0, got {self.cross_temperature}",
+        )
+        check_value(
+            self.window_size >= 1, f"window_size must be >= 1, got {self.window_size}"
+        )
+
+
+@dataclass(frozen=True)
 class EmbeddingLossSettings:
     """
     window_size: Attention window size in pixels (must divide img_size dimensions)
@@ -216,7 +261,6 @@ class JointEmbeddingFlowModelSettings:
 
 @dataclass(frozen=True)
 class ModelSettings:
-
     embedding: EmbeddingModelSettings
     flow: FlowModelSettings
     joint: JointEmbeddingFlowModelSettings
@@ -296,6 +340,61 @@ class Settings:
     dataset: DatasetSettings
     model: ModelSettings
     loss: LossSettings
+    training: TrainingSettings
+    logging: LoggingSettings
+    checkpoint: CheckpointSettings
+    validation: ValidationSettings
+
+
+@dataclass(frozen=True)
+class EmbeddingsLossSettings:
+    """Loss settings for standalone embeddings training.
+
+    Uses spatial variance loss instead of entropy loss.
+
+    Attributes:
+        spatial_variance: Spatial variance loss configuration
+    """
+
+    spatial_variance: SpatialVarianceLossSettings
+
+
+@dataclass(frozen=True)
+class EmbeddingsModelSettings:
+    """Model settings for standalone embeddings training.
+
+    Attributes:
+        embed_dim: Output embedding dimension per level
+        hidden_dim: Hidden feature dimension
+        num_groups: Number of groups for grouped convolutions
+        num_levels: Number of pyramid levels
+    """
+
+    embed_dim: int = 16
+    hidden_dim: int = 32
+    num_groups: int = 4
+    num_levels: int = 3
+
+    def __post_init__(self):
+        check_value(
+            self.num_levels >= 1, f"num_levels must be >= 1, got {self.num_levels}"
+        )
+        check_value(
+            self.embed_dim >= 1, f"embed_dim must be >= 1, got {self.embed_dim}"
+        )
+
+
+@dataclass
+class EmbeddingsSettings:
+    """Settings for standalone embeddings training.
+
+    This is separate from the joint flow training settings to allow
+    independent training of embeddings with spatial variance loss.
+    """
+
+    dataset: DatasetSettings
+    model: EmbeddingsModelSettings
+    loss: EmbeddingsLossSettings
     training: TrainingSettings
     logging: LoggingSettings
     checkpoint: CheckpointSettings

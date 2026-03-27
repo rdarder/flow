@@ -16,7 +16,7 @@ from barevision.flow.checkpoint_utils import (
     save_best_checkpoint,
 )
 from barevision.flow.dataset.video import create_dataloader
-from barevision.flow.embeddings.losses import HierarchicalEmbeddingLoss
+from barevision.flow.embeddings.spatial_losses import HierarchicalSpatialVarianceLoss
 from barevision.flow.embeddings.model import (
     count_parameters,
     HierarchicalEmbeddingModel,
@@ -98,7 +98,19 @@ class Trainer:
             settings=settings.model.joint,
             rngs=rngs,
         )
-        embeddings_loss = HierarchicalEmbeddingLoss(self.settings.loss.embedding)
+        # Use spatial variance loss for embeddings (replaced entropy loss)
+        from barevision.flow.settings import SpatialVarianceLossSettings
+
+        embeddings_loss = HierarchicalSpatialVarianceLoss(
+            SpatialVarianceLossSettings(
+                window_size=settings.loss.embedding.window_size,
+                level_weight_decay=settings.loss.embedding.level_weight_decay,
+                lambda_self=1.0
+                - settings.loss.embedding.lambda_entropy,  # Map lambda_entropy to lambda_self
+                self_temperature=settings.loss.embedding.entropy_temperature,
+                cross_temperature=settings.loss.embedding.entropy_temperature,
+            )
+        )
         reconstruction_loss = HierarchicalReconstructionLoss(self.settings.loss.flow)
         self.loss_calculator = JointEmbeddingReconstructionLoss(
             embeddings_loss, reconstruction_loss, self.settings.loss.joint

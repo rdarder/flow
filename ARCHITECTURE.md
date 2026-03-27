@@ -2,8 +2,8 @@
 
 This document outlines the design and architecture of the Barevision optical flow model. The system is divided into two primary components:
 
-1. **The Embedding Engine** (Currently Implemented): A self-supervised hierarchical feature extractor.
-2. **The Flow Estimation Pipeline** (Planned Design): A coarse-to-fine tracker utilizing a learned residual corrector and latent reconstruction loss.
+1. **The Embedding Engine** (Currently Implemented): A self-supervised hierarchical feature extractor trained with spatial variance loss.
+2. **The Flow Estimation Pipeline** (Currently Implemented): A hierarchical tracker utilizing attention-based feature matching with reconstruction loss.
 
 ---
 
@@ -21,18 +21,15 @@ To prevent the destruction of high-frequency structural details during downsampl
 **Pyramid Blocks:**
 
 1. **StemBlock (Level 0):** Operates on raw 3-channel RGB. Expands the receptive field to 25 pixels using two stacked 3x3 `stride=1` convolutions.
-* `Conv(Dense, 3→32)` → `GroupNorm` → `GELU`
-* `Conv(Groups=8, 32→32)` → `GroupNorm` → `GELU`
-* *Branch A (Embed):* 1x1 Conv (32→16) → L2 Norm
-* *Branch B (Downsample):* 3x3 Conv, `stride=2`, `VALID`
-
+   * `Conv(Dense, 3→32)` → `GroupNorm` → `GELU`
+   * `Conv(Groups=8, 32→32)` → `GroupNorm` → `GELU`
+   * *Branch A (Embed):* 1x1 Conv (32→16) → L2 Norm
+   * *Branch B (Downsample):* 3x3 Conv, `stride=2`, `VALID`
 
 2. **StandardBlock (Levels 1 to N):** Refines features for coarser levels.
-* `Conv(Groups=8, 32→32)` → `GroupNorm` → `GELU`
-* *Branch A (Embed):* 1x1 Conv (32→16) → L2 Norm
-* *Branch B (Downsample):* 3x3 Conv, `stride=2`, `VALID` (Omitted on the final level).
-
-
+   * `Conv(Groups=8, 32→32)` → `GroupNorm` → `GELU`
+   * *Branch A (Embed):* 1x1 Conv (32→16) → L2 Norm
+   * *Branch B (Downsample):* 3x3 Conv, `stride=2`, `VALID` (Omitted on the final level).
 
 ### Resolution and the Spatial Buffer
 
@@ -42,26 +39,24 @@ This means the finer levels (Level 0 and Level 1) physically cover a wider field
 
 ---
 
-## 2. Flow Estimation Pipeline (V1 Implemented)
+## 2. Flow Estimation Pipeline (Implemented)
 
-The flow estimation pipeline is fully implemented with hierarchical multi-level flow estimation. The system estimates flow independently at each pyramid level and uses reconstruction loss across all levels for training.
+The flow estimation pipeline estimates optical flow using attention-based feature matching across pyramid levels. The system processes each level independently and uses reconstruction loss for training.
 
-### Hierarchical Flow Estimation (V1)
+### Hierarchical Flow Estimation
 
-**Architecture:** The flow estimator operates at all pyramid levels simultaneously:
+**Architecture:** The flow estimator operates at all pyramid levels:
 
 1. **Per-Level Processing:** Each level's embeddings are split into 16×16 windows
 2. **Independent Estimation:** A dedicated MLP predicts flow for each window
-3. **Multi-Level Loss:** Reconstruction loss computed at each level, averaged across levels
+3. **Multi-Level Loss:** Reconstruction loss computed at each level
 
 **Spatial Buffer Utilization:** The centered crop strategy (from VALID padding) provides symmetric buffer space on all sides:
 - Level 0: 79×79 → 64×64 (7-8 pixels buffer per side)
 - Level 1: 37×37 → 32×32 (2-3 pixels buffer per side)
 - Level 2: 16×16 → 16×16 (no crop needed)
 
-This buffer is essential for V2 window shifting, which will use coarse-level flow to shift finer-level windows.
-
-**Current status (V1):** Independent estimation at all levels without priors or shifting. Full cascading with window shifting planned for V2.
+This buffer accommodates motion near window boundaries and enables future window-shifting strategies.
 
 ### The Constellation & Centroids
 
@@ -69,12 +64,12 @@ Because the embeddings form stable "signatures" or "constellations" of attention
 
 ### Temperature Scaling
 
-Two separate temperature parameters control attention sharpness:
+Two separate temperature parameters control attention sharpness during embeddings training:
 
-* **`entropy_temperature` (default: 1.0):** Used for entropy loss computation. Fixed at 1.0 for temperature-independent loss values, making entropy comparable across training runs.
-* **`flow_temperature` (default: 0.3):** Used during flow estimation forward pass. Controls output sharpness - lower values produce sharper attention peaks for precise flow, higher values produce smoother centroids for robust tracking.
+* **`self_temperature` (default: 0.3):** Controls self-attention softmax sharpness. Lower values produce sharper peaks concentrated near the source pixel.
+* **`cross_temperature` (default: 0.3):** Controls cross-attention softmax sharpness. Lower values produce sharper peaks for confident cross-frame matching.
 
-This decoupling prevents the loss landscape from changing when tuning flow estimation behavior.
+This separation allows independent tuning of self-attention (embedding uniqueness) and cross-attention (matching confidence) behavior.
 
 ### The Boundary Problem (Centroid Drag)
 
@@ -98,13 +93,10 @@ Linear(8 → 16) → ReLU → Linear(16 → 16) → ReLU → Linear(16 → 2, no
 ```
 
 The network outputs two values:
-
 * **Residual U:** The local X displacement.
 * **Residual V:** The local Y displacement.
 
 Output is bounded to [-0.5, 0.5] in normalized coordinates (half-window maximum flow).
-
-*Note: The residual U and V outputs are continuous values that represent the full local flow of that specific embedding, which can span multiple pixels.*
 
 **Design rationale:**
 
@@ -113,47 +105,55 @@ Output is bounded to [-0.5, 0.5] in normalized coordinates (half-window maximum 
 * **Confidence signals:** Max peak values for both self and cross attention serve as confidence indicators, useful for downstream aggregation and detecting ambiguous matches.
 * **Conservative initialization:** Output layer uses small kernel weights (normal(0.02)) with no bias, starting with near-zero predictions and no direction preference.
 
-*Note: Prior features such as Prior Flow (from coarser levels), Quadrant Masses, and explicit Confidence output are deferred for future implementation once this baseline is validated.*
-
 ### Flow Aggregation
 
-At each level, the predicted residual flows are aggregated across the entire image using a **median**, which naturally discards outliers. The confidence features (max peaks) are available for future confidence-weighted aggregation once the baseline is validated. This robust median flow is then upscaled and passed to the next finer level as the new prior.
+At each level, the predicted residual flows are aggregated across the entire image. The confidence features (max peaks) are available for future confidence-weighted aggregation. This robust aggregation is then used for training with reconstruction loss.
 
 ---
 
-## 3. Dual Loss Formulation (Implemented)
+## 3. Training Strategy (Implemented)
 
-The model is trained end-to-end using a dual objective that balances structural distinctness with accurate tracking:
+The model uses a two-phase training approach with separate objectives for embeddings and flow estimation.
 
-1. **Entropy Minimization Loss:** Applied to attention maps at all pyramid levels (Self and Cross). This regularizer prevents embeddings from collapsing into trivial, perfectly smooth solutions. It forces embeddings to remain locally unique and visually distinct.
-2. **Reconstruction Loss (Latent Space, Hierarchical):** The network uses the estimated flow field at each pyramid level to warp Frame 1 embeddings and minimizes the L2 distance between warped Frame 1 embeddings and Frame 2 embeddings. This ensures features are trackable across frames.
+### Phase 1: Standalone Embeddings Training (Primary)
+
+Embeddings are trained independently using **Spatial Variance Loss** to encourage spatially concentrated attention patterns:
+
+**Spatial Variance Loss Formulation:**
+- For each query position, compute the weighted mean position from attention weights
+- Measure the variance of attention-weighted coordinates around that mean
+- Minimize variance → attention peaks become spatially localized
+
+**Properties:**
+- Lower variance = attention concentrates near specific locations
+- Self-attention: peaks cluster around the source pixel (encourages unique embeddings)
+- Cross-attention: finds specific matches in the target frame (encourages confident matching)
+- Space-aware: Unlike entropy, spatial variance penalizes scattered attention even if the distribution is peaky
 
 **Loss combination:**
 ```
-total_loss = entropy_loss + recon_weight * reconstruction_loss
+total_loss = lambda_self * self_variance + (1 - lambda_self) * cross_variance
 ```
 
 Where:
-- `entropy_loss`: Primary objective ensuring distinctive embeddings (computed hierarchically)
-- `reconstruction_loss`: Secondary objective ensuring embeddings are trackable (averaged across levels)
-- `recon_weight`: Controls relative importance (default: 0.1)
+- `self_variance`: Spatial variance of self-attention (default weight: 0.5)
+- `cross_variance`: Spatial variance of cross-attention (default weight: 0.5)
+- Both computed hierarchically across pyramid levels with configurable weighting
 
-This formulation treats entropy as the foundation (without distinctive embeddings, flow is ambiguous) and reconstruction as a grounding signal (ensuring distinctive features actually correspond across frames).
+This formulation ensures embeddings are both distinctive (sharp self-attention) and matchable (sharp cross-attention), with the spatial constraint preventing scattered attention patterns.
 
-**Reconstruction loss details (V1):**
+### Phase 2: Flow Estimation Training
+
+Flow estimation is trained using **Reconstruction Loss** in latent space:
+
+**Reconstruction Loss:**
+- Uses estimated flow to warp Frame 1 embeddings
+- Minimizes L2 distance between warped Frame 1 and Frame 2 embeddings
 - Computed independently at each pyramid level
-- Each level's embeddings cropped to grid-aligned dimensions (centered crop)
-- Flow at each level used to warp that level's Frame 1 embeddings
-- L2 distance computed between warped and Frame 2 embeddings
-- Loss averaged across all levels for training
+- Ensures embeddings are trackable across frames
 
-**Entropy loss details:**
-- Computed per 16×16 window at each pyramid level
-- Normalized by theoretical maximum `log(window_size²)` to [0, 1] range
-- Aggregated across levels with configurable weighting (default: uniform per-pixel)
-- Temperature scaling (default: 1.0) controls softmax sharpness
-
-By optimizing both simultaneously, the embedding engine learns features that are specifically optimized to be trackable, while entropy loss guarantees those features remain sharply grounded in visual structure.
+**Future: Joint Fine-Tuning**
+The architecture supports loading pretrained embeddings and fine-tuning jointly with flow estimation, combining spatial variance and reconstruction losses. This is deferred pending validation of the standalone embeddings baseline.
 
 ---
 
@@ -161,13 +161,14 @@ By optimizing both simultaneously, the embedding engine learns features that are
 
 ### Checkpointing
 
-The training pipeline automatically saves model checkpoints at three points:
+**Standalone Embeddings Checkpoints:**
+- Saved during embeddings training (`embeddings/training.py`)
+- Contains model state, step, and `EmbeddingsSettings` configuration
+- Can be loaded into flow estimation pipeline later
 
-1. **Periodic**: Every N steps during training (configurable)
-2. **Best Model**: When validation loss improves (automatic)
-3. **Final**: When training completes
-
-Checkpoints include model state, training step, and full configuration for reconstruction during inference.
+**Joint Training Checkpoints (Outdated):**
+- Legacy checkpoints from combined training approach
+- Contains full `Settings` object with joint configuration
 
 ### Validation
 

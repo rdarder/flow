@@ -8,9 +8,10 @@ import time
 import jax.numpy as jnp
 import numpy as np
 
-from barevision.flow.embeddings.losses import (
-    self_attention_entropy_loss,
-    cross_attention_entropy_loss,
+from barevision.flow.embeddings.spatial_losses import (
+    self_attention_spatial_variance,
+    cross_attention_spatial_variance,
+    _generate_normalized_coordinates,
 )
 from barevision.flow.settings import LoggingSettings, Settings
 from barevision.utils import image
@@ -25,11 +26,11 @@ def log_attention_statistics(
     window_size: int = 16,
     prefix: str = "Attention",
 ):
-    """Log attention entropy distributions for diagnostic monitoring.
+    """Log attention spatial variance distributions for diagnostic monitoring.
 
     Tracks:
-    - Self-attention entropy: training minimizes this (encourage unique embeddings where only self dominates)
-    - Cross-attention entropy: training minimizes this (encourage confident cross-frame matching)
+    - Self-attention spatial variance: training minimizes this (encourage concentrated attention)
+    - Cross-attention spatial variance: training minimizes this (encourage confident matching)
 
     Args:
         logger: JaxLogger instance
@@ -46,28 +47,37 @@ def log_attention_statistics(
     num_windows = (H // window_size) * (W // window_size)
     flat_windows = windows.reshape(B * num_windows, window_size, window_size, D)
 
-    # Compute entropies (both return tuple of (loss, aux))
-    # Use temperature=1.0 for diagnostic logging (standard entropy measurement)
-    self_entropy, self_aux = self_attention_entropy_loss(flat_windows, temperature=1.0)
-    cross_entropy, cross_aux = cross_attention_entropy_loss(
-        flat_windows, flat_windows, temperature=1.0
+    # Precompute coordinates
+    coords, coords_sq = _generate_normalized_coordinates(window_size)
+
+    # Compute spatial variances (both return tuple of (loss, aux))
+    # Use temperature=0.3 for diagnostic logging (same as training)
+    self_variance, self_aux = self_attention_spatial_variance(
+        flat_windows, temperature=0.3, coords=coords, coords_sq=coords_sq
+    )
+    cross_variance, cross_aux = cross_attention_spatial_variance(
+        flat_windows, flat_windows, temperature=0.3, coords=coords, coords_sq=coords_sq
     )
 
     # Log histograms
     logger.log_histogram(
-        f"{prefix}/self_entropy", np.array(self_entropy.flatten()), step
+        f"{prefix}/self_variance", np.array(self_variance.flatten()), step
     )
     logger.log_histogram(
-        f"{prefix}/cross_entropy", np.array(cross_entropy.flatten()), step
+        f"{prefix}/cross_variance", np.array(cross_variance.flatten()), step
     )
 
     # Log summary statistics
-    logger.log_scalar(f"{prefix}/self_entropy_mean", float(np.mean(self_entropy)), step)
-    logger.log_scalar(f"{prefix}/self_entropy_std", float(np.std(self_entropy)), step)
     logger.log_scalar(
-        f"{prefix}/cross_entropy_mean", float(np.mean(cross_entropy)), step
+        f"{prefix}/self_variance_mean", float(np.mean(self_variance)), step
     )
-    logger.log_scalar(f"{prefix}/cross_entropy_std", float(np.std(cross_entropy)), step)
+    logger.log_scalar(f"{prefix}/self_variance_std", float(np.std(self_variance)), step)
+    logger.log_scalar(
+        f"{prefix}/cross_variance_mean", float(np.mean(cross_variance)), step
+    )
+    logger.log_scalar(
+        f"{prefix}/cross_variance_std", float(np.std(cross_variance)), step
+    )
 
 
 def log_embedding_statistics(
@@ -182,11 +192,29 @@ def log_gradient_statistics(
 
 
 def log_metrics(logger: TensorboardLogger, loss, aux, step: int):
-    """Log loss metrics to TensorBoard."""
+    """Log loss metrics to TensorBoard.
+
+    Works with both spatial variance loss and old entropy loss structures.
+    """
     logger.log_scalar("Loss/total", float(loss), step)
-    logger.log_scalar("Loss/entropy/self", float(aux["entropy"]["self_loss"]), step)
-    logger.log_scalar("Loss/entropy/cross", float(aux["entropy"]["cross_loss"]), step)
-    logger.log_scalar("Loss/reconstruction", float(aux["reconstruction"]["loss"]), step)
+
+    # Spatial variance loss structure
+    if "self_loss" in aux:
+        logger.log_scalar("Loss/spatial_variance/self", float(aux["self_loss"]), step)
+        logger.log_scalar("Loss/spatial_variance/cross", float(aux["cross_loss"]), step)
+
+    # Old entropy loss structure (for backward compatibility)
+    if "entropy" in aux:
+        logger.log_scalar("Loss/entropy/self", float(aux["entropy"]["self_loss"]), step)
+        logger.log_scalar(
+            "Loss/entropy/cross", float(aux["entropy"]["cross_loss"]), step
+        )
+
+    # Reconstruction loss (only in joint training)
+    if "reconstruction" in aux:
+        logger.log_scalar(
+            "Loss/reconstruction", float(aux["reconstruction"]["loss"]), step
+        )
     logger.log_scalar("Loss/entropy/total", float(aux["entropy"]["loss"]), step)
 
 
@@ -195,12 +223,21 @@ def log_diagnostics(
 ):
     """Log gradient statistics, embeddings, and attention statistics.
 
+    Works with both:
+    - Joint model (has model.embedding_model attribute)
+    - Standalone embeddings model (model IS the embedding model)
+
     For hierarchical models, uses coarsest pyramid level.
     """
     log_gradient_statistics(logger, None, model, step)
 
-    # Get pyramid and use coarsest level
-    pyramid = model.embedding_model(img1)
+    # Get embeddings - handle both joint and standalone models
+    if hasattr(model, "embedding_model"):
+        # Joint model
+        pyramid = model.embedding_model(img1)
+    else:
+        # Standalone embeddings model
+        pyramid = model(img1)
 
     embeddings = pyramid[-1]  # Coarsest level
     log_embedding_statistics(logger, embeddings, step)
@@ -210,23 +247,41 @@ def log_diagnostics(
 def format_progress_line(
     epoch: int, step: int, loss: float, elapsed: float, aux: dict | None = None
 ) -> str:
-    """Format training progress line for console output."""
+    """Format training progress line for console output.
+
+    Works with spatial variance loss structure.
+    """
     steps_per_sec = (step + 1) / elapsed
 
     # Start with basic info
     parts = [f"Epoch {epoch} | Step {step} | Loss: {loss:.4f}"]
 
-    # Add loss breakdown if available
+    # Add loss breakdown if available (spatial variance loss structure)
+    if aux and "self_loss" in aux:
+        self_var = float(aux["self_loss"])
+        cross_var = float(aux["cross_loss"])
+        parts.append(
+            f"Spatial Var: {self_var + cross_var:.4f} "
+            f"(self: {self_var:.2f} | cross: {cross_var:.2f})"
+        )
 
-    self_entropy = float(aux["entropy"]["self_loss"])
-    cross_entropy = float(aux["entropy"]["cross_loss"])
-    total_entropy = float(aux["entropy"]["loss"])
-    reconstruction = float(aux["reconstruction"]["loss"])
-    parts.append(
-        f"Entropy: {total_entropy:.4f} "
-        f"(self: {self_entropy:.2f} | cross: {cross_entropy:.2f}) "
-        f"| Recon: {reconstruction:.4f}"
-    )
+    # Fallback to old entropy structure for backward compatibility
+    elif aux and "entropy" in aux:
+        self_entropy = float(aux["entropy"]["self_loss"])
+        cross_entropy = float(aux["entropy"]["cross_loss"])
+        total_entropy = float(aux["entropy"]["loss"])
+        if "reconstruction" in aux:
+            reconstruction = float(aux["reconstruction"]["loss"])
+            parts.append(
+                f"Entropy: {total_entropy:.4f} "
+                f"(self: {self_entropy:.2f} | cross: {cross_entropy:.2f}) "
+                f"| Recon: {reconstruction:.4f}"
+            )
+        else:
+            parts.append(
+                f"Entropy: {total_entropy:.4f} "
+                f"(self: {self_entropy:.2f} | cross: {cross_entropy:.2f})"
+            )
 
     parts.append(f"{steps_per_sec:.1f} steps/sec")
 
