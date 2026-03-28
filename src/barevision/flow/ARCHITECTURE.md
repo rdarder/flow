@@ -52,6 +52,7 @@ barevision/flow/
 ├── checkpoint_utils.py      # Model persistence utilities
 ├── inference.py             # Flow estimation from checkpoint
 ├── logging_utils.py         # Console/TensorBoard logging utilities
+├── mean_conv_analysis.py    # Mean convolution kernel diagnostics
 └── ARCHITECTURE.md          # This file
 ```
 
@@ -218,6 +219,18 @@ Replaces entropy minimization with spatial variance to encourage spatially conce
 - `log_progress`: Console output formatting
 - Pure utilities, safe to modify.
 
+**`mean_conv_analysis.py`** — Mean convolution kernel diagnostics.
+- `gaussian_kernel_2d`: Reference Gaussian kernel for comparison
+- `analyze_mean_conv_kernels`: Computes behavioral diagnostics per level
+  - Weight sum distribution (averaging behavior)
+  - Center-surround ratio (low-pass filter strength)
+  - Drift from initialization (adaptation magnitude)
+  - Effective sigma (receptive field size)
+  - Channel specialization (variance across channels)
+  - Positive weight ratio (sign consistency)
+- `log_mean_conv_analysis`: Logs all diagnostics to TensorBoard
+- Read this to understand what mean_conv kernels are learning during training.
+
 **`checkpoint_utils.py`** — Model persistence utilities.
 - `save_checkpoint`, `save_best_checkpoint`: Joint training checkpoints
 - `load_checkpoint`, `restore_model_from_checkpoint`: Loading utilities
@@ -325,6 +338,7 @@ pytest src/barevision/flow/embeddings/test_model.py
 pytest src/barevision/flow/embeddings/test_spatial_losses.py
 pytest src/barevision/flow/matching/test_model.py
 pytest src/barevision/flow/dataset/test_video.py
+pytest src/barevision/flow/test_mean_conv_analysis.py
 ```
 
 ---
