@@ -51,7 +51,11 @@ import jax
 import jax.numpy as jnp
 from flax import nnx
 
-from barevision.flow.settings import EmbeddingLossSettings, EmbeddingModelSettings
+from barevision.flow.settings import (
+    EmbeddingLossSettings,
+    EmbeddingModelSettings,
+    EmbeddingsModelSettings,
+)
 
 
 def gaussian_kernel_2d(sigma: float = 1.0) -> jnp.ndarray:
