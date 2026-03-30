@@ -67,6 +67,10 @@ def analyze_mean_conv_kernels(
             },
             ...
         }
+
+    Note:
+        If LCN is disabled (no mean_conv at a level), that level is skipped.
+        Returns empty dict if no mean_conv found at any level.
     """
     results = {}
 

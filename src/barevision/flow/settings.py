@@ -93,12 +93,15 @@ class EmbeddingModelSettings:
     """
     num_levels: Number of pyramid levels (default 3)
     embed_dim: Output embedding dimension per level (default 16)
+    use_local_contrast_normalization: Enable Local Contrast Normalization (LCN)
+        to boost embedding uniqueness by subtracting local mean (default: True)
     """
 
     embed_dim: int = 16
     hidden_dim: int = 32
     num_groups: int = 4
     num_levels: int = 3
+    use_local_contrast_normalization: bool = True
 
     def __post_init__(self):
         check_value(
@@ -368,12 +371,15 @@ class EmbeddingsModelSettings:
         hidden_dim: Hidden feature dimension
         num_groups: Number of groups for grouped convolutions
         num_levels: Number of pyramid levels
+        use_local_contrast_normalization: Enable Local Contrast Normalization (LCN)
+            to boost embedding uniqueness by subtracting local mean (default: True)
     """
 
     embed_dim: int = 16
     hidden_dim: int = 32
     num_groups: int = 4
     num_levels: int = 3
+    use_local_contrast_normalization: bool = True
 
     def __post_init__(self):
         check_value(

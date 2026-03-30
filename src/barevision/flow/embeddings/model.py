@@ -135,6 +135,7 @@ class StemBlock(nnx.Module):
         hidden_dim: int,
         embed_dim: int,
         num_groups: int,
+        use_local_contrast_normalization: bool = True,
         *,
         rngs: nnx.Rngs,
     ):
@@ -144,11 +145,13 @@ class StemBlock(nnx.Module):
             hidden_dim: Hidden feature dimension
             embed_dim: Output embedding dimension
             num_groups: Number of groups for grouped convolutions
+            use_local_contrast_normalization: Enable LCN (default: True)
             rngs: NNX RNGs for parameter initialization
         """
         self.hidden_dim = hidden_dim
         self.embed_dim = embed_dim
         self.num_groups = num_groups
+        self.use_local_contrast_normalization = use_local_contrast_normalization
 
         # Conv1: Dense 3×3, stride=1, RGB (3 ch) → hidden_dim ch
         self.conv1 = nnx.Conv(
@@ -179,17 +182,18 @@ class StemBlock(nnx.Module):
         )
 
         # Mean Conv: Depthwise 3×3, stride=1, SAME padding
-        # Computes local mean for contrast normalization
-        self.mean_conv = nnx.Conv(
-            in_features=hidden_dim,
-            out_features=hidden_dim,
-            kernel_size=(3, 3),
-            strides=(1, 1),
-            padding="SAME",
-            feature_group_count=hidden_dim,  # Depthwise convolution
-            kernel_init=depthwise_gaussian_initializer(sigma=1.0),
-            rngs=rngs,
-        )
+        # Only created if LCN is enabled
+        if use_local_contrast_normalization:
+            self.mean_conv = nnx.Conv(
+                in_features=hidden_dim,
+                out_features=hidden_dim,
+                kernel_size=(3, 3),
+                strides=(1, 1),
+                padding="SAME",
+                feature_group_count=hidden_dim,  # Depthwise convolution
+                kernel_init=depthwise_gaussian_initializer(sigma=1.0),
+                rngs=rngs,
+            )
 
         # Branch A: 1×1 Conv for embedding projection (operates on residuals)
         self.embed_conv = nnx.Conv(
@@ -220,23 +224,28 @@ class StemBlock(nnx.Module):
         x = nnx.gelu(x)
         rich_features = x
 
-        # Local Contrast Normalization
-        # Depthwise conv computes per-channel local mean (preserves dimensions via SAME)
-        local_mean = self.mean_conv(rich_features)
+        # Local Contrast Normalization (optional)
+        if self.use_local_contrast_normalization:
+            # Depthwise conv computes per-channel local mean (preserves dimensions via SAME)
+            local_mean = self.mean_conv(rich_features)
+            # Subtract local mean to remove common background signals
+            # This boosts uniqueness of local textures before embedding projection
+            x_unique = rich_features - local_mean
+        else:
+            # Pass through without LCN
+            x_unique = rich_features
+            local_mean = None
 
-        # Subtract local mean to remove common background signals
-        # This boosts uniqueness of local textures before embedding projection
-        x_unique = rich_features - local_mean
-
-        # Branch A: Embedding projection (operates on residuals)
+        # Branch A: Embedding projection (operates on residuals or raw features)
         embedding = self.embed_conv(x_unique)
         norm = jnp.linalg.norm(embedding, axis=-1, keepdims=True)
         embedding = embedding / (norm + 1e-8)
 
-        # Branch B: Downsampling via strided slice of local_mean
+        # Branch B: Downsampling via strided slice of local_mean (or rich_features if no LCN)
         # Mimics 3x3 VALID stride=2 convolution behavior
         # Slice [1:-1:2] starts at index 1, ends before last, stride 2
-        downsampled = local_mean[:, 1:-1:2, 1:-1:2, :]
+        downsample_source = local_mean if local_mean is not None else rich_features
+        downsampled = downsample_source[:, 1:-1:2, 1:-1:2, :]
 
         return embedding, downsampled
 
@@ -265,6 +274,7 @@ class StandardBlock(nnx.Module):
         embed_dim: int,
         num_groups: int,
         is_last_level: bool = False,
+        use_local_contrast_normalization: bool = True,
         *,
         rngs: nnx.Rngs,
     ):
@@ -275,12 +285,14 @@ class StandardBlock(nnx.Module):
             embed_dim: Output embedding dimension
             num_groups: Number of groups for grouped convolutions
             is_last_level: If True, skip downsampling branch
+            use_local_contrast_normalization: Enable LCN (default: True)
             rngs: NNX RNGs for parameter initialization
         """
         self.hidden_dim = hidden_dim
         self.embed_dim = embed_dim
         self.num_groups = num_groups
         self.is_last_level = is_last_level
+        self.use_local_contrast_normalization = use_local_contrast_normalization
 
         # Conv1: Grouped 3×3, stride=1
         self.conv1 = nnx.Conv(
@@ -297,17 +309,18 @@ class StandardBlock(nnx.Module):
         )
 
         # Mean Conv: Depthwise 3×3, stride=1, SAME padding
-        # Computes local mean for contrast normalization
-        self.mean_conv = nnx.Conv(
-            in_features=hidden_dim,
-            out_features=hidden_dim,
-            kernel_size=(3, 3),
-            strides=(1, 1),
-            padding="SAME",
-            feature_group_count=hidden_dim,  # Depthwise convolution
-            kernel_init=depthwise_gaussian_initializer(sigma=1.0),
-            rngs=rngs,
-        )
+        # Only created if LCN is enabled
+        if use_local_contrast_normalization:
+            self.mean_conv = nnx.Conv(
+                in_features=hidden_dim,
+                out_features=hidden_dim,
+                kernel_size=(3, 3),
+                strides=(1, 1),
+                padding="SAME",
+                feature_group_count=hidden_dim,  # Depthwise convolution
+                kernel_init=depthwise_gaussian_initializer(sigma=1.0),
+                rngs=rngs,
+            )
 
         # Branch A: 1×1 Conv for embedding projection (operates on residuals)
         self.embed_conv = nnx.Conv(
@@ -333,24 +346,29 @@ class StandardBlock(nnx.Module):
         x = nnx.gelu(x)
         rich_features = x
 
-        # Local Contrast Normalization
-        # Depthwise conv computes per-channel local mean (preserves dimensions via SAME)
-        local_mean = self.mean_conv(rich_features)
+        # Local Contrast Normalization (optional)
+        if self.use_local_contrast_normalization:
+            # Depthwise conv computes per-channel local mean (preserves dimensions via SAME)
+            local_mean = self.mean_conv(rich_features)
+            # Subtract local mean to remove common background signals
+            # This boosts uniqueness of local textures before embedding projection
+            x_unique = rich_features - local_mean
+        else:
+            # Pass through without LCN
+            x_unique = rich_features
+            local_mean = None
 
-        # Subtract local mean to remove common background signals
-        # This boosts uniqueness of local textures before embedding projection
-        x_unique = rich_features - local_mean
-
-        # Branch A: Embedding projection (operates on residuals)
+        # Branch A: Embedding projection (operates on residuals or raw features)
         embedding = self.embed_conv(x_unique)
         norm = jnp.linalg.norm(embedding, axis=-1, keepdims=True)
         embedding = embedding / (norm + 1e-8)
 
         # Branch B: Downsampling via strided slice of local_mean (if not last level)
         # Mimics 3x3 VALID stride=2 convolution behavior
+        downsample_source = local_mean if local_mean is not None else rich_features
         downsampled = None
         if not self.is_last_level:
-            downsampled = local_mean[:, 1:-1:2, 1:-1:2, :]
+            downsampled = downsample_source[:, 1:-1:2, 1:-1:2, :]
 
         return embedding, downsampled
 
@@ -381,6 +399,7 @@ class HierarchicalEmbeddingModel(nnx.Module):
                 hidden_dim=settings.hidden_dim,
                 embed_dim=settings.embed_dim,
                 num_groups=settings.num_groups,
+                use_local_contrast_normalization=settings.use_local_contrast_normalization,
                 rngs=rngs,
             )
         )
@@ -394,6 +413,7 @@ class HierarchicalEmbeddingModel(nnx.Module):
                     embed_dim=settings.embed_dim,
                     num_groups=settings.num_groups,
                     is_last_level=is_last,
+                    use_local_contrast_normalization=settings.use_local_contrast_normalization,
                     rngs=rngs,
                 )
             )
@@ -418,6 +438,26 @@ class HierarchicalEmbeddingModel(nnx.Module):
                 x = downsampled
 
         return feature_maps
+
+
+def build_model_from_settings(
+    settings: EmbeddingsModelSettings,
+    *,
+    rngs: nnx.Rngs,
+) -> HierarchicalEmbeddingModel:
+    """Factory function to build model from settings.
+
+    Args:
+        settings: Model settings
+        rngs: NNX RNGs
+
+    Returns:
+        HierarchicalEmbeddingModel instance
+    """
+    return HierarchicalEmbeddingModel(
+        settings=settings,
+        rngs=rngs,
+    )
 
 
 def count_parameters(model: nnx.Module) -> int:

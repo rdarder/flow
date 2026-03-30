@@ -240,3 +240,22 @@ class TestAnalyzeMeanConvKernels:
         assert "level_0" in analysis
         assert "level_1" not in analysis
         assert "level_2" not in analysis
+
+    def test_handles_lcn_disabled(self):
+        """Test analysis handles disabled LCN gracefully."""
+        model = HierarchicalEmbeddingModel(
+            EmbeddingModelSettings(
+                hidden_dim=32,
+                embed_dim=16,
+                num_groups=8,
+                num_levels=3,
+                use_local_contrast_normalization=False,
+            ),
+            rngs=nnx.Rngs(jr.PRNGKey(0)),
+        )
+        model_state = nnx.state(model)
+
+        # Should return empty dict when LCN is disabled
+        analysis = analyze_mean_conv_kernels(model_state, num_levels=3, hidden_dim=32)
+
+        assert analysis == {}
