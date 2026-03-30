@@ -85,7 +85,9 @@ def depthwise_gaussian_initializer(
 ):
     """Create an initializer for depthwise convolution with Gaussian kernels.
 
-    This creates a separate Gaussian kernel for each input channel.
+    For depthwise convolutions with feature_group_count=in_features, each
+    output channel receives input from exactly one input channel. The kernel
+    shape is (3, 3, 1, out_features).
 
     Args:
         sigma: Standard deviation of the Gaussian distribution
@@ -96,20 +98,18 @@ def depthwise_gaussian_initializer(
 
     def init(key, input_shape, dtype=jnp.float32):
         # input_shape: (height, width, in_features, out_features)
-        # For depthwise: out_features = in_features
+        # For depthwise conv in Flax/JAX: actual kernel shape is (3, 3, 1, out_features)
         _, _, in_features, out_features = input_shape
 
         # Create single 3x3 Gaussian kernel
-        single_kernel = gaussian_kernel_2d(sigma).astype(dtype)
+        single_kernel = gaussian_kernel_2d(sigma).astype(dtype)  # (3, 3)
 
-        # For depthwise convolution, we need shape (3, 3, in_features, out_features)
-        # where each input channel connects to corresponding output channel
-        # Block diagonal structure: each channel has its own kernel
-        kernel = jnp.zeros((3, 3, in_features, out_features), dtype=dtype)
-
-        # Fill diagonal blocks (each input channel → corresponding output channel)
-        for i in range(min(in_features, out_features)):
-            kernel = kernel.at[:, :, i, i].set(single_kernel)
+        # For depthwise convolution, Flax uses shape (3, 3, 1, out_features)
+        # where each output channel has its own 3x3 kernel applied to 1 input channel
+        # Broadcast the same Gaussian to all output channels
+        kernel = jnp.broadcast_to(
+            single_kernel[:, :, None, None], (3, 3, 1, out_features)
+        ).astype(dtype)
 
         return kernel
 

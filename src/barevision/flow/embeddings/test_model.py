@@ -129,7 +129,7 @@ class TestSymmetricMeanSubtraction:
         )
 
     def test_depthwise_gaussian_initializer(self):
-        """Test depthwise Gaussian initializer creates block-diagonal kernels."""
+        """Test depthwise Gaussian initializer creates proper depthwise kernels."""
         init_fn = depthwise_gaussian_initializer(sigma=1.0)
 
         # Create kernel for 32 input/output channels
@@ -138,22 +138,22 @@ class TestSymmetricMeanSubtraction:
         input_shape = (3, 3, 32, 32)
         kernel = init_fn(key, input_shape)
 
-        assert kernel.shape == (3, 3, 32, 32)
+        # For depthwise convolution, Flax uses (3, 3, 1, out_features)
+        # Each output channel has its own 3x3 kernel
+        assert kernel.shape == (3, 3, 1, 32)
 
-        # Each channel should have its own 3x3 Gaussian
-        # Check that off-diagonal channels are zero
+        # All channels should have the same Gaussian kernel (broadcasted)
+        # Each channel's kernel should sum to 1.0
         for i in range(32):
-            for j in range(32):
-                if i != j:
-                    assert jnp.allclose(kernel[:, :, i, j], 0.0), (
-                        f"Off-diagonal channel [{i},{j}] should be zero"
-                    )
-                else:
-                    # Diagonal should sum to 1.0 (Gaussian kernel)
-                    channel_sum = jnp.sum(kernel[:, :, i, i])
-                    assert jnp.allclose(channel_sum, 1.0), (
-                        f"Diagonal channel [{i}] should sum to 1.0"
-                    )
+            channel_sum = jnp.sum(kernel[:, :, 0, i])
+            assert jnp.allclose(channel_sum, 1.0), f"Channel {i} should sum to 1.0"
+
+        # Center should be highest value in all channels
+        for i in range(32):
+            center = kernel[1, 1, 0, i]
+            assert all(
+                center >= kernel[h, w, 0, i] for h in range(3) for w in range(3)
+            ), f"Center should be highest in channel {i}"
 
     def test_lcn_subtraction_preserves_dimensions(self):
         """Test that LCN subtraction preserves spatial dimensions."""
@@ -574,7 +574,9 @@ class TestHierarchicalEmbeddingModel:
         # Verify mean_conv gradients exist
         level0_mean = stem_grads["mean_conv"]["kernel"]  # type: ignore
         assert level0_mean is not None
-        assert level0_mean.shape == (3, 3, 32, 32)  # Depthwise
+        # Depthwise convolution: feature_group_count=32 creates (3, 3, 1, 32) per group
+        # But total shape is (3, 3, 1, 32) since each group processes 1 input channel
+        assert level0_mean.shape == (3, 3, 1, 32)
 
 
 class TestDimensionalMath:

@@ -89,9 +89,14 @@ def analyze_mean_conv_kernels(
             # mean_conv not found at this level (may not exist yet)
             continue
 
-        # kernel shape: (3, 3, hidden_dim, hidden_dim) - depthwise (diagonal)
-        # Extract the diagonal kernels: (3, 3, hidden_dim)
-        diagonal_kernels = jnp.diagonal(kernel, axis1=2, axis2=3)
+        # kernel shape for depthwise conv: (3, 3, 1, hidden_dim)
+        # where each output channel receives from 1 input channel
+        # Reshape to (3, 3, hidden_dim) by squeezing the input channel dimension
+        kernel = model_state["blocks"][level_idx]["mean_conv"]["kernel"]
+
+        # kernel shape: (3, 3, 1, hidden_dim) for depthwise
+        # Squeeze the singleton dimension to get (3, 3, hidden_dim)
+        diagonal_kernels = jnp.squeeze(kernel, axis=2)  # (3, 3, hidden_dim)
 
         # Compute diagnostics
         scalars = {}
@@ -142,7 +147,8 @@ def analyze_mean_conv_kernels(
         histograms["drift_from_init"] = drift_per_channel
 
         # 4. Effective sigma estimation (fit Gaussian to each kernel)
-        # Approximate by measuring spread: higher variance = larger sigma
+        # For a 2D Gaussian, the second moment E[r²] = 2*sigma²
+        # Compute weighted average of squared distance from center
         ax = jnp.arange(-1, 2, dtype=jnp.float32)
         xx, yy = jnp.meshgrid(ax, ax)
         squared_distances = xx**2 + yy**2
@@ -154,7 +160,8 @@ def analyze_mean_conv_kernels(
         )  # (hidden_dim,)
 
         # Convert to sigma estimate: for Gaussian, E[r²] = 2*sigma²
-        effective_sigma = jnp.sqrt(spread_per_channel / 2)
+        # sigma = sqrt(E[r²] / 2)
+        effective_sigma = jnp.sqrt(spread_per_channel / 2.0)
 
         scalars["effective_sigma_mean"] = jnp.mean(effective_sigma)
         scalars["effective_sigma_std"] = jnp.std(effective_sigma)
