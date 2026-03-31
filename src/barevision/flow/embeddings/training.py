@@ -8,18 +8,15 @@ Entry point: python -m barevision.flow.embeddings.training
 
 import time
 from functools import partial
-from pathlib import Path
 
 import jax.numpy as jnp
 import optax
 import tyro
 from flax import nnx
 
-from barevision.flow.checkpoint_utils import (
-    generate_run_name,
-    restore_model_from_checkpoint,
-)
+from barevision.flow.checkpoint_utils import restore_model_from_checkpoint
 from barevision.flow.dataset.video import create_dataloader
+from barevision.flow.embeddings.checkpointer import Checkpointer
 from barevision.flow.embeddings.model import (
     count_parameters,
     HierarchicalEmbeddingModel,
@@ -35,86 +32,6 @@ from barevision.flow.logging_utils import (
 from barevision.flow.settings import EmbeddingsSettings
 from barevision.utils.console import ConsoleLogger
 from barevision.utils.logging import TensorboardLogger
-import json
-from dataclasses import asdict
-from pathlib import Path
-import orbax.checkpoint as ocp
-from flax import nnx
-
-
-def _save_checkpoint(
-    model: nnx.Module,
-    step: int,
-    settings: EmbeddingsSettings,
-    run_name: str,
-) -> Path:
-    """Save model checkpoint with configuration metadata.
-
-    Args:
-        model: NNX model to save
-        step: Current global step
-        settings: EmbeddingsSettings object
-        run_name: Run identifier
-
-    Returns:
-        Path to saved checkpoint directory
-    """
-    from barevision.flow.checkpoint_utils import get_checkpoint_path
-
-    checkpoint_path = get_checkpoint_path(settings.checkpoint.location, run_name, step)
-
-    checkpoint_data = {
-        "model": nnx.state(model).to_pure_dict(),
-        "step": step,
-        "config": asdict(settings),
-    }
-
-    checkpointer = ocp.PyTreeCheckpointer()
-    checkpointer.save(checkpoint_path, ocp.args.PyTreeSave(checkpoint_data))
-
-    return checkpoint_path
-
-
-def _save_best_checkpoint(
-    model: nnx.Module,
-    step: int,
-    val_loss: float,
-    settings: EmbeddingsSettings,
-    run_name: str,
-) -> Path:
-    """Save best model checkpoint.
-
-    Args:
-        model: NNX model to save
-        step: Current global step
-        val_loss: Validation loss
-        settings: EmbeddingsSettings object
-        run_name: Run identifier
-
-    Returns:
-        Path to saved checkpoint directory
-    """
-    import shutil
-    from barevision.flow.checkpoint_utils import get_checkpoint_path
-
-    checkpoint_path = get_checkpoint_path(
-        settings.checkpoint.location, run_name, "best"
-    )
-
-    if checkpoint_path.exists():
-        shutil.rmtree(checkpoint_path)
-
-    checkpoint_data = {
-        "model": nnx.state(model).to_pure_dict(),
-        "step": step,
-        "config": asdict(settings),
-        "best_val_loss": val_loss,
-    }
-
-    checkpointer = ocp.PyTreeCheckpointer()
-    checkpointer.save(checkpoint_path, ocp.args.PyTreeSave(checkpoint_data))
-
-    return checkpoint_path
 
 
 def loss_fn(model, img_pair, loss_fn_obj, need_aux: bool):
@@ -196,6 +113,8 @@ class EmbeddingsTrainer:
     """
 
     def __init__(self, settings: EmbeddingsSettings):
+        from barevision.flow.checkpoint_utils import generate_run_name
+
         self.settings = settings
         self.run_name = generate_run_name(prefix=settings.logging.run_name_prefix)
         self.logger = ConsoleLogger()
@@ -221,6 +140,7 @@ class EmbeddingsTrainer:
             wrt=nnx.Param,
         )
         self.model = embeddings_model
+        self.checkpointer = Checkpointer(settings, self.run_name, self.logger)
 
     def _maybe_restore_from_checkpoint(self) -> int:
         """Load model parameters from checkpoint depending on settings.
@@ -256,9 +176,6 @@ class EmbeddingsTrainer:
         global_step = self._maybe_restore_from_checkpoint()
         self._report_model_params()
 
-        best_val_loss = float("inf")
-        best_val_step = 0
-
         for epoch in range(1, settings.training.epochs + 1):
             global_step = self._train_epoch(epoch, global_step)
             if self._should_validate(epoch):
@@ -268,28 +185,14 @@ class EmbeddingsTrainer:
                 self.tensorboard.log_scalar(
                     "Loss/validation", val_loss, step=global_step
                 )
-                if settings.validation.save_best and val_loss < best_val_loss:
-                    best_val_loss = val_loss
-                    best_val_step = global_step
-                    checkpoint_path = _save_best_checkpoint(
-                        model=self.model,
-                        step=global_step,
-                        val_loss=val_loss,
-                        settings=settings,
-                        run_name=self.run_name,
-                    )
-                    print(
-                        f"New best model saved at step {global_step} "
-                        f"(val_loss: {val_loss:.6f}): {checkpoint_path}"
-                    )
+                self.checkpointer.maybe_save_best(
+                    model=self.model,
+                    epoch=epoch,
+                    global_step=global_step,
+                    val_loss=val_loss,
+                )
 
-        if settings.validation.every_epochs > 0 and best_val_loss < float("inf"):
-            print(f"\n{'=' * 60}")
-            print(f"Validation Summary:")
-            print(f"  Best validation loss: {best_val_loss:.6f}")
-            print(f"  Achieved at step: {best_val_step}")
-            print(f"{'=' * 60}")
-
+        self.checkpointer.close()
         self.tensorboard.close()
         print_footer()
 
@@ -355,19 +258,12 @@ class EmbeddingsTrainer:
                     num_levels=self.settings.model.num_levels,
                 )
 
-            # Checkpoint periodically (skip step 0)
-            if self.settings.checkpoint.every_steps > 0:
-                if (
-                    global_step > 0
-                    and global_step % self.settings.checkpoint.every_steps == 0
-                ):
-                    checkpoint_path = _save_checkpoint(
-                        model=self.model,
-                        step=global_step,
-                        settings=self.settings,
-                        run_name=self.run_name,
-                    )
-                    print(f"Checkpoint saved at step {global_step}: {checkpoint_path}")
+            self.checkpointer.maybe_save_step(
+                model=self.model,
+                epoch=epoch,
+                step_in_epoch=step + 1,
+                global_step=global_step,
+            )
 
             global_step += 1
 
