@@ -25,8 +25,6 @@ from barevision.flow.embeddings.spatial_losses import HierarchicalSpatialVarianc
 from barevision.flow.embeddings.visualization_train import log_visualizations
 from barevision.flow.logging_utils import (
     log_progress,
-    print_footer,
-    print_header,
     should_log_something,
 )
 from barevision.flow.settings import EmbeddingsSettings
@@ -155,7 +153,7 @@ class EmbeddingsTrainer:
     def _report_model_params(self):
         """Report model parameter counts."""
         total_params = count_parameters(self.model)
-        print(f"Embedding model parameters: {total_params}\n")
+        self.logger.log(f"Embedding model parameters: {total_params}\n")
 
     def _should_validate(self, epoch: int) -> bool:
         """Check if validation should run this epoch."""
@@ -164,11 +162,34 @@ class EmbeddingsTrainer:
             and (epoch % self.settings.validation.every_epochs) == 0
         )
 
+    def _maybe_run_validation(self, epoch: int, global_step: int):
+        """Run validation if due and log results.
+
+        Args:
+            epoch: Current epoch number
+            global_step: Current global step
+        """
+        if not self._should_validate(epoch):
+            return
+
+        self.logger.log(f"\nRunning validation at epoch {epoch}...")
+        val_loss = self._run_validation()
+        self.logger.log(f"Validation loss: {val_loss:.6f}")
+        self.tensorboard.log_scalar(
+            "Loss/validation", val_loss, step=global_step
+        )
+        self.checkpointer.maybe_save_best(
+            model=self.model,
+            epoch=epoch,
+            global_step=global_step,
+            val_loss=val_loss,
+        )
+
     def __call__(self):
         """Main embeddings training loop."""
         settings = self.settings
-        print_header_embeddings(settings)
-        print()
+        print_header_embeddings(settings, self.logger)
+        self.logger.log("")
 
         # Resume from checkpoint if requested
         global_step = self._maybe_restore_from_checkpoint()
@@ -176,23 +197,13 @@ class EmbeddingsTrainer:
 
         for epoch in range(1, settings.training.epochs + 1):
             global_step = self._train_epoch(epoch, global_step)
-            if self._should_validate(epoch):
-                print(f"\nRunning validation at epoch {epoch}...")
-                val_loss = self._run_validation()
-                print(f"Validation loss: {val_loss:.6f}")
-                self.tensorboard.log_scalar(
-                    "Loss/validation", val_loss, step=global_step
-                )
-                self.checkpointer.maybe_save_best(
-                    model=self.model,
-                    epoch=epoch,
-                    global_step=global_step,
-                    val_loss=val_loss,
-                )
+            self._maybe_run_validation(epoch, global_step)
 
         self.checkpointer.close()
         self.tensorboard.close()
-        print_footer()
+        self.logger.log("=" * 60)
+        self.logger.log("TRAINING COMPLETE")
+        self.logger.log("=" * 60)
 
     def _train_epoch(self, epoch: int, global_step: int):
         """Train for one epoch.
@@ -225,6 +236,7 @@ class EmbeddingsTrainer:
             if global_step % self.settings.logging.every_steps == 0:
                 log_progress_embeddings(
                     self.tensorboard,
+                    self.logger,
                     self.model,
                     img1,
                     epoch,
@@ -299,17 +311,17 @@ class EmbeddingsTrainer:
         return avg_loss
 
 
-def print_header_embeddings(settings: EmbeddingsSettings):
+def print_header_embeddings(settings: EmbeddingsSettings, logger):
     """Print training header for embeddings training."""
     from barevision.utils import image
 
-    print("=" * 60)
-    print("EMBEDDINGS TRAINING (Spatial Variance Loss)")
-    print("=" * 60)
-    print()
-    print(f"Pyramid levels: {settings.model.num_levels}")
-    print(f"Embedding dim: {settings.model.embed_dim}")
-    print(
+    logger.log("=" * 60)
+    logger.log("EMBEDDINGS TRAINING (Spatial Variance Loss)")
+    logger.log("=" * 60)
+    logger.log("")
+    logger.log(f"Pyramid levels: {settings.model.num_levels}")
+    logger.log(f"Embedding dim: {settings.model.embed_dim}")
+    logger.log(
         f"Window size: {settings.loss.spatial_variance.window_size}×{settings.loss.spatial_variance.window_size}"
     )
 
@@ -318,25 +330,26 @@ def print_header_embeddings(settings: EmbeddingsSettings):
         settings.dataset.window_size,
         settings.dataset.num_levels,
     )
-    print(f"Image size: {image_size}")
-    print()
-    print(f"Epochs: {settings.training.epochs}")
-    print(f"Batch size: {settings.dataset.batch_size}")
+    logger.log(f"Image size: {image_size}")
+    logger.log("")
+    logger.log(f"Epochs: {settings.training.epochs}")
+    logger.log(f"Batch size: {settings.dataset.batch_size}")
     if settings.dataset.max_samples > 0:
-        print(f"Max samples per epoch: {settings.dataset.max_samples}")
-    print()
-    print(f"Loss: Spatial Variance")
-    print(f"  - Lambda self: {settings.loss.spatial_variance.lambda_self}")
-    print(f"  - Self temperature: {settings.loss.spatial_variance.self_temperature}")
-    print(f"  - Cross temperature: {settings.loss.spatial_variance.cross_temperature}")
-    print(
+        logger.log(f"Max samples per epoch: {settings.dataset.max_samples}")
+    logger.log("")
+    logger.log(f"Loss: Spatial Variance")
+    logger.log(f"  - Lambda self: {settings.loss.spatial_variance.lambda_self}")
+    logger.log(f"  - Self temperature: {settings.loss.spatial_variance.self_temperature}")
+    logger.log(f"  - Cross temperature: {settings.loss.spatial_variance.cross_temperature}")
+    logger.log(
         f"  - Level weight decay: {settings.loss.spatial_variance.level_weight_decay}"
     )
-    print()
+    logger.log("")
 
 
 def log_progress_embeddings(
-    logger: TensorboardLogger,
+    tensorboard: TensorboardLogger,
+    console_logger,
     model,
     img1,
     epoch: int,
@@ -349,7 +362,8 @@ def log_progress_embeddings(
     """Log progress for embeddings training.
 
     Args:
-        logger: TensorBoard logger
+        tensorboard: TensorBoard logger
+        console_logger: Console logger for progress output
         model: Embedding model
         img1: Input frame for diagnostics
         epoch: Current epoch number
@@ -360,20 +374,20 @@ def log_progress_embeddings(
         window_size: Attention window size
     """
     # Log metrics
-    logger.log_scalar("Loss/total", float(loss), step)
-    logger.log_scalar("Loss/spatial_variance/self", float(aux["self_loss"]), step)
-    logger.log_scalar("Loss/spatial_variance/cross", float(aux["cross_loss"]), step)
+    tensorboard.log_scalar("Loss/total", float(loss), step)
+    tensorboard.log_scalar("Loss/spatial_variance/self", float(aux["self_loss"]), step)
+    tensorboard.log_scalar("Loss/spatial_variance/cross", float(aux["cross_loss"]), step)
 
     # Log embedding statistics
     from barevision.flow.logging_utils import log_diagnostics
 
-    log_diagnostics(logger, model, img1, step, window_size)
+    log_diagnostics(tensorboard, model, img1, step, window_size)
 
     # Print progress line
     steps_per_sec = (step + 1) / (time.time() - epoch_start)
     self_var = float(aux["self_loss"])
     cross_var = float(aux["cross_loss"])
-    print(
+    console_logger.log(
         f"Epoch {epoch} | Step {step} | Loss: {float(loss):.4f} "
         f"(self: {self_var:.2f} | cross: {cross_var:.2f}) | "
         f"{steps_per_sec:.1f} steps/sec"
