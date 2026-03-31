@@ -8,15 +8,15 @@ Entry point: python -m barevision.flow.embeddings.training
 
 import time
 from functools import partial
+from pathlib import Path
 
 import jax.numpy as jnp
 import optax
 import tyro
 from flax import nnx
 
-from barevision.flow.checkpoint_utils import restore_model_from_checkpoint
+from barevision.flow.checkpointer import Checkpointer
 from barevision.flow.dataset.video import create_dataloader
-from barevision.flow.embeddings.checkpointer import Checkpointer
 from barevision.flow.embeddings.model import (
     count_parameters,
     HierarchicalEmbeddingModel,
@@ -113,10 +113,8 @@ class EmbeddingsTrainer:
     """
 
     def __init__(self, settings: EmbeddingsSettings):
-        from barevision.flow.checkpoint_utils import generate_run_name
-
         self.settings = settings
-        self.run_name = generate_run_name(prefix=settings.logging.run_name_prefix)
+        self.run_name = Checkpointer.generate_run_name(prefix=settings.logging.run_name_prefix)
         self.logger = ConsoleLogger()
         self.tensorboard = TensorboardLogger(
             log_dir=settings.logging.tensorboard_dir,
@@ -152,7 +150,7 @@ class EmbeddingsTrainer:
 
         resume_path = Path(self.settings.checkpoint.resume_from)
         with self.logger.task(f"Resuming from checkpoint: {resume_path}"):
-            return restore_model_from_checkpoint(resume_path, self.model)
+            return Checkpointer.restore(resume_path, self.model)
 
     def _report_model_params(self):
         """Report model parameter counts."""

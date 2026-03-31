@@ -17,10 +17,7 @@ import numpy as np
 from flax import nnx
 from PIL import Image
 
-from barevision.flow.checkpoint_utils import (
-    config_from_checkpoint,
-    restore_model_from_checkpoint,
-)
+from barevision.flow.checkpointer import Checkpointer
 from barevision.flow.joint.model import JointEmbeddingFlowModel as OpticalFlowModel
 
 
@@ -76,7 +73,7 @@ def main():
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
 
     print(f"Loading checkpoint from: {checkpoint_path}")
-    config = config_from_checkpoint(checkpoint_path)
+    config = Checkpointer.load_config(checkpoint_path)
 
     # Extract model configuration
     model_config = config["model"]
@@ -119,7 +116,7 @@ def main():
     )
 
     # Restore model weights
-    step = restore_model_from_checkpoint(checkpoint_path, model)
+    step = Checkpointer.restore(checkpoint_path, model)
     print(f"Restored model from step {step}")
 
     # Load and preprocess images

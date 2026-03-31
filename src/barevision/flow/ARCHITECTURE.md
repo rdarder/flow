@@ -49,7 +49,7 @@ barevision/flow/
 │
 ├── dataset/video.py         # Data loading (shared)
 ├── settings.py              # Hyperparameters (shared)
-├── checkpoint_utils.py      # Model persistence utilities
+├── checkpointer.py          # Unified checkpoint management
 ├── inference.py             # Flow estimation from checkpoint
 ├── logging_utils.py         # Console/TensorBoard logging utilities
 ├── mean_conv_analysis.py    # Mean convolution kernel diagnostics
@@ -231,11 +231,17 @@ Replaces entropy minimization with spatial variance to encourage spatially conce
 - `log_mean_conv_analysis`: Logs all diagnostics to TensorBoard
 - Read this to understand what mean_conv kernels are learning during training.
 
-**`checkpoint_utils.py`** — Model persistence utilities.
-- `save_checkpoint`, `save_best_checkpoint`: Joint training checkpoints
-- `load_checkpoint`, `restore_model_from_checkpoint`: Loading utilities
-- `generate_run_name`: Unique run identifier
-- Standalone training has its own checkpoint helpers in `embeddings/training.py`
+**`checkpointer.py`** — Unified checkpoint management.
+- `Checkpointer` class: Stateful checkpointing for training
+  - `maybe_save_step()`: Periodic checkpointing during training
+  - `maybe_save_best()`: Best model checkpointing based on validation loss
+  - `close()`: Log training summary
+- Static methods for stateless loading (inference/resume):
+  - `load_config()`: Extract configuration without loading model
+  - `restore()`: Restore model state from checkpoint
+  - `load_metadata()`: Extract metadata (step, epoch, etc.)
+  - `generate_run_name()`: Unique run identifier
+  - `get_checkpoint_path()`: Resolve checkpoint directory path
 
 **`inference.py`** — Flow estimation from checkpoint.
 - Loads model from checkpoint
@@ -246,42 +252,55 @@ Replaces entropy minimization with spatial variance to encourage spatially conce
 
 ## Checkpointing
 
-### Standalone Embeddings Checkpoints
+The `Checkpointer` class provides unified checkpoint management for both training and inference.
 
-Saved during standalone training (`embeddings/training.py`):
+### Checkpoint Structure
 
-**Structure**:
 ```
 checkpoints/{run_name}/
 ├── step_000002/        # Periodic checkpoint
 │   ├── model/          # Model state
-│   ├── config/         # EmbeddingsSettings (as dict)
-│   └── step            # Global step number
-└── best/               # Best validation loss
-    └── ...
+│   ├── config/         # Settings (as dict)
+│   ├── step            # Global step number
+│   ├── epoch           # Epoch number
+│   └── step_in_epoch   # Step within epoch
+├── best/               # Best validation loss
+│   └── ...
+└── final/              # End of training (future)
 ```
 
-**Settings**: Saved as `EmbeddingsSettings` directly (no conversion)
+### Training Checkpoints
 
-### Joint Training Checkpoints
+**Standalone Embeddings** (`embeddings/training.py`):
+- Uses `Checkpointer(settings, run_name, logger)` for stateful checkpointing
+- `maybe_save_step()`: Periodic checkpoints based on `checkpoint.every_steps`
+- `maybe_save_best()`: Best model based on validation loss
+- Settings saved as `EmbeddingsSettings` directly
 
-Saved during joint training (`checkpoint_utils.py`):
+**Joint Training** (outdated, `joint/training.py`):
+- Legacy code, not updated to use unified `Checkpointer`
+- Settings saved as full `Settings` object
 
-**Structure**:
+### Inference and Resumption
+
+Load checkpoints using static methods (no `Checkpointer` instance needed):
+
+```python
+# Load configuration
+config = Checkpointer.load_config(checkpoint_path)
+
+# Restore model state
+step = Checkpointer.restore(checkpoint_path, model)
+
+# Load metadata (step, epoch, best_val_loss, etc.)
+metadata = Checkpointer.load_metadata(checkpoint_path)
 ```
-checkpoints/{run_name}/
-├── step_000100/        # Periodic
-├── best/               # Best validation
-└── final/              # Training complete
-```
-
-**Settings**: Saved as full `Settings` object (joint configuration)
 
 ### Validation System
 
 - **Frequency**: Configurable via `--validation.every_epochs`
 - **Metrics**: Validation loss logged to TensorBoard
-- **Best Model**: Automatically tracked and saved
+- **Best Model**: Automatically tracked and saved by `Checkpointer`
 - **Split**: 85% train / 15% val by video (JAX PRNG shuffle)
 
 ---

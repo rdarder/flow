@@ -14,7 +14,7 @@ import numpy as np
 import pytest
 from flax import nnx
 
-from barevision.flow.embeddings.checkpointer import Checkpointer
+from barevision.flow.checkpointer import Checkpointer
 from barevision.flow.embeddings.model import HierarchicalEmbeddingModel
 from barevision.flow.settings import (
     CheckpointSettings,
