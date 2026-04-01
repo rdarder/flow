@@ -87,6 +87,7 @@ def self_attention_spatial_variance(
     windows: jnp.ndarray,
     temperature: float,
     coords: jnp.ndarray,
+    need_aux: bool = True,
 ) -> Tuple[jnp.ndarray, dict]:
     """Compute self-attention spatial variance loss on a batch of windows.
 
@@ -97,11 +98,13 @@ def self_attention_spatial_variance(
         windows: (B, H, W, D) batch of windows (already split and flattened)
         temperature: Softmax temperature for attention sharpness
         coords: (N, 2) precomputed normalized coordinates
+        need_aux: Whether to return auxiliary data (attention weights)
 
     Returns:
         Tuple of (loss, aux_dict) where:
             - loss: (B, H, W) per-pixel spatial variance
             - aux_dict: {'attention_weights': (B, N, N), 'variance_map': (B, H, W)}
+              (empty dict if need_aux=False)
     """
     B, H, W, D = windows.shape
     N = H * W
@@ -121,10 +124,13 @@ def self_attention_spatial_variance(
     # Reshape back to spatial grid
     variance_grid = variance.reshape(B, H, W)
 
-    return variance_grid, {
-        "attention_weights": attn_weights,
-        "variance_map": variance_grid,
-    }
+    if need_aux:
+        return variance_grid, {
+            "attention_weights": attn_weights,
+            "variance_map": variance_grid,
+        }
+    else:
+        return variance_grid, {}
 
 
 def cross_attention_spatial_variance(
@@ -132,6 +138,7 @@ def cross_attention_spatial_variance(
     windows2: jnp.ndarray,
     temperature: float,
     coords: jnp.ndarray,
+    need_aux: bool = True,
 ) -> Tuple[jnp.ndarray, dict]:
     """Compute cross-attention spatial variance loss on a batch of windows.
 
@@ -143,11 +150,13 @@ def cross_attention_spatial_variance(
         windows2: (B, H, W, D) batch of windows from frame 2
         temperature: Softmax temperature for attention sharpness
         coords: (N, 2) precomputed normalized coordinates (for window2)
+        need_aux: Whether to return auxiliary data (attention weights)
 
     Returns:
         Tuple of (loss, aux_dict) where:
             - loss: (B, H, W) per-pixel spatial variance
             - aux_dict: {'attention_weights': (B, N, N), 'variance_map': (B, H, W)}
+              (empty dict if need_aux=False)
     """
     B, H, W, D = windows1.shape
     N = H * W
@@ -168,10 +177,13 @@ def cross_attention_spatial_variance(
     # Reshape back to spatial grid
     variance_grid = variance.reshape(B, H, W)
 
-    return variance_grid, {
-        "attention_weights": attn_weights,
-        "variance_map": variance_grid,
-    }
+    if need_aux:
+        return variance_grid, {
+            "attention_weights": attn_weights,
+            "variance_map": variance_grid,
+        }
+    else:
+        return variance_grid, {}
 
 
 def windowed_spatial_variance_losses(
@@ -181,6 +193,7 @@ def windowed_spatial_variance_losses(
     lambda_self: float,
     self_temperature: float,
     cross_temperature: float,
+    need_aux: bool = True,
 ) -> Tuple[jnp.ndarray, dict]:
     """Compute combined self and cross attention spatial variance losses.
 
@@ -193,6 +206,7 @@ def windowed_spatial_variance_losses(
         lambda_self: Self-attention loss weight in [0, 1]
         self_temperature: Temperature for self-attention softmax
         cross_temperature: Temperature for cross-attention softmax
+        need_aux: Whether to return auxiliary data
 
     Returns:
         Tuple of (combined_loss, aux_dict) where:
@@ -202,6 +216,7 @@ def windowed_spatial_variance_losses(
                         'cross_attention_weights': (B*N, N, N),
                         'self_variance_maps': (B, H, W),
                         'cross_variance_maps': (B, H, W)}
+              (empty dict except for self_loss/cross_loss if need_aux=False)
     """
     B, H, W, D = emb1.shape
 
@@ -234,12 +249,14 @@ def windowed_spatial_variance_losses(
         flat_windows1,
         temperature=self_temperature,
         coords=coords,
+        need_aux=need_aux,
     )
     cross_variance_flat, cross_aux = cross_attention_spatial_variance(
         flat_windows1,
         flat_windows2,
         temperature=cross_temperature,
         coords=coords,
+        need_aux=need_aux,
     )
 
     # Reshape back to spatial grid
@@ -258,19 +275,22 @@ def windowed_spatial_variance_losses(
     # Combine with weighting
     combined = (1 - lambda_self) * cross_loss + lambda_self * self_loss
 
-    aux = dict(self_loss=self_loss, cross_loss=cross_loss)
-    aux["self_attention_weights"] = self_aux["attention_weights"]
-    aux["cross_attention_weights"] = cross_aux["attention_weights"]
-    aux["self_variance_maps"] = self_aux["variance_map"]
-    aux["cross_variance_maps"] = cross_aux["variance_map"]
-
-    return combined, aux
+    if need_aux:
+        aux = dict(self_loss=self_loss, cross_loss=cross_loss)
+        aux["self_attention_weights"] = self_aux["attention_weights"]
+        aux["cross_attention_weights"] = cross_aux["attention_weights"]
+        aux["self_variance_maps"] = self_aux["variance_map"]
+        aux["cross_variance_maps"] = cross_aux["variance_map"]
+        return combined, aux
+    else:
+        return combined, {"self_loss": self_loss, "cross_loss": cross_loss}
 
 
 def compute_hierarchical_spatial_variance_loss(
     pyramid1: List[jnp.ndarray],
     pyramid2: List[jnp.ndarray],
     settings: SpatialVarianceLossSettings,
+    need_aux: bool = True,
 ) -> Tuple[jnp.ndarray, dict]:
     """Compute compound spatial variance loss across all pyramid levels.
 
@@ -281,6 +301,7 @@ def compute_hierarchical_spatial_variance_loss(
         pyramid1: List of feature maps from frame 1, one per level
         pyramid2: List of feature maps from frame 2, one per level
         settings: Loss configuration
+        need_aux: Whether to return auxiliary data
 
     Returns:
         Tuple of (total_loss, aux_dict) where:
@@ -291,6 +312,7 @@ def compute_hierarchical_spatial_variance_loss(
                         'level_cross_attention_weights': [...],
                         'level_self_variance_maps': [...],
                         'level_cross_variance_maps': [...]}
+              (minimal dict with just self_loss/cross_loss if need_aux=False)
     """
     if len(pyramid1) != len(pyramid2):
         raise ValueError(f"Pyramid level mismatch: {len(pyramid1)} vs {len(pyramid2)}")
@@ -302,7 +324,7 @@ def compute_hierarchical_spatial_variance_loss(
     total_self_loss = jnp.array(0.0)
     total_cross_loss = jnp.array(0.0)
 
-    # Aux data storage per level
+    # Aux data storage per level (only populated if need_aux=True)
     level_self_attn = []
     level_cross_attn = []
     level_self_variance = []
@@ -336,6 +358,7 @@ def compute_hierarchical_spatial_variance_loss(
             lambda_self=settings.lambda_self,
             self_temperature=settings.self_temperature,
             cross_temperature=settings.cross_temperature,
+            need_aux=need_aux,
         )
 
         # Apply level weight
@@ -347,11 +370,12 @@ def compute_hierarchical_spatial_variance_loss(
         total_cross_loss += level_aux["cross_loss"] * level_weight
         total_loss += level_loss_weighted
 
-        # Aggregate aux data
-        level_self_attn.append(level_aux["self_attention_weights"])
-        level_cross_attn.append(level_aux["cross_attention_weights"])
-        level_self_variance.append(level_aux["self_variance_maps"])
-        level_cross_variance.append(level_aux["cross_variance_maps"])
+        # Aggregate aux data (only if requested)
+        if need_aux:
+            level_self_attn.append(level_aux["self_attention_weights"])
+            level_cross_attn.append(level_aux["cross_attention_weights"])
+            level_self_variance.append(level_aux["self_variance_maps"])
+            level_cross_variance.append(level_aux["cross_variance_maps"])
 
     # Normalize by total weight
     total_weight = sum(level_weights)
@@ -359,18 +383,20 @@ def compute_hierarchical_spatial_variance_loss(
     total_self_loss = total_self_loss / total_weight
     total_cross_loss = total_cross_loss / total_weight
 
-    aux = dict(
-        self_loss=total_self_loss,
-        cross_loss=total_cross_loss,
-        level_losses=level_losses,
-        level_weights=level_weights,
-        level_self_attention_weights=level_self_attn,
-        level_cross_attention_weights=level_cross_attn,
-        level_self_variance_maps=level_self_variance,
-        level_cross_variance_maps=level_cross_variance,
-    )
-
-    return total_loss, aux
+    if need_aux:
+        aux = dict(
+            self_loss=total_self_loss,
+            cross_loss=total_cross_loss,
+            level_losses=level_losses,
+            level_weights=level_weights,
+            level_self_attention_weights=level_self_attn,
+            level_cross_attention_weights=level_cross_attn,
+            level_self_variance_maps=level_self_variance,
+            level_cross_variance_maps=level_cross_variance,
+        )
+        return total_loss, aux
+    else:
+        return total_loss, {"self_loss": total_self_loss, "cross_loss": total_cross_loss}
 
 
 class HierarchicalSpatialVarianceLoss:
@@ -405,5 +431,5 @@ class HierarchicalSpatialVarianceLoss:
         )
 
         return compute_hierarchical_spatial_variance_loss(
-            pyramid1, pyramid2, self.settings
+            pyramid1, pyramid2, self.settings, need_aux=need_aux
         )
