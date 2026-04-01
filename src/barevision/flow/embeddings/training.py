@@ -22,7 +22,7 @@ from barevision.flow.embeddings.model import (
     HierarchicalEmbeddingModel,
 )
 from barevision.flow.embeddings.spatial_losses import HierarchicalSpatialVarianceLoss
-from barevision.flow.embeddings.visualization_train import log_visualizations
+from barevision.flow.embeddings.visualization import log_visualizations
 from barevision.flow.logging_utils import (
     should_log_something,
 )
