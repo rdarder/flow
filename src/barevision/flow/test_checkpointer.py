@@ -1,4 +1,4 @@
-"""Tests for embeddings checkpointer.
+"""Tests for the unified Checkpointer.
 
 Tests verify that checkpointing logic correctly handles:
 - Periodic step checkpoints
@@ -6,16 +6,13 @@ Tests verify that checkpointing logic correctly handles:
 - Metadata preservation
 """
 
-import shutil
 from pathlib import Path
 
 import jax.numpy as jnp
-import numpy as np
 import pytest
 from flax import nnx
 
 from barevision.flow.checkpointer import Checkpointer
-from barevision.flow.embeddings.model import HierarchicalEmbeddingModel
 from barevision.flow.settings import (
     CheckpointSettings,
     DatasetSettings,
@@ -75,7 +72,7 @@ def test_settings(tmp_path):
 def model_and_logger(test_settings):
     """Create model and logger for testing."""
     rngs = nnx.Rngs(test_settings.training.seed)
-    model = HierarchicalEmbeddingModel(test_settings.model, rngs=rngs)
+    model = nnx.Linear(8, 16, rngs=rngs)  # Simple generic model
     logger = ConsoleLogger()
     return model, logger
 
@@ -243,3 +240,33 @@ def test_checkpoint_overwrites_best(test_settings, model_and_logger, tmp_path):
     assert restored["step"] == 20
     assert restored["best_val_loss"] == 0.5
     assert restored["epoch"] == 2
+
+
+def test_static_methods(test_settings, model_and_logger, tmp_path):
+    """Test static methods for loading checkpoints."""
+    import orbax.checkpoint as ocp
+
+    model, logger = model_and_logger
+    checkpointer = Checkpointer(test_settings, "test_run", logger)
+
+    # Save a checkpoint
+    checkpointer.maybe_save_step(model, epoch=1, step_in_epoch=5, global_step=5)
+
+    checkpoint_dir = Path(test_settings.checkpoint.location) / "test_run"
+    checkpoint_path = checkpoint_dir / "step_000005"
+
+    # Test load_config
+    config = Checkpointer.load_config(checkpoint_path)
+    assert config is not None
+    assert "checkpoint" in config
+
+    # Test load_metadata
+    metadata = Checkpointer.load_metadata(checkpoint_path)
+    assert metadata["step"] == 5
+    assert metadata["epoch"] == 1
+    assert metadata["step_in_epoch"] == 5
+
+    # Test restore
+    new_model = nnx.Linear(8, 16, rngs=nnx.Rngs(0))  # Different seed
+    step = Checkpointer.restore(checkpoint_path, new_model)
+    assert step == 5
