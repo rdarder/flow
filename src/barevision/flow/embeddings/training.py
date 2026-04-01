@@ -24,7 +24,6 @@ from barevision.flow.embeddings.model import (
 from barevision.flow.embeddings.spatial_losses import HierarchicalSpatialVarianceLoss
 from barevision.flow.embeddings.visualization_train import log_visualizations
 from barevision.flow.logging_utils import (
-    log_progress,
     should_log_something,
 )
 from barevision.flow.settings import EmbeddingsSettings
@@ -112,7 +111,9 @@ class EmbeddingsTrainer:
 
     def __init__(self, settings: EmbeddingsSettings):
         self.settings = settings
-        self.run_name = Checkpointer.generate_run_name(prefix=settings.logging.run_name_prefix)
+        self.run_name = Checkpointer.generate_run_name(
+            prefix=settings.logging.run_name_prefix
+        )
         self.logger = ConsoleLogger()
         self.tensorboard = TensorboardLogger(
             log_dir=settings.logging.tensorboard_dir,
@@ -175,9 +176,7 @@ class EmbeddingsTrainer:
         self.logger.log(f"\nRunning validation at epoch {epoch}...")
         val_loss = self._run_validation()
         self.logger.log(f"Validation loss: {val_loss:.6f}")
-        self.tensorboard.log_scalar(
-            "Loss/validation", val_loss, step=global_step
-        )
+        self.tensorboard.log_scalar("Loss/validation", val_loss, step=global_step)
         self.checkpointer.maybe_save_best(
             model=self.model,
             epoch=epoch,
@@ -282,7 +281,7 @@ class EmbeddingsTrainer:
         global_step: int,
         img1: jnp.ndarray,
         img2: jnp.ndarray,
-        metadata: dict,
+        metadata: list,
         epoch_start: float,
     ) -> float:
         """Execute training step and optionally log/visualize.
@@ -318,9 +317,7 @@ class EmbeddingsTrainer:
             global_step % self.settings.logging.visualizations_every_steps == 0
             and need_aux
         ):
-            self._log_visualizations(
-                img1, img2, aux, metadata[0], global_step, epoch
-            )
+            self._log_visualizations(img1, img2, aux, metadata[0], global_step, epoch)
 
         return loss
 
@@ -431,12 +428,20 @@ class EmbeddingsTrainer:
         self.logger.log(f"Epochs: {self.settings.training.epochs}")
         self.logger.log(f"Batch size: {self.settings.dataset.batch_size}")
         if self.settings.dataset.max_samples > 0:
-            self.logger.log(f"Max samples per epoch: {self.settings.dataset.max_samples}")
+            self.logger.log(
+                f"Max samples per epoch: {self.settings.dataset.max_samples}"
+            )
         self.logger.log("")
         self.logger.log(f"Loss: Spatial Variance")
-        self.logger.log(f"  - Lambda self: {self.settings.loss.spatial_variance.lambda_self}")
-        self.logger.log(f"  - Self temperature: {self.settings.loss.spatial_variance.self_temperature}")
-        self.logger.log(f"  - Cross temperature: {self.settings.loss.spatial_variance.cross_temperature}")
+        self.logger.log(
+            f"  - Lambda self: {self.settings.loss.spatial_variance.lambda_self}"
+        )
+        self.logger.log(
+            f"  - Self temperature: {self.settings.loss.spatial_variance.self_temperature}"
+        )
+        self.logger.log(
+            f"  - Cross temperature: {self.settings.loss.spatial_variance.cross_temperature}"
+        )
         self.logger.log(
             f"  - Level weight decay: {self.settings.loss.spatial_variance.level_weight_decay}"
         )
@@ -444,5 +449,5 @@ class EmbeddingsTrainer:
 
 
 if __name__ == "__main__":
-    settings = tyro.cli(EmbeddingsSettings)
-    EmbeddingsTrainer(settings)()
+    parsed_settings = tyro.cli(EmbeddingsSettings)
+    EmbeddingsTrainer(parsed_settings)()

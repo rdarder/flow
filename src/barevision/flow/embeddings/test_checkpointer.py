@@ -117,9 +117,7 @@ def test_maybe_save_step_disabled(test_settings, model_and_logger):
     assert not checkpoint_dir.exists()
 
 
-def test_maybe_save_best_only_on_improvement(
-    test_settings, model_and_logger, tmp_path
-):
+def test_maybe_save_best_only_on_improvement(test_settings, model_and_logger, tmp_path):
     """Best checkpoint only saved when validation loss improves."""
     model, logger = model_and_logger
     checkpointer = Checkpointer(test_settings, "test_run", logger)
@@ -180,9 +178,7 @@ def test_checkpoint_contains_metadata(test_settings, model_and_logger, tmp_path)
     assert "model" in restored
 
 
-def test_best_checkpoint_contains_val_loss(
-    test_settings, model_and_logger, tmp_path
-):
+def test_best_checkpoint_contains_val_loss(test_settings, model_and_logger, tmp_path):
     """Best checkpoint contains validation loss metadata."""
     import orbax.checkpoint as ocp
 

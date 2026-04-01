@@ -35,7 +35,6 @@ class TestCoordinateGeneration:
 
         N = window_size * window_size
         assert coords.shape == (N, 2)
-        
 
     def test_coordinates_normalized_to_unit_interval(self):
         """Coordinates should be in [0, 1] range."""
@@ -359,9 +358,7 @@ class TestGradientFlow:
         coords = _generate_normalized_coordinates(H)
 
         def loss_fn(w):
-            loss, _ = self_attention_spatial_variance(
-                w, temperature=0.3, coords=coords
-            )
+            loss, _ = self_attention_spatial_variance(w, temperature=0.3, coords=coords)
             return loss.mean()
 
         grad = jax.grad(loss_fn)(windows)

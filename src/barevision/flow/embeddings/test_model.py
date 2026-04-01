@@ -172,9 +172,9 @@ class TestSymmetricMeanSubtraction:
 
         # mean_conv with SAME padding should preserve dimensions
         local_mean = model.mean_conv(rich_features)
-        assert local_mean.shape == rich_features.shape, (
-            "mean_conv should preserve dimensions with SAME padding"
-        )
+        assert (
+            local_mean.shape == rich_features.shape
+        ), "mean_conv should preserve dimensions with SAME padding"
 
         # Subtraction should preserve dimensions
         x_unique = rich_features - local_mean
@@ -241,9 +241,9 @@ class TestSymmetricMeanSubtraction:
 
         # Gradients should be non-zero
         mean_grad = grad_state["mean_conv"]["kernel"]
-        assert not jnp.allclose(mean_grad, 0.0), (
-            "mean_conv should have non-zero gradients"
-        )
+        assert not jnp.allclose(
+            mean_grad, 0.0
+        ), "mean_conv should have non-zero gradients"
 
 
 class TestHierarchicalEmbeddingModel:
@@ -273,9 +273,9 @@ class TestHierarchicalEmbeddingModel:
 
         # Spatial dimensions should decrease at each level
         for i in range(len(pyramid) - 1):
-            assert pyramid[i].shape[1] > pyramid[i + 1].shape[1], (
-                f"Level {i} should be larger than level {i + 1}"
-            )
+            assert (
+                pyramid[i].shape[1] > pyramid[i + 1].shape[1]
+            ), f"Level {i} should be larger than level {i + 1}"
 
         # Verify exact dimensions
         # Level 0: 83 - 4 = 79
@@ -463,9 +463,9 @@ class TestDimensionalMath:
         # Calculate output from that input
         output = calculate_coarse_output_size(required_input, num_levels)
 
-        assert output == target, (
-            f"Roundtrip failed: {required_input} -> {output} (expected {target})"
-        )
+        assert (
+            output == target
+        ), f"Roundtrip failed: {required_input} -> {output} (expected {target})"
 
     def test_single_level_math(self):
         """Test dimensional math for single level."""

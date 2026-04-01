@@ -274,9 +274,7 @@ class Checkpointer:
         """
         checkpoint_path = Path(checkpoint_path).resolve()
         checkpointer = ocp.PyTreeCheckpointer()
-        restored = checkpointer.restore(
-            checkpoint_path, item=ocp.args.PyTreeRestore()
-        )
+        restored = checkpointer.restore(checkpoint_path, item=ocp.args.PyTreeRestore())
 
         # Convert string keys back to integers for NNX compatibility
         return _convert_string_keys_to_int(restored)
