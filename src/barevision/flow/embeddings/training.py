@@ -56,7 +56,7 @@ def loss_fn(model, img_pair, loss_fn_obj, need_aux: bool):
 
 
 @partial(nnx.jit, static_argnames=("loss_fn_obj", "return_aux"))
-def train_step(
+def _compute_loss_and_grads(
     model: HierarchicalEmbeddingModel,
     loss_fn_obj: HierarchicalSpatialVarianceLoss,
     optimizer: nnx.Optimizer,
@@ -85,7 +85,7 @@ def train_step(
 
 
 @partial(nnx.jit, static_argnames="loss_fn_obj")
-def validation_step(
+def _validation_step(
     model: HierarchicalEmbeddingModel,
     loss_fn_obj: HierarchicalSpatialVarianceLoss,
     img_pair: tuple[jnp.ndarray, jnp.ndarray],
@@ -187,15 +187,14 @@ class EmbeddingsTrainer:
 
     def __call__(self):
         """Main embeddings training loop."""
-        settings = self.settings
-        print_header_embeddings(settings, self.logger)
+        self._log_header()
         self.logger.log("")
 
         # Resume from checkpoint if requested
         global_step = self._maybe_restore_from_checkpoint()
         self._report_model_params()
 
-        for epoch in range(1, settings.training.epochs + 1):
+        for epoch in range(1, self.settings.training.epochs + 1):
             global_step = self._train_epoch(epoch, global_step)
             self._maybe_run_validation(epoch, global_step)
 
@@ -226,55 +225,21 @@ class EmbeddingsTrainer:
         epoch_start = time.time()
 
         for step, (img1, img2, metadata) in enumerate(loader):
-            # Determine if we should return aux data (for logging or visualization)
-            need_aux = should_log_something(self.settings.logging, global_step)
-
-            loss, aux = train_step(
-                self.model, self.loss_fn_obj, self.optimizer, (img1, img2), need_aux
+            self._train_step_and_maybe_log(
+                epoch=epoch,
+                step=step,
+                global_step=global_step,
+                img1=img1,
+                img2=img2,
+                metadata=metadata,
+                epoch_start=epoch_start,
             )
-
-            if global_step % self.settings.logging.every_steps == 0:
-                log_progress_embeddings(
-                    self.tensorboard,
-                    self.logger,
-                    self.model,
-                    img1,
-                    epoch,
-                    global_step,
-                    loss,
-                    aux,
-                    epoch_start,
-                    self.settings.loss.spatial_variance.window_size,
-                )
-
-            if (
-                global_step % self.settings.logging.visualizations_every_steps == 0
-                and need_aux
-            ):
-                # Get pyramids from aux_data
-                pyramid1, pyramid2 = aux["pyramids"]
-
-                # Pass original images for visualization
-                log_visualizations(
-                    self.tensorboard,
-                    img1[0:1],  # Original RGB frame 1
-                    img2[0:1],  # Original RGB frame 2
-                    pyramid1,
-                    pyramid2,
-                    aux_data=aux,
-                    metadata=metadata[0],
-                    step=global_step,
-                    window_size=self.settings.loss.spatial_variance.window_size,
-                    num_levels=self.settings.model.num_levels,
-                )
-
             self.checkpointer.maybe_save_step(
                 model=self.model,
                 epoch=epoch,
                 step_in_epoch=step + 1,
                 global_step=global_step,
             )
-
             global_step += 1
 
         return global_step
@@ -296,7 +261,7 @@ class EmbeddingsTrainer:
         num_batches = 0
 
         for img1, img2, _ in loader:
-            loss = validation_step(
+            loss = _validation_step(
                 self.model,
                 self.loss_fn_obj,
                 (img1, img2),
@@ -310,88 +275,172 @@ class EmbeddingsTrainer:
         avg_loss = total_loss / num_batches
         return avg_loss
 
+    def _train_step_and_maybe_log(
+        self,
+        epoch: int,
+        step: int,
+        global_step: int,
+        img1: jnp.ndarray,
+        img2: jnp.ndarray,
+        metadata: dict,
+        epoch_start: float,
+    ) -> float:
+        """Execute training step and optionally log/visualize.
 
-def print_header_embeddings(settings: EmbeddingsSettings, logger):
-    """Print training header for embeddings training."""
-    from barevision.utils import image
+        Encapsulates the need_aux decision and all logging logic.
 
-    logger.log("=" * 60)
-    logger.log("EMBEDDINGS TRAINING (Spatial Variance Loss)")
-    logger.log("=" * 60)
-    logger.log("")
-    logger.log(f"Pyramid levels: {settings.model.num_levels}")
-    logger.log(f"Embedding dim: {settings.model.embed_dim}")
-    logger.log(
-        f"Window size: {settings.loss.spatial_variance.window_size}×{settings.loss.spatial_variance.window_size}"
-    )
+        Args:
+            epoch: Current epoch number
+            step: Step within epoch
+            global_step: Global step number
+            img1: First frame
+            img2: Second frame
+            metadata: Batch metadata
+            epoch_start: Epoch start time for speed calculation
 
-    image_size = image.image_size(
-        settings.dataset.coarse_grid_size,
-        settings.dataset.window_size,
-        settings.dataset.num_levels,
-    )
-    logger.log(f"Image size: {image_size}")
-    logger.log("")
-    logger.log(f"Epochs: {settings.training.epochs}")
-    logger.log(f"Batch size: {settings.dataset.batch_size}")
-    if settings.dataset.max_samples > 0:
-        logger.log(f"Max samples per epoch: {settings.dataset.max_samples}")
-    logger.log("")
-    logger.log(f"Loss: Spatial Variance")
-    logger.log(f"  - Lambda self: {settings.loss.spatial_variance.lambda_self}")
-    logger.log(f"  - Self temperature: {settings.loss.spatial_variance.self_temperature}")
-    logger.log(f"  - Cross temperature: {settings.loss.spatial_variance.cross_temperature}")
-    logger.log(
-        f"  - Level weight decay: {settings.loss.spatial_variance.level_weight_decay}"
-    )
-    logger.log("")
+        Returns:
+            Loss value
+        """
+        # Determine if we should compute aux data for logging/visualization
+        need_aux = should_log_something(self.settings.logging, global_step)
 
+        # Execute training step
+        loss, aux = _compute_loss_and_grads(
+            self.model, self.loss_fn_obj, self.optimizer, (img1, img2), need_aux
+        )
 
-def log_progress_embeddings(
-    tensorboard: TensorboardLogger,
-    console_logger,
-    model,
-    img1,
-    epoch: int,
-    step: int,
-    loss,
-    aux,
-    epoch_start: float,
-    window_size: int = 16,
-):
-    """Log progress for embeddings training.
+        # Log progress if due
+        if global_step % self.settings.logging.every_steps == 0:
+            self._log_progress(epoch, global_step, loss, aux, epoch_start, img1)
 
-    Args:
-        tensorboard: TensorBoard logger
-        console_logger: Console logger for progress output
-        model: Embedding model
-        img1: Input frame for diagnostics
-        epoch: Current epoch number
-        step: Current step within epoch
-        loss: Combined loss value
-        aux: Auxiliary loss information
-        epoch_start: Time when epoch started (for speed calculation)
-        window_size: Attention window size
-    """
-    # Log metrics
-    tensorboard.log_scalar("Loss/total", float(loss), step)
-    tensorboard.log_scalar("Loss/spatial_variance/self", float(aux["self_loss"]), step)
-    tensorboard.log_scalar("Loss/spatial_variance/cross", float(aux["cross_loss"]), step)
+        # Log visualizations if due (requires aux data)
+        if (
+            global_step % self.settings.logging.visualizations_every_steps == 0
+            and need_aux
+        ):
+            self._log_visualizations(
+                img1, img2, aux, metadata[0], global_step, epoch
+            )
 
-    # Log embedding statistics
-    from barevision.flow.logging_utils import log_diagnostics
+        return loss
 
-    log_diagnostics(tensorboard, model, img1, step, window_size)
+    def _log_progress(
+        self,
+        epoch: int,
+        global_step: int,
+        loss: float,
+        aux: dict,
+        epoch_start: float,
+        img1: jnp.ndarray,
+    ):
+        """Log training progress metrics.
 
-    # Print progress line
-    steps_per_sec = (step + 1) / (time.time() - epoch_start)
-    self_var = float(aux["self_loss"])
-    cross_var = float(aux["cross_loss"])
-    console_logger.log(
-        f"Epoch {epoch} | Step {step} | Loss: {float(loss):.4f} "
-        f"(self: {self_var:.2f} | cross: {cross_var:.2f}) | "
-        f"{steps_per_sec:.1f} steps/sec"
-    )
+        Args:
+            epoch: Current epoch number
+            global_step: Global step number
+            loss: Combined loss value
+            aux: Auxiliary data from training step
+            epoch_start: Epoch start time
+            img1: Input frame for diagnostics
+        """
+        # Log metrics
+        self.tensorboard.log_scalar("Loss/total", float(loss), global_step)
+        self.tensorboard.log_scalar(
+            "Loss/spatial_variance/self", float(aux["self_loss"]), global_step
+        )
+        self.tensorboard.log_scalar(
+            "Loss/spatial_variance/cross", float(aux["cross_loss"]), global_step
+        )
+
+        # Log embedding statistics
+        from barevision.flow.logging_utils import log_diagnostics
+
+        log_diagnostics(
+            self.tensorboard,
+            self.model,
+            img1,
+            global_step,
+            self.settings.loss.spatial_variance.window_size,
+        )
+
+        # Print progress line
+        steps_per_sec = global_step / (time.time() - epoch_start)
+        self_var = float(aux["self_loss"])
+        cross_var = float(aux["cross_loss"])
+        self.logger.log(
+            f"Epoch {epoch} | Step {global_step} | Loss: {float(loss):.4f} "
+            f"(self: {self_var:.2f} | cross: {cross_var:.2f}) | "
+            f"{steps_per_sec:.1f} steps/sec"
+        )
+
+    def _log_visualizations(
+        self,
+        img1: jnp.ndarray,
+        img2: jnp.ndarray,
+        aux: dict,
+        metadata: dict,
+        global_step: int,
+        epoch: int,
+    ):
+        """Log training visualizations.
+
+        Args:
+            img1: First frame
+            img2: Second frame
+            aux: Auxiliary data from training step
+            metadata: Batch metadata
+            global_step: Global step number
+            epoch: Current epoch number
+        """
+        pyramid1, pyramid2 = aux["pyramids"]
+
+        log_visualizations(
+            self.tensorboard,
+            img1[0:1],
+            img2[0:1],
+            pyramid1,
+            pyramid2,
+            aux_data=aux,
+            metadata=metadata,
+            step=global_step,
+            window_size=self.settings.loss.spatial_variance.window_size,
+            num_levels=self.settings.model.num_levels,
+        )
+
+    def _log_header(self):
+        """Log training configuration header."""
+        from barevision.utils import image
+
+        self.logger.log("=" * 60)
+        self.logger.log("EMBEDDINGS TRAINING (Spatial Variance Loss)")
+        self.logger.log("=" * 60)
+        self.logger.log("")
+        self.logger.log(f"Pyramid levels: {self.settings.model.num_levels}")
+        self.logger.log(f"Embedding dim: {self.settings.model.embed_dim}")
+        self.logger.log(
+            f"Window size: {self.settings.loss.spatial_variance.window_size}×{self.settings.loss.spatial_variance.window_size}"
+        )
+
+        image_size = image.image_size(
+            self.settings.dataset.coarse_grid_size,
+            self.settings.dataset.window_size,
+            self.settings.dataset.num_levels,
+        )
+        self.logger.log(f"Image size: {image_size}")
+        self.logger.log("")
+        self.logger.log(f"Epochs: {self.settings.training.epochs}")
+        self.logger.log(f"Batch size: {self.settings.dataset.batch_size}")
+        if self.settings.dataset.max_samples > 0:
+            self.logger.log(f"Max samples per epoch: {self.settings.dataset.max_samples}")
+        self.logger.log("")
+        self.logger.log(f"Loss: Spatial Variance")
+        self.logger.log(f"  - Lambda self: {self.settings.loss.spatial_variance.lambda_self}")
+        self.logger.log(f"  - Self temperature: {self.settings.loss.spatial_variance.self_temperature}")
+        self.logger.log(f"  - Cross temperature: {self.settings.loss.spatial_variance.cross_temperature}")
+        self.logger.log(
+            f"  - Level weight decay: {self.settings.loss.spatial_variance.level_weight_decay}"
+        )
+        self.logger.log("")
 
 
 if __name__ == "__main__":
