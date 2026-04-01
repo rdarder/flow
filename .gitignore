@@ -16,3 +16,4 @@ test_runs/
 notebooks/
 flow.npy
 experiments/
+.qwen/
