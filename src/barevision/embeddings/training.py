@@ -16,7 +16,7 @@ import tyro
 from flax import nnx
 
 from barevision.embeddings.checkpointer import Checkpointer
-from barevision.flow.dataset.video import create_dataloader
+from barevision.dataset.video import create_dataloader
 from barevision.embeddings.model import (
     count_parameters,
     HierarchicalEmbeddingModel,

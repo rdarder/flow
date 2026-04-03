@@ -10,7 +10,7 @@ import tyro
 from flax import nnx
 
 from barevision.embeddings.checkpointer import Checkpointer
-from barevision.flow.dataset.video import create_dataloader
+from barevision.dataset.video import create_dataloader
 from barevision.embeddings import HierarchicalSpatialVarianceLoss
 from barevision.embeddings.model import (
     count_parameters,
@@ -32,7 +32,6 @@ from barevision.flow.matching.losses import HierarchicalReconstructionLoss
 from barevision.flow.settings import (
     Settings,
 )
-from barevision.embeddings.settings import ModelSettings as EmbeddingsModelSettings
 from barevision.utils.console import ConsoleLogger
 from barevision.utils.logging import TensorboardLogger
 
