@@ -13,17 +13,15 @@ Produce a **rich exploration** of:
 - What's been decided (adopted/rejected/deferred with why)
 - What's still unknown (questions for later experimentation)
 
-**Output:** A `brainstorm.md` file that captures the full mental model — stream of consciousness, false starts, detailed specs, and all hard-won insights.
-
----
-
-## What Happens Next
-
-After this session, the user will **distill** the brainstorm into `changes.md`:
-- Brainstorm: full exploration, detailed specs, mental models
-- changes.md: curated constraints, decisions, unknowns (no task ordering)
-
-**This means:** Don't worry about structure or prescriptiveness. Explore freely. The distillation step will extract what's actionable.
+**Output:** The primary output is the conversation itself, helping me explore and think about a problem. 
+Since the conversation will go in many different ways, every so often I'll want to checkpoint our conversation
+into a summary. We'll store that in `brainstorm.md`. The file captures the full mental model — stream of consciousness, 
+false starts, detailed specs, and all hard-won insights. It should be easier to digest than the raw conversation. 
+I will ask you to update the document every once in a while. You should aim to edit the entire file, not just append to
+it like a log.
+The session will end when I think we've explored enough and I'm happy with the brainstorm summary. I will
+use the document in another workflow where I further process it into useful changes, but you shouldn't worry about that
+at this stage.
 
 ---
 
