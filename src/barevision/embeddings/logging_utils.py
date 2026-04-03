@@ -13,8 +13,7 @@ from barevision.embeddings import (
     cross_attention_spatial_variance,
 )
 from barevision.embeddings.spatial_losses import generate_normalized_coordinates
-from barevision.flow.settings import LoggingSettings
-from barevision.embeddings.settings import Settings
+from barevision.embeddings.settings import Settings, LoggingSettings
 from barevision.utils import image
 from barevision.utils.grid import WindowGrid
 from barevision.utils.logging import TensorboardLogger
