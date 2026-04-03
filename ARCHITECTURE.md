@@ -44,7 +44,7 @@ This means the finer levels (Level 0 and Level 1) physically cover a wider field
 
 ---
 
-## 2. Flow Estimation Pipeline (Implemented)
+## 2. Flow Estimation Pipeline (Not Implemented)
 
 The flow estimation pipeline estimates optical flow using attention-based feature matching across pyramid levels. The system processes each level independently and uses reconstruction loss for training.
 
@@ -116,7 +116,7 @@ At each level, the predicted residual flows are aggregated across the entire ima
 
 ---
 
-## 3. Training Strategy (Implemented)
+## 3. Training Strategy (Partially Implemented)
 
 The model uses a two-phase training approach with separate objectives for embeddings and flow estimation.
 
@@ -186,4 +186,4 @@ Training includes automatic validation on a held-out set (15% of videos):
 
 Trained models can be used for optical flow estimation via the inference script, which loads checkpoints and estimates flow between arbitrary image pairs.
 
-See `src/barevision/flow/ARCHITECTURE.md` for detailed implementation documentation.
+See `src/barevision/ARCHITECTURE.md` for detailed implementation documentation.
