@@ -54,7 +54,6 @@ def create_smoke_test_settings() -> Settings:
         ),
         logging=LoggingSettings(
             tensorboard_dir="test_runs",
-            run_name_prefix="smoke_test",
             every_steps=1,  # Log everything every step
             visualizations_every_steps=1,  # Visualize every step
         ),
@@ -66,6 +65,7 @@ def create_smoke_test_settings() -> Settings:
         validation=ValidationSettings(
             every_epochs=2,  # Validate every 2 epochs
         ),
+        run_name_prefix="smoke_test",
     )
 
 

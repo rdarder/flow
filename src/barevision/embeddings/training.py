@@ -6,9 +6,9 @@ using spatial variance loss to encourage spatially concentrated attention patter
 Entry point: python -m barevision.embeddings.training
 """
 
+import datetime
 import time
 from functools import partial
-from pathlib import Path
 
 import jax.numpy as jnp
 import optax
@@ -17,7 +17,6 @@ from flax import nnx
 
 from barevision.embeddings.checkpointer import (
     CheckpointManagerWrapper,
-    CheckpointSettings,
 )
 from barevision.dataset.video import create_dataloader
 from barevision.embeddings.model import (
@@ -43,9 +42,7 @@ class EmbeddingsTrainer:
 
     def __init__(self, settings: Settings):
         self.settings = settings
-        self.run_name = CheckpointManagerWrapper.generate_run_name(
-            prefix=settings.logging.run_name_prefix
-        )
+        self.run_name = self.generate_run_name(prefix=settings.run_name_prefix)
         self.logger = ConsoleLogger()
         self.tensorboard = TensorboardLogger(
             log_dir=settings.logging.tensorboard_dir,
@@ -73,17 +70,10 @@ class EmbeddingsTrainer:
             settings.checkpoint, self.run_name, self.logger
         )
 
-    def _maybe_restore_from_checkpoint(self) -> int:
-        """Load model parameters from checkpoint depending on settings.
-
-        Returns the global step, either the restored one or 1.
-        """
-        if not self.settings.checkpoint.resume_from:
-            return 1
-
-        resume_path = Path(self.settings.checkpoint.resume_from)
-        with self.logger.task(f"Resuming from checkpoint: {resume_path}"):
-            return CheckpointManagerWrapper.restore(resume_path, self.model)
+    @staticmethod
+    def generate_run_name(prefix: str) -> str:
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        return f"{prefix}_{timestamp}"
 
     def _report_model_params(self):
         """Report model parameter counts."""
@@ -120,8 +110,7 @@ class EmbeddingsTrainer:
         self._log_header()
         self.logger.log("")
 
-        # Resume from checkpoint if requested
-        global_step = self._maybe_restore_from_checkpoint()
+        global_step = self.checkpointer.maybe_restore(self.model)
         self._report_model_params()
 
         for epoch in range(1, self.settings.training.epochs + 1):

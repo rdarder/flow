@@ -66,13 +66,11 @@ class LoggingSettings:
 
     Attributes:
         tensorboard_dir: Root directory for TensorBoard logs
-        run_name_prefix: Prefix for auto-generated run names
         every_steps: Log metrics, statistics, and console output every N steps
         visualizations_every_steps: Generate and log visualization figures every N steps
     """
 
     tensorboard_dir: str = "runs"
-    run_name_prefix: str = "embeddings"
     every_steps: int = 100
     visualizations_every_steps: int = 100
 
@@ -214,6 +212,7 @@ class Settings:
     """Full settings for embeddings training.
 
     This is the main entry point for CLI configuration.
+    run_name_prefix: Prefix for auto-generated run names
     """
 
     dataset: DatasetSettings
@@ -223,3 +222,4 @@ class Settings:
     logging: LoggingSettings
     checkpoint: "barevision.embeddings.checkpointer.CheckpointSettings"
     validation: ValidationSettings
+    run_name_prefix: str = "embeddings"

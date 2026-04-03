@@ -134,21 +134,6 @@ class CheckpointManagerWrapper:
     def close(self):
         pass
 
-    @staticmethod
-    def generate_run_name(prefix: str = "embeddings") -> str:
-        """Generate a unique run name with timestamp.
-
-        Used consistently across logging and checkpointing.
-
-        Args:
-            prefix: Run name prefix (default "embeddings")
-
-        Returns:
-            Run name in format "{prefix}_{YYYYMMDD}_{HHMMSS}"
-        """
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        return f"{prefix}_{timestamp}"
-
     def maybe_restore(self, model: nnx.Module) -> int:
         """Restore model state from the latest checkpointed state..
 
