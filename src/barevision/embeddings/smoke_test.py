@@ -15,9 +15,9 @@ from barevision.embeddings.settings import (
     SpatialVarianceLossSettings,
     TrainingSettings,
     LoggingSettings,
-    CheckpointSettings,
     ValidationSettings,
 )
+from barevision.embeddings.checkpointer import CheckpointSettings
 
 
 def create_smoke_test_settings() -> Settings:

@@ -17,7 +17,7 @@ import numpy as np
 from flax import nnx
 from PIL import Image
 
-from barevision.flow.checkpointer import Checkpointer
+from barevision.embeddings.checkpointer import Checkpointer
 from barevision.flow.joint.model import JointEmbeddingFlowModel as OpticalFlowModel
 
 

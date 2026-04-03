@@ -12,11 +12,7 @@ import jax.numpy as jnp
 import pytest
 from flax import nnx
 
-from barevision.flow.checkpointer import Checkpointer
-from barevision.flow.settings import (
-    CheckpointSettings,
-    ValidationSettings,
-)
+from barevision.embeddings.checkpointer import Checkpointer, CheckpointSettings
 from barevision.embeddings.settings import (
     Settings,
     DatasetSettings,
@@ -25,6 +21,9 @@ from barevision.embeddings.settings import (
     SpatialVarianceLossSettings,
     TrainingSettings,
     LoggingSettings,
+)
+from barevision.flow.settings import (
+    ValidationSettings,
 )
 from barevision.utils.console import ConsoleLogger
 

@@ -1,9 +1,10 @@
-"""Unified checkpoint management for Barevision.
+"""Checkpoint management for embeddings training.
 
 Provides checkpointing for training with periodic and best-model saves.
 """
 
 import shutil
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict
@@ -11,12 +12,38 @@ from typing import Any, Dict
 import orbax.checkpoint as ocp
 from flax import nnx
 
-from barevision.flow.settings import CheckpointSettings
+from barevision.utils.checks import check_value
 from barevision.utils.console import ConsoleLogger
 
 
+@dataclass
+class CheckpointSettings:
+    """Checkpoint configuration for model persistence.
+
+    Attributes:
+        every_steps: Save checkpoint every N steps (0 to disable periodic checkpointing)
+        location: Base directory for checkpoints (default "checkpoints")
+                  Final path will be {location}/{run_name}/
+        save_best: Whether to save best model checkpoint based on validation loss
+        resume_from: Path to checkpoint to resume training from (optional)
+                     If provided, loads model weights and continues from saved step
+    """
+
+    every_steps: int = 100
+    location: str = "checkpoints"
+    save_best: bool = True
+    resume_from: str = ""
+
+    def __post_init__(self):
+        check_value(
+            self.every_steps >= 0,
+            f"every_steps must be >= 0, got {self.every_steps}",
+        )
+        check_value(self.location, "location cannot be empty")
+
+
 class Checkpointer:
-    """Manages checkpoint saving for training.
+    """Manages checkpoint saving for embeddings training.
 
     Handles periodic checkpoints and best-model tracking based on validation loss.
 
@@ -190,13 +217,13 @@ class Checkpointer:
             self.logger.log(f"{'=' * 60}")
 
     @staticmethod
-    def generate_run_name(prefix: str = "barevision") -> str:
+    def generate_run_name(prefix: str = "embeddings") -> str:
         """Generate a unique run name with timestamp.
 
         Used consistently across logging and checkpointing.
 
         Args:
-            prefix: Run name prefix (default "barevision")
+            prefix: Run name prefix (default "embeddings")
 
         Returns:
             Run name in format "{prefix}_{YYYYMMDD}_{HHMMSS}"

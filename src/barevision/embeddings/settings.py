@@ -210,32 +210,6 @@ class ValidationSettings:
 
 
 @dataclass
-class CheckpointSettings:
-    """Checkpoint configuration for model persistence.
-
-    Attributes:
-        every_steps: Save checkpoint every N steps (0 to disable periodic checkpointing)
-        location: Base directory for checkpoints (default "checkpoints")
-                  Final path will be {location}/{run_name}/
-        save_best: Whether to save best model checkpoint based on validation loss
-        resume_from: Path to checkpoint to resume training from (optional)
-                     If provided, loads model weights and continues from saved step
-    """
-
-    every_steps: int = 100
-    location: str = "checkpoints"
-    save_best: bool = True
-    resume_from: str = ""
-
-    def __post_init__(self):
-        check_value(
-            self.every_steps >= 0,
-            f"every_steps must be >= 0, got {self.every_steps}",
-        )
-        check_value(self.location, "location cannot be empty")
-
-
-@dataclass
 class Settings:
     """Full settings for embeddings training.
 
@@ -247,5 +221,5 @@ class Settings:
     loss: LossSettings
     training: TrainingSettings
     logging: LoggingSettings
-    checkpoint: CheckpointSettings
+    checkpoint: "barevision.embeddings.checkpointer.CheckpointSettings"
     validation: ValidationSettings

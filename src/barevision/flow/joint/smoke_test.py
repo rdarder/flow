@@ -5,7 +5,6 @@ from barevision.flow.settings import (
     ModelSettings,
     TrainingSettings,
     LoggingSettings,
-    CheckpointSettings,
     ValidationSettings,
     FlowModelSettings,
     JointEmbeddingFlowModelSettings,
@@ -13,6 +12,7 @@ from barevision.flow.settings import (
     FlowLossSettings,
     JointEmbeddingFlowSettings,
 )
+from barevision.embeddings.checkpointer import CheckpointSettings
 from barevision.embeddings.settings import (
     ModelSettings as EmbeddingsModelSettings,
     LossSettings as EmbeddingsLossSettings,

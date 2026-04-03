@@ -9,11 +9,7 @@ import optax
 import tyro
 from flax import nnx
 
-from barevision.flow.checkpoint_utils import (
-    generate_run_name,
-    restore_model_from_checkpoint,
-    save_checkpoint,
-)
+from barevision.embeddings.checkpointer import Checkpointer
 from barevision.flow.dataset.video import create_dataloader
 from barevision.embeddings import HierarchicalSpatialVarianceLoss
 from barevision.embeddings.model import (
@@ -79,7 +75,9 @@ def validation_step(
 class Trainer:
     def __init__(self, settings: Settings):
         self.settings = settings
-        self.run_name = generate_run_name(prefix=settings.logging.run_name_prefix)
+        self.run_name = Checkpointer.generate_run_name(
+            prefix=settings.logging.run_name_prefix
+        )
         self.logger = ConsoleLogger()
         self.tensorboard = TensorboardLogger(
             log_dir=settings.logging.tensorboard_dir,
@@ -99,7 +97,7 @@ class Trainer:
             rngs=rngs,
         )
         # Use spatial variance loss for embeddings (replaced entropy loss)
-        from barevision.flow.settings import SpatialVarianceLossSettings
+        from barevision.embeddings.settings import SpatialVarianceLossSettings
 
         embeddings_loss = HierarchicalSpatialVarianceLoss(
             SpatialVarianceLossSettings(
@@ -125,6 +123,9 @@ class Trainer:
             wrt=nnx.Param,
         )
         self.model = joint_model
+        self.checkpointer = Checkpointer(
+            settings.checkpoint, self.run_name, self.logger
+        )
 
     def _maybe_restore_from_checkpoint(self) -> int:
         """Load model parameters from checkpoint depending on settings.
@@ -136,7 +137,7 @@ class Trainer:
 
         resume_path = Path(self.settings.checkpoint.resume_from)
         with self.logger.task(f"Resuming from checkpoint: {resume_path}"):
-            return restore_model_from_checkpoint(resume_path, self.model)
+            return Checkpointer.restore(resume_path, self.model)
 
     def _report_model_params(self):
         # Count parameters
@@ -162,9 +163,6 @@ class Trainer:
         global_step = self._maybe_restore_from_checkpoint()
         self._report_model_params()
 
-        best_val_loss = float("inf")
-        best_val_step = 0
-
         for epoch in range(1, settings.training.epochs + 1):
             global_step = self._train_epoch(epoch, global_step)
             if self._should_validate(epoch):
@@ -174,17 +172,14 @@ class Trainer:
                 self.tensorboard.log_scalar(
                     "Loss/validation", val_loss, step=global_step
                 )
-                if settings.checkpoint.save_best and val_loss < best_val_loss:
-                    best_val_loss = val_loss
-                    best_val_step = global_step
+                self.checkpointer.maybe_save_best(
+                    model=self.model,
+                    epoch=epoch,
+                    global_step=global_step,
+                    val_loss=val_loss,
+                )
 
-        if settings.validation.every_epochs > 0 and best_val_loss < float("inf"):
-            print(f"\n{'=' * 60}")
-            print(f"Validation Summary:")
-            print(f"  Best validation loss: {best_val_loss:.6f}")
-            print(f"  Achieved at step: {best_val_step}")
-            print(f"{'=' * 60}")
-
+        self.checkpointer.close()
         self.tensorboard.close()
         print_footer()
 
@@ -242,18 +237,12 @@ class Trainer:
                 )
 
             # Checkpoint periodically (skip step 0)
-            if self.settings.checkpoint.every_steps > 0:
-                if (
-                    global_step > 0
-                    and global_step % self.settings.checkpoint.every_steps == 0
-                ):
-                    checkpoint_path = save_checkpoint(
-                        model=self.model,
-                        step=global_step,
-                        settings=self.settings,
-                        run_name=self.run_name,
-                    )
-                    print(f"Checkpoint saved at step {global_step}: {checkpoint_path}")
+            self.checkpointer.maybe_save_step(
+                model=self.model,
+                epoch=epoch,
+                step_in_epoch=step + 1,
+                global_step=global_step,
+            )
 
             global_step += 1
 
