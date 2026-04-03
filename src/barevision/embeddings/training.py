@@ -34,78 +34,6 @@ from barevision.utils.console import ConsoleLogger
 from barevision.utils.logging import TensorboardLogger
 
 
-def loss_fn(model, img_pair, loss_fn_obj, need_aux: bool):
-    """Compute spatial variance loss for embeddings training.
-
-    Args:
-        model: HierarchicalEmbeddingModel
-        img_pair: Tuple of (img1, img2)
-        loss_fn_obj: HierarchicalSpatialVarianceLoss instance
-        need_aux: Whether to return auxiliary data
-
-    Returns:
-        Tuple of (loss, aux_dict)
-    """
-    pyramid1 = model(img_pair[0])
-    pyramid2 = model(img_pair[1])
-    total_loss, aux = loss_fn_obj((pyramid1, pyramid2), need_aux=need_aux)
-
-    # Add pyramids to aux for visualization when needed
-    if need_aux:
-        aux["pyramids"] = (pyramid1, pyramid2)
-
-    return total_loss, aux
-
-
-@partial(nnx.jit, static_argnames=("loss_fn_obj", "return_aux"))
-def _compute_loss_and_grads(
-    model: HierarchicalEmbeddingModel,
-    loss_fn_obj: HierarchicalSpatialVarianceLoss,
-    optimizer: nnx.Optimizer,
-    img_pair: tuple[jnp.ndarray, jnp.ndarray],
-    return_aux: bool,
-):
-    """Single training step with gradient computation and update.
-
-    Args:
-        model: Embedding model
-        loss_fn_obj: Loss function instance
-        optimizer: NNX optimizer
-        img_pair: Tuple of (img1, img2)
-        return_aux: Whether to return auxiliary data
-
-    Returns:
-        Tuple of (loss, aux_dict)
-    """
-    loss_derivative = nnx.value_and_grad(loss_fn, has_aux=True)
-    (total_loss, aux), grads = loss_derivative(model, img_pair, loss_fn_obj, return_aux)
-    optimizer.update(model, grads)
-    if not return_aux:
-        return total_loss, {}
-    aux["img_pair"] = img_pair
-    return total_loss, aux
-
-
-@partial(nnx.jit, static_argnames="loss_fn_obj")
-def _validation_step(
-    model: HierarchicalEmbeddingModel,
-    loss_fn_obj: HierarchicalSpatialVarianceLoss,
-    img_pair: tuple[jnp.ndarray, jnp.ndarray],
-):
-    """Validation step without gradient computation.
-
-    Args:
-        model: Embedding model
-        loss_fn_obj: Loss function instance
-        img_pair: Tuple of (img1, img2)
-
-    Returns:
-        Scalar loss value
-    """
-    total_loss, _ = loss_fn(model, img_pair, loss_fn_obj, need_aux=False)
-    return total_loss
-
-
 class EmbeddingsTrainer:
     """Trainer for standalone embeddings model.
 
@@ -448,6 +376,78 @@ class EmbeddingsTrainer:
             f"  - Level weight decay: {self.settings.loss.spatial_variance.level_weight_decay}"
         )
         self.logger.log("")
+
+
+def loss_fn(model, img_pair, loss_fn_obj, need_aux: bool):
+    """Compute spatial variance loss for embeddings training.
+
+    Args:
+        model: HierarchicalEmbeddingModel
+        img_pair: Tuple of (img1, img2)
+        loss_fn_obj: HierarchicalSpatialVarianceLoss instance
+        need_aux: Whether to return auxiliary data
+
+    Returns:
+        Tuple of (loss, aux_dict)
+    """
+    pyramid1 = model(img_pair[0])
+    pyramid2 = model(img_pair[1])
+    total_loss, aux = loss_fn_obj((pyramid1, pyramid2), need_aux=need_aux)
+
+    # Add pyramids to aux for visualization when needed
+    if need_aux:
+        aux["pyramids"] = (pyramid1, pyramid2)
+
+    return total_loss, aux
+
+
+@partial(nnx.jit, static_argnames=("loss_fn_obj", "return_aux"))
+def _compute_loss_and_grads(
+    model: HierarchicalEmbeddingModel,
+    loss_fn_obj: HierarchicalSpatialVarianceLoss,
+    optimizer: nnx.Optimizer,
+    img_pair: tuple[jnp.ndarray, jnp.ndarray],
+    return_aux: bool,
+):
+    """Single training step with gradient computation and update.
+
+    Args:
+        model: Embedding model
+        loss_fn_obj: Loss function instance
+        optimizer: NNX optimizer
+        img_pair: Tuple of (img1, img2)
+        return_aux: Whether to return auxiliary data
+
+    Returns:
+        Tuple of (loss, aux_dict)
+    """
+    loss_derivative = nnx.value_and_grad(loss_fn, has_aux=True)
+    (total_loss, aux), grads = loss_derivative(model, img_pair, loss_fn_obj, return_aux)
+    optimizer.update(model, grads)
+    if not return_aux:
+        return total_loss, {}
+    aux["img_pair"] = img_pair
+    return total_loss, aux
+
+
+@partial(nnx.jit, static_argnames="loss_fn_obj")
+def _validation_step(
+    model: HierarchicalEmbeddingModel,
+    loss_fn_obj: HierarchicalSpatialVarianceLoss,
+    img_pair: tuple[jnp.ndarray, jnp.ndarray],
+):
+    """Validation step without gradient computation.
+
+    Args:
+        model: Embedding model
+        loss_fn_obj: Loss function instance
+        img_pair: Tuple of (img1, img2)
+
+    Returns:
+        Scalar loss value
+    """
+    total_loss, _ = loss_fn(model, img_pair, loss_fn_obj, need_aux=False)
+    return total_loss
 
 
 if __name__ == "__main__":
