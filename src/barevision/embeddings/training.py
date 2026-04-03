@@ -238,9 +238,7 @@ class EmbeddingsTrainer:
             )
             self.checkpointer.save_step(
                 model=self.model,
-                epoch=epoch,
-                step_in_epoch=step + 1,
-                global_step=global_step,
+                step=global_step,
                 train_loss=train_loss,
             )
             global_step += 1
