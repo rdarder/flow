@@ -17,7 +17,7 @@ from barevision.embeddings.spatial_losses import (
     cross_attention_spatial_variance,
 )
 from barevision.embeddings.checkpointer import (
-    Checkpointer,
+    CheckpointManagerWrapper,
     CheckpointSettings,
 )
 
@@ -31,6 +31,6 @@ __all__ = [
     "windowed_spatial_variance_losses",
     "self_attention_spatial_variance",
     "cross_attention_spatial_variance",
-    "Checkpointer",
+    "CheckpointManagerWrapper",
     "CheckpointSettings",
 ]

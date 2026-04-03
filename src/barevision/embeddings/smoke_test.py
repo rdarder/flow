@@ -61,6 +61,7 @@ def create_smoke_test_settings() -> Settings:
         checkpoint=CheckpointSettings(
             every_steps=2,  # Checkpoint every 2 steps
             location="test_checkpoints",
+            keep_best_n=2,  # Keep best 2 by training loss
         ),
         validation=ValidationSettings(
             every_epochs=2,  # Validate every 2 epochs

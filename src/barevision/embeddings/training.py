@@ -15,7 +15,10 @@ import optax
 import tyro
 from flax import nnx
 
-from barevision.embeddings.checkpointer import Checkpointer
+from barevision.embeddings.checkpointer import (
+    CheckpointManagerWrapper,
+    CheckpointSettings,
+)
 from barevision.dataset.video import create_dataloader
 from barevision.embeddings.model import (
     count_parameters,
@@ -107,11 +110,12 @@ class EmbeddingsTrainer:
     """Trainer for standalone embeddings model.
 
     Trains hierarchical embedding model with spatial variance loss.
+    Checkpointing uses training loss for preservation decisions.
     """
 
     def __init__(self, settings: Settings):
         self.settings = settings
-        self.run_name = Checkpointer.generate_run_name(
+        self.run_name = CheckpointManagerWrapper.generate_run_name(
             prefix=settings.logging.run_name_prefix
         )
         self.logger = ConsoleLogger()
@@ -137,7 +141,7 @@ class EmbeddingsTrainer:
             wrt=nnx.Param,
         )
         self.model = embeddings_model
-        self.checkpointer = Checkpointer(
+        self.checkpointer = CheckpointManagerWrapper(
             settings.checkpoint, self.run_name, self.logger
         )
 
@@ -151,7 +155,7 @@ class EmbeddingsTrainer:
 
         resume_path = Path(self.settings.checkpoint.resume_from)
         with self.logger.task(f"Resuming from checkpoint: {resume_path}"):
-            return Checkpointer.restore(resume_path, self.model)
+            return CheckpointManagerWrapper.restore(resume_path, self.model)
 
     def _report_model_params(self):
         """Report model parameter counts."""
@@ -168,6 +172,8 @@ class EmbeddingsTrainer:
     def _maybe_run_validation(self, epoch: int, global_step: int):
         """Run validation if due and log results.
 
+        Validation is for monitoring only - checkpointing uses training loss.
+
         Args:
             epoch: Current epoch number
             global_step: Current global step
@@ -179,12 +185,7 @@ class EmbeddingsTrainer:
         val_loss = self._run_validation()
         self.logger.log(f"Validation loss: {val_loss:.6f}")
         self.tensorboard.log_scalar("Loss/validation", val_loss, step=global_step)
-        self.checkpointer.maybe_save_best(
-            model=self.model,
-            epoch=epoch,
-            global_step=global_step,
-            val_loss=val_loss,
-        )
+        # Note: No checkpoint save here - checkpoints use training loss
 
     def __call__(self):
         """Main embeddings training loop."""
@@ -226,7 +227,7 @@ class EmbeddingsTrainer:
         epoch_start = time.time()
 
         for step, (img1, img2, metadata) in enumerate(loader):
-            self._train_step_and_maybe_log(
+            train_loss = self._train_step_and_maybe_log(
                 epoch=epoch,
                 step=step,
                 global_step=global_step,
@@ -235,11 +236,12 @@ class EmbeddingsTrainer:
                 metadata=metadata,
                 epoch_start=epoch_start,
             )
-            self.checkpointer.maybe_save_step(
+            self.checkpointer.save_step(
                 model=self.model,
                 epoch=epoch,
                 step_in_epoch=step + 1,
                 global_step=global_step,
+                train_loss=train_loss,
             )
             global_step += 1
 
