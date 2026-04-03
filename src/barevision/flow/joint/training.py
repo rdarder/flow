@@ -15,8 +15,8 @@ from barevision.flow.checkpoint_utils import (
     save_checkpoint,
 )
 from barevision.flow.dataset.video import create_dataloader
-from barevision.flow.embeddings.spatial_losses import HierarchicalSpatialVarianceLoss
-from barevision.flow.embeddings.model import (
+from barevision.embeddings import HierarchicalSpatialVarianceLoss
+from barevision.embeddings.model import (
     count_parameters,
     HierarchicalEmbeddingModel,
 )
@@ -36,6 +36,7 @@ from barevision.flow.matching.losses import HierarchicalReconstructionLoss
 from barevision.flow.settings import (
     Settings,
 )
+from barevision.embeddings.settings import ModelSettings as EmbeddingsModelSettings
 from barevision.utils.console import ConsoleLogger
 from barevision.utils.logging import TensorboardLogger
 

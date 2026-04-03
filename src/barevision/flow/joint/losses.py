@@ -13,7 +13,7 @@ Where:
 
 import jax.numpy as jnp
 
-from barevision.flow.embeddings.spatial_losses import HierarchicalSpatialVarianceLoss
+from barevision.embeddings import HierarchicalSpatialVarianceLoss
 from barevision.flow.matching.losses import HierarchicalReconstructionLoss
 from barevision.flow.settings import JointEmbeddingFlowSettings
 

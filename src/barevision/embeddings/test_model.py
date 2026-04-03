@@ -4,7 +4,7 @@ import jax.numpy as jnp
 import jax.random as jr
 from flax import nnx
 
-from barevision.flow.embeddings.model import (
+from barevision.embeddings.model import (
     HierarchicalEmbeddingModel,
     StemBlock,
     StandardBlock,
@@ -12,7 +12,7 @@ from barevision.flow.embeddings.model import (
     gaussian_kernel_2d,
     depthwise_gaussian_initializer,
 )
-from barevision.flow.settings import EmbeddingModelSettings
+from barevision.embeddings.settings import ModelSettings
 from barevision.utils.image import (
     calculate_required_input_size,
     calculate_coarse_output_size,
@@ -252,7 +252,7 @@ class TestHierarchicalEmbeddingModel:
     def test_pyramid_output(self):
         """Test that model returns list of feature maps."""
         model = HierarchicalEmbeddingModel(
-            EmbeddingModelSettings(
+            ModelSettings(
                 hidden_dim=32,
                 embed_dim=16,
                 num_groups=8,
@@ -300,7 +300,7 @@ class TestHierarchicalEmbeddingModel:
     def test_single_level(self):
         """Test model with single level."""
         model = HierarchicalEmbeddingModel(
-            EmbeddingModelSettings(
+            ModelSettings(
                 hidden_dim=32,
                 embed_dim=16,
                 num_groups=8,
@@ -320,7 +320,7 @@ class TestHierarchicalEmbeddingModel:
     def test_batch_processing(self):
         """Test batch processing."""
         model = HierarchicalEmbeddingModel(
-            EmbeddingModelSettings(
+            ModelSettings(
                 hidden_dim=32,
                 embed_dim=16,
                 num_groups=8,
@@ -338,7 +338,7 @@ class TestHierarchicalEmbeddingModel:
     def test_parameter_count(self):
         """Test parameter counting with Symmetric Mean Subtraction architecture."""
         model = HierarchicalEmbeddingModel(
-            EmbeddingModelSettings(
+            ModelSettings(
                 hidden_dim=32,
                 embed_dim=16,
                 num_groups=8,
@@ -379,7 +379,7 @@ class TestHierarchicalEmbeddingModel:
         from jax import grad
 
         model = HierarchicalEmbeddingModel(
-            EmbeddingModelSettings(
+            ModelSettings(
                 hidden_dim=32,
                 embed_dim=16,
                 num_groups=8,

@@ -6,7 +6,7 @@ End-to-end model for optical flow estimation.
 from flax import nnx
 import jax.numpy as jnp
 
-from barevision.flow.embeddings.model import HierarchicalEmbeddingModel
+from barevision.embeddings.model import HierarchicalEmbeddingModel
 from barevision.flow.matching.model import HierarchicalFlowEstimator
 from barevision.flow.settings import JointEmbeddingFlowModelSettings
 

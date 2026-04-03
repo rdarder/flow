@@ -3,15 +3,15 @@
 This script sets up a minimal but working training setup that does
 logging and visualization with epoch limits to run through most branches.
 
-Run: python -m barevision.flow.embeddings.smoke_test
+Run: python -m barevision.embeddings.smoke_test
 """
 
-from barevision.flow.embeddings.training import EmbeddingsTrainer
-from barevision.flow.settings import (
-    EmbeddingsSettings,
+from barevision.embeddings.training import EmbeddingsTrainer
+from barevision.embeddings.settings import (
+    Settings,
     DatasetSettings,
-    EmbeddingsModelSettings,
-    EmbeddingsLossSettings,
+    ModelSettings,
+    LossSettings,
     SpatialVarianceLossSettings,
     TrainingSettings,
     LoggingSettings,
@@ -20,9 +20,9 @@ from barevision.flow.settings import (
 )
 
 
-def create_smoke_test_settings() -> EmbeddingsSettings:
+def create_smoke_test_settings() -> Settings:
     """Minimal settings for quick validation."""
-    return EmbeddingsSettings(
+    return Settings(
         dataset=DatasetSettings(
             batch_size=1,
             coarse_grid_size=1,
@@ -33,13 +33,13 @@ def create_smoke_test_settings() -> EmbeddingsSettings:
             max_samples=1,  # Only 1 sample per epoch
             num_workers=0,
         ),
-        model=EmbeddingsModelSettings(
+        model=ModelSettings(
             embed_dim=8,  # Smaller embedding dim
             hidden_dim=16,
             num_groups=2,
             num_levels=2,
         ),
-        loss=EmbeddingsLossSettings(
+        loss=LossSettings(
             spatial_variance=SpatialVarianceLossSettings(
                 window_size=16,
                 level_weight_decay=1.0,
@@ -64,7 +64,6 @@ def create_smoke_test_settings() -> EmbeddingsSettings:
         ),
         validation=ValidationSettings(
             every_epochs=2,  # Validate every 2 epochs
-            save_best=True,
         ),
     )
 

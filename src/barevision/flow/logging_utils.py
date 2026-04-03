@@ -8,12 +8,13 @@ import time
 import jax.numpy as jnp
 import numpy as np
 
-from barevision.flow.embeddings.spatial_losses import (
+from barevision.embeddings import (
     self_attention_spatial_variance,
     cross_attention_spatial_variance,
     _generate_normalized_coordinates,
 )
-from barevision.flow.settings import LoggingSettings, Settings
+from barevision.flow.settings import LoggingSettings
+from barevision.embeddings.settings import Settings
 from barevision.utils import image
 from barevision.utils.grid import WindowGrid
 from barevision.utils.logging import TensorboardLogger

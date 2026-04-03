@@ -3,13 +3,13 @@
 Provides hierarchical embedding pyramid with spatial variance-based self-supervised training.
 """
 
-from barevision.flow.embeddings.model import (
+from barevision.embeddings.model import (
     HierarchicalEmbeddingModel,
     StemBlock,
     StandardBlock,
     count_parameters,
 )
-from barevision.flow.embeddings.spatial_losses import (
+from barevision.embeddings.spatial_losses import (
     HierarchicalSpatialVarianceLoss,
     compute_hierarchical_spatial_variance_loss,
     windowed_spatial_variance_losses,

@@ -10,10 +10,9 @@ Tests verify:
 
 import jax
 import jax.numpy as jnp
-import numpy as np
 import pytest
 
-from barevision.flow.embeddings.spatial_losses import (
+from barevision.embeddings.spatial_losses import (
     _compute_spatial_variance,
     _generate_normalized_coordinates,
     self_attention_spatial_variance,
@@ -22,7 +21,7 @@ from barevision.flow.embeddings.spatial_losses import (
     compute_hierarchical_spatial_variance_loss,
     HierarchicalSpatialVarianceLoss,
 )
-from barevision.flow.settings import SpatialVarianceLossSettings
+from barevision.embeddings.settings import SpatialVarianceLossSettings
 
 
 class TestCoordinateGeneration:

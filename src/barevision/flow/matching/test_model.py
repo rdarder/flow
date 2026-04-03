@@ -161,7 +161,7 @@ def test_flow_estimator_parameters():
         window_size=16, hidden_dim=32, max_flow=0.5, rngs=nnx.Rngs(0)
     )
 
-    from barevision.flow.embeddings.model import count_parameters
+    from barevision.embeddings.model import count_parameters
 
     params = count_parameters(flow_estimator)
 

@@ -7,13 +7,16 @@ from barevision.flow.settings import (
     LoggingSettings,
     CheckpointSettings,
     ValidationSettings,
-    EmbeddingLossSettings,
-    EmbeddingModelSettings,
     FlowModelSettings,
     JointEmbeddingFlowModelSettings,
     LossSettings,
     FlowLossSettings,
     JointEmbeddingFlowSettings,
+)
+from barevision.embeddings.settings import (
+    ModelSettings as EmbeddingsModelSettings,
+    LossSettings as EmbeddingsLossSettings,
+    SpatialVarianceLossSettings,
 )
 from barevision.flow.joint.training import Trainer
 
@@ -32,13 +35,15 @@ def create_smoke_test_settings() -> Settings:
             num_workers=0,
         ),
         model=ModelSettings(
-            embedding=EmbeddingModelSettings(),
+            embedding=EmbeddingsModelSettings(),
             flow=FlowModelSettings(),
             joint=JointEmbeddingFlowModelSettings(),
         ),
         loss=LossSettings(
-            embedding=EmbeddingLossSettings(
-                window_size=16,
+            embedding=EmbeddingsLossSettings(
+                spatial_variance=SpatialVarianceLossSettings(
+                    window_size=16,
+                )
             ),
             flow=FlowLossSettings(),
             joint=JointEmbeddingFlowSettings(),
@@ -59,7 +64,6 @@ def create_smoke_test_settings() -> Settings:
         ),
         validation=ValidationSettings(
             every_epochs=2,
-            save_best=True,
         ),
     )
 

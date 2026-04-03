@@ -15,14 +15,16 @@ from flax import nnx
 from barevision.flow.checkpointer import Checkpointer
 from barevision.flow.settings import (
     CheckpointSettings,
+    ValidationSettings,
+)
+from barevision.embeddings.settings import (
+    Settings,
     DatasetSettings,
-    EmbeddingsLossSettings,
-    EmbeddingsModelSettings,
-    EmbeddingsSettings,
-    LoggingSettings,
+    ModelSettings,
+    LossSettings,
     SpatialVarianceLossSettings,
     TrainingSettings,
-    ValidationSettings,
+    LoggingSettings,
 )
 from barevision.utils.console import ConsoleLogger
 
@@ -30,20 +32,20 @@ from barevision.utils.console import ConsoleLogger
 @pytest.fixture
 def test_settings(tmp_path):
     """Create test settings with temporary checkpoint directory."""
-    return EmbeddingsSettings(
+    return Settings(
         dataset=DatasetSettings(
             batch_size=1,
             coarse_grid_size=1,
             window_size=16,
             num_levels=2,
         ),
-        model=EmbeddingsModelSettings(
+        model=ModelSettings(
             embed_dim=8,
             hidden_dim=16,
             num_groups=2,
             num_levels=2,
         ),
-        loss=EmbeddingsLossSettings(
+        loss=LossSettings(
             spatial_variance=SpatialVarianceLossSettings(
                 window_size=16,
                 level_weight_decay=1.0,

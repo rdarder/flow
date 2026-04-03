@@ -51,11 +51,7 @@ import jax
 import jax.numpy as jnp
 from flax import nnx
 
-from barevision.flow.settings import (
-    EmbeddingLossSettings,
-    EmbeddingModelSettings,
-    EmbeddingsModelSettings,
-)
+from barevision.embeddings.settings import ModelSettings
 
 
 def gaussian_kernel_2d(sigma: float = 1.0) -> jnp.ndarray:
@@ -370,7 +366,7 @@ class HierarchicalEmbeddingModel(nnx.Module):
 
     def __init__(
         self,
-        settings: EmbeddingModelSettings,
+        settings: ModelSettings,
         *,
         rngs: nnx.Rngs,
     ):

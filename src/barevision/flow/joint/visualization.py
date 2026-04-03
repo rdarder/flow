@@ -9,7 +9,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from barevision.flow.embeddings.visualization import (
+from barevision.embeddings.visualization import (
     create_attention_maps_figure,
     create_frame_with_grid_figure,
 )

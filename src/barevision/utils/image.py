@@ -1,4 +1,4 @@
-from barevision.flow.settings import DatasetSettings
+from barevision.embeddings.settings import DatasetSettings
 
 
 def calculate_required_input_size(

@@ -4,12 +4,12 @@ import jax.numpy as jnp
 import jax.random as jr
 from flax import nnx
 
-from barevision.flow.embeddings.model import HierarchicalEmbeddingModel
+from barevision.embeddings.model import HierarchicalEmbeddingModel
 from barevision.flow.mean_conv_analysis import (
     analyze_mean_conv_kernels,
     gaussian_kernel_2d,
 )
-from barevision.flow.settings import EmbeddingModelSettings
+from barevision.embeddings.settings import ModelSettings
 
 
 class TestGaussianKernel:
@@ -54,7 +54,7 @@ class TestAnalyzeMeanConvKernels:
     def test_analysis_returns_all_levels(self):
         """Test analysis includes all pyramid levels."""
         model = HierarchicalEmbeddingModel(
-            EmbeddingModelSettings(
+            ModelSettings(
                 hidden_dim=32,
                 embed_dim=16,
                 num_groups=8,
@@ -73,7 +73,7 @@ class TestAnalyzeMeanConvKernels:
     def test_analysis_computes_all_scalars(self):
         """Test all expected scalar metrics are computed."""
         model = HierarchicalEmbeddingModel(
-            EmbeddingModelSettings(
+            ModelSettings(
                 hidden_dim=32,
                 embed_dim=16,
                 num_groups=8,
@@ -107,7 +107,7 @@ class TestAnalyzeMeanConvKernels:
     def test_weight_sums_near_one(self):
         """Test that initialized kernels have weight sums near 1.0."""
         model = HierarchicalEmbeddingModel(
-            EmbeddingModelSettings(
+            ModelSettings(
                 hidden_dim=32,
                 embed_dim=16,
                 num_groups=8,
@@ -127,7 +127,7 @@ class TestAnalyzeMeanConvKernels:
     def test_center_surround_ratio_highOnInit(self):
         """Test that initialized kernels have high center-surround ratio."""
         model = HierarchicalEmbeddingModel(
-            EmbeddingModelSettings(
+            ModelSettings(
                 hidden_dim=32,
                 embed_dim=16,
                 num_groups=8,
@@ -146,7 +146,7 @@ class TestAnalyzeMeanConvKernels:
     def test_drift_from_init_zeroOnInit(self):
         """Test that drift from initialization is near zero at init."""
         model = HierarchicalEmbeddingModel(
-            EmbeddingModelSettings(
+            ModelSettings(
                 hidden_dim=32,
                 embed_dim=16,
                 num_groups=8,
@@ -165,7 +165,7 @@ class TestAnalyzeMeanConvKernels:
     def test_effective_sigma_near_oneOnInit(self):
         """Test effective sigma is near 1.0 at initialization."""
         model = HierarchicalEmbeddingModel(
-            EmbeddingModelSettings(
+            ModelSettings(
                 hidden_dim=32,
                 embed_dim=16,
                 num_groups=8,
@@ -189,7 +189,7 @@ class TestAnalyzeMeanConvKernels:
     def test_histograms_have_correct_shape(self):
         """Test histogram arrays have correct dimensionality."""
         model = HierarchicalEmbeddingModel(
-            EmbeddingModelSettings(
+            ModelSettings(
                 hidden_dim=32,
                 embed_dim=16,
                 num_groups=8,
@@ -209,7 +209,7 @@ class TestAnalyzeMeanConvKernels:
     def test_kernels_for_visualization(self):
         """Test kernel array is suitable for visualization."""
         model = HierarchicalEmbeddingModel(
-            EmbeddingModelSettings(
+            ModelSettings(
                 hidden_dim=32,
                 embed_dim=16,
                 num_groups=8,
@@ -228,7 +228,7 @@ class TestAnalyzeMeanConvKernels:
     def test_handles_missing_levels(self):
         """Test analysis gracefully handles missing levels."""
         model = HierarchicalEmbeddingModel(
-            EmbeddingModelSettings(
+            ModelSettings(
                 hidden_dim=32,
                 embed_dim=16,
                 num_groups=8,

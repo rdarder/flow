@@ -21,7 +21,7 @@ from typing import List, Tuple
 import jax
 import jax.numpy as jnp
 
-from barevision.flow.settings import SpatialVarianceLossSettings
+from barevision.embeddings.settings import SpatialVarianceLossSettings
 from barevision.utils.checks import check_value
 from barevision.utils.grid import crop_to_grid_aligned, WindowGrid
 

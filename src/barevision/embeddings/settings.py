@@ -1,9 +1,7 @@
-"""Configuration settings for flow estimation and joint training.
+"""Configuration settings for embeddings training.
 
-This module contains settings for the flow matching package and joint
-training (which is kept for reference but is outdated).
-
-For embeddings-only training, see barevision.embeddings.settings.
+Minimal settings using tyro for CLI parsing. Only includes parameters
+currently used by the embeddings training script.
 """
 
 from dataclasses import dataclass
@@ -74,7 +72,7 @@ class LoggingSettings:
     """
 
     tensorboard_dir: str = "runs"
-    run_name_prefix: str = "flow"
+    run_name_prefix: str = "embeddings"
     every_steps: int = 100
     visualizations_every_steps: int = 100
 
@@ -91,98 +89,84 @@ class LoggingSettings:
 
 
 @dataclass(frozen=True)
-class FlowModelSettings:
-    """Flow estimation model settings.
+class ModelSettings:
+    """Model architecture settings for embeddings training.
 
     Attributes:
-        temperature: Temperature for flow estimation attention
-        hidden_dim: Flow estimator hidden layer dimensions
-        window_size: Window size for flow estimation
+        embed_dim: Output embedding dimension per level
+        hidden_dim: Hidden feature dimension
+        num_groups: Number of groups for grouped convolutions
+        num_levels: Number of pyramid levels
     """
 
-    temperature: float = 0.3
-    hidden_dim: int = 16
-    window_size: int = 16
+    embed_dim: int = 16
+    hidden_dim: int = 32
+    num_groups: int = 4
+    num_levels: int = 3
 
     def __post_init__(self):
+        check_value(
+            self.num_levels >= 1, f"num_levels must be >= 1, got {self.num_levels}"
+        )
+        check_value(
+            self.embed_dim >= 1, f"embed_dim must be >= 1, got {self.embed_dim}"
+        )
+
+
+@dataclass(frozen=True)
+class SpatialVarianceLossSettings:
+    """Settings for spatial variance loss.
+
+    Attributes:
+        window_size: Attention window size in pixels (must divide feature map dimensions)
+        level_weight_decay: Loss weight decay factor per level (default 1.0 = uniform)
+                           Coarser levels get higher weight: level_i weight = decay^i.
+                           Set to 1.0 for uniform weighting across levels.
+        lambda_self: Self-attention loss weight in [0, 1] (default 0.5 = equal weighting)
+                    loss = lambda_self * self_loss + (1 - lambda_self) * cross_loss
+        self_temperature: Temperature for self-attention softmax (default 0.3)
+                         Lower = sharper attention peaks
+        cross_temperature: Temperature for cross-attention softmax (default 0.3)
+                          Lower = sharper attention peaks
+    """
+
+    window_size: int = 16
+    level_weight_decay: float = 1.0
+    lambda_self: float = 0.5
+    self_temperature: float = 0.3
+    cross_temperature: float = 0.3
+
+    def __post_init__(self):
+        check_value(
+            0 <= self.lambda_self <= 1,
+            f"lambda_self must be in [0, 1], got {self.lambda_self}",
+        )
+        check_value(
+            self.level_weight_decay >= 0,
+            f"level_weight_decay must be >= 0, got {self.level_weight_decay}",
+        )
+        check_value(
+            self.self_temperature > 0,
+            f"self_temperature must be > 0, got {self.self_temperature}",
+        )
+        check_value(
+            self.cross_temperature > 0,
+            f"cross_temperature must be > 0, got {self.cross_temperature}",
+        )
         check_value(
             self.window_size >= 1, f"window_size must be >= 1, got {self.window_size}"
         )
-        check_value(
-            self.temperature > 0,
-            f"Temperature must be > 0, got {self.temperature}",
-        )
-        check_value(
-            self.hidden_dim >= 1,
-            f"hidden dimension must be >= 1, got {self.hidden_dim}",
-        )
-
-
-@dataclass(frozen=True)
-class FlowLossSettings:
-    """Flow loss settings.
-
-    Attributes:
-        level_weight_decay: Loss weight decay factor per level
-    """
-
-    level_weight_decay: float = 1.5
-
-
-@dataclass(frozen=True)
-class JointEmbeddingFlowSettings:
-    """Joint training loss settings.
-
-    Attributes:
-        recon_weight: Reconstruction loss weight
-        entropy_weight: Entropy loss weight
-    """
-
-    recon_weight: float = 0.2
-    entropy_weight: float = 0.8
-
-    def __post_init__(self):
-        check_value(self.recon_weight >= 0, "recon_weight cannot be negative")
-        check_value(self.entropy_weight >= 0, "entropy_weight cannot be negative")
-        check_value(
-            self.entropy_weight + self.recon_weight >= 0.1,
-            "both entropy_weight and recon_weight are too small.",
-        )
-
-
-@dataclass(frozen=True)
-class JointEmbeddingFlowModelSettings:
-    """Joint model settings (currently empty)."""
-
-    pass
-
-
-@dataclass(frozen=True)
-class ModelSettings:
-    """Combined model settings for joint training.
-
-    Attributes:
-        embedding: Embedding model settings
-        flow: Flow model settings
-        joint: Joint training settings
-    """
-
-    embedding: "barevision.embeddings.settings.ModelSettings"
-    flow: FlowModelSettings
-    joint: JointEmbeddingFlowModelSettings
 
 
 @dataclass(frozen=True)
 class LossSettings:
-    """Combined loss settings for joint training.
+    """Loss settings for embeddings training.
 
     Attributes:
-        joint: Joint training loss settings
-        flow: Flow loss settings
+        spatial_variance: Spatial variance loss configuration
     """
 
-    joint: JointEmbeddingFlowSettings
-    flow: FlowLossSettings
+    spatial_variance: SpatialVarianceLossSettings
 
 
 @dataclass
@@ -190,7 +174,7 @@ class TrainingSettings:
     """Training hyperparameters.
 
     Attributes:
-        seed: Random seed for all randomness
+        seed: Random seed for all randomness: model initialization, data shuffling, train/val split
         epochs: Number of training epochs
         learning_rate: Optimizer learning rate
     """
@@ -232,8 +216,10 @@ class CheckpointSettings:
     Attributes:
         every_steps: Save checkpoint every N steps (0 to disable periodic checkpointing)
         location: Base directory for checkpoints (default "checkpoints")
+                  Final path will be {location}/{run_name}/
         save_best: Whether to save best model checkpoint based on validation loss
         resume_from: Path to checkpoint to resume training from (optional)
+                     If provided, loads model weights and continues from saved step
     """
 
     every_steps: int = 100
@@ -251,10 +237,9 @@ class CheckpointSettings:
 
 @dataclass
 class Settings:
-    """Full settings for joint flow training (outdated).
+    """Full settings for embeddings training.
 
-    This is kept for reference but joint training is superseded by
-    standalone embeddings training.
+    This is the main entry point for CLI configuration.
     """
 
     dataset: DatasetSettings
@@ -264,7 +249,3 @@ class Settings:
     logging: LoggingSettings
     checkpoint: CheckpointSettings
     validation: ValidationSettings
-
-
-# Import embeddings settings for backwards compatibility and joint training
-import barevision.embeddings.settings as embeddings_settings

@@ -17,16 +17,16 @@ from flax import nnx
 
 from barevision.flow.checkpointer import Checkpointer
 from barevision.flow.dataset.video import create_dataloader
-from barevision.flow.embeddings.model import (
+from barevision.embeddings.model import (
     count_parameters,
     HierarchicalEmbeddingModel,
 )
-from barevision.flow.embeddings.spatial_losses import HierarchicalSpatialVarianceLoss
-from barevision.flow.embeddings.visualization import log_visualizations
+from barevision.embeddings.spatial_losses import HierarchicalSpatialVarianceLoss
+from barevision.embeddings.visualization import log_visualizations
 from barevision.flow.logging_utils import (
     should_log_something,
 )
-from barevision.flow.settings import EmbeddingsSettings
+from barevision.embeddings.settings import Settings
 from barevision.utils.console import ConsoleLogger
 from barevision.utils.logging import TensorboardLogger
 
@@ -109,7 +109,7 @@ class EmbeddingsTrainer:
     Trains hierarchical embedding model with spatial variance loss.
     """
 
-    def __init__(self, settings: EmbeddingsSettings):
+    def __init__(self, settings: Settings):
         self.settings = settings
         self.run_name = Checkpointer.generate_run_name(
             prefix=settings.logging.run_name_prefix

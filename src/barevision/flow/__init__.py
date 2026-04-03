@@ -9,7 +9,7 @@ Subpackages:
 - joint: Joint training and orchestration (Model, losses)
 """
 
-from barevision.flow.embeddings.model import (
+from barevision.embeddings.model import (
     HierarchicalEmbeddingModel,
     count_parameters,
 )

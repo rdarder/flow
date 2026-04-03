@@ -3,10 +3,11 @@
 import jax.numpy as jnp
 from flax import nnx
 
-from barevision.flow.embeddings.model import HierarchicalEmbeddingModel
+from barevision.embeddings.model import HierarchicalEmbeddingModel
 from barevision.flow.matching.model import HierarchicalFlowEstimator
 from barevision.flow.matching.losses import hierarchical_reconstruction_loss
-from barevision.flow.settings import EmbeddingModelSettings, FlowModelSettings
+from barevision.embeddings.settings import ModelSettings
+from barevision.flow.settings import FlowModelSettings
 
 
 def test_hierarchical_flow_estimator_shape():
@@ -17,7 +18,7 @@ def test_hierarchical_flow_estimator_shape():
 
     # Create models
     embed_model = HierarchicalEmbeddingModel(
-        EmbeddingModelSettings(
+        ModelSettings(
             hidden_dim=32,
             embed_dim=16,
             num_groups=8,
@@ -69,7 +70,7 @@ def test_hierarchical_reconstruction_loss_shape():
 
     # Create models
     embed_model = HierarchicalEmbeddingModel(
-        EmbeddingModelSettings(
+        ModelSettings(
             hidden_dim=32,
             embed_dim=16,
             num_groups=8,
@@ -123,7 +124,7 @@ def test_hierarchical_reconstruction_loss_zero():
 
     # Create models
     embed_model = HierarchicalEmbeddingModel(
-        EmbeddingModelSettings(
+        ModelSettings(
             hidden_dim=32,
             embed_dim=16,
             num_groups=8,
@@ -169,7 +170,7 @@ def test_hierarchical_flow_estimator_gradient_flow():
 
     # Create models
     embed_model = HierarchicalEmbeddingModel(
-        EmbeddingModelSettings(
+        ModelSettings(
             hidden_dim=32,
             embed_dim=16,
             num_groups=8,

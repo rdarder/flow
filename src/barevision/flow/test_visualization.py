@@ -5,10 +5,8 @@ Run: python -m barevision.flow.test_visualization
 
 import numpy as np
 import jax.random as jr
-from flax import nnx
 
-from barevision.flow.embeddings.model import HierarchicalEmbeddingModel
-from barevision.flow.embeddings.visualization import (
+from barevision.embeddings.visualization import (
     create_attention_maps_figure,
     create_frame_with_grid_figure,
 )
@@ -67,7 +65,7 @@ def test_loss_returns_attention_weights():
 
     Uses smaller pyramid to reduce JAX compilation overhead.
     """
-    from barevision.flow.embeddings.losses import compute_hierarchical_entropy_loss
+    from barevision.embeddings import compute_hierarchical_entropy_loss
 
     # Create simple 2-level pyramid (faster than 3 levels)
     key = jr.PRNGKey(0)
