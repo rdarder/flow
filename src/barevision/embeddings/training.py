@@ -3,7 +3,7 @@
 This script trains the hierarchical embedding model independently from flow estimation,
 using spatial variance loss to encourage spatially concentrated attention patterns.
 
-Entry point: python -m barevision.flow.embeddings.training
+Entry point: python -m barevision.embeddings.training
 """
 
 import time
@@ -23,7 +23,7 @@ from barevision.embeddings.model import (
 )
 from barevision.embeddings.spatial_losses import HierarchicalSpatialVarianceLoss
 from barevision.embeddings.visualization import log_visualizations
-from barevision.flow.logging_utils import (
+from barevision.embeddings.logging_utils import (
     should_log_something,
 )
 from barevision.embeddings.settings import Settings
@@ -352,7 +352,7 @@ class EmbeddingsTrainer:
         )
 
         # Log embedding statistics
-        from barevision.flow.logging_utils import log_diagnostics
+        from barevision.embeddings.logging_utils import log_diagnostics
 
         log_diagnostics(
             self.tensorboard,
@@ -451,5 +451,5 @@ class EmbeddingsTrainer:
 
 
 if __name__ == "__main__":
-    parsed_settings = tyro.cli(EmbeddingsSettings)
+    parsed_settings = tyro.cli(Settings)
     EmbeddingsTrainer(parsed_settings)()

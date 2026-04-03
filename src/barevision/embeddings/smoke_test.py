@@ -91,4 +91,4 @@ if __name__ == "__main__":
     print()
     print("The embeddings training pipeline is working correctly.")
     print("You can now run full training with:")
-    print("  python -m barevision.flow.embeddings.training")
+    print("  python -m barevision.embeddings.training")

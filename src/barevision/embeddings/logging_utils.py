@@ -11,8 +11,8 @@ import numpy as np
 from barevision.embeddings import (
     self_attention_spatial_variance,
     cross_attention_spatial_variance,
-    _generate_normalized_coordinates,
 )
+from barevision.embeddings.spatial_losses import generate_normalized_coordinates
 from barevision.flow.settings import LoggingSettings
 from barevision.embeddings.settings import Settings
 from barevision.utils import image
@@ -49,7 +49,7 @@ def log_attention_statistics(
     flat_windows = windows.reshape(B * num_windows, window_size, window_size, D)
 
     # Precompute coordinates
-    coords = _generate_normalized_coordinates(window_size)
+    coords = generate_normalized_coordinates(window_size)
 
     # Compute spatial variances (both return tuple of (loss, aux))
     # Use temperature=0.3 for diagnostic logging (same as training)
@@ -336,14 +336,12 @@ def print_header(settings: Settings):
     print("OPTICAL FLOW TRAINING")
     print("=" * 60)
     print()
-    print(f"Pyramid levels: {settings.model.embedding.num_levels}")
+    print(f"Pyramid levels: {settings.model.num_levels}")
     print(
         f"Coarse grid: {settings.dataset.coarse_grid_size}×{settings.dataset.coarse_grid_size}"
     )
-    print(
-        f"Window size: {settings.loss.embedding.window_size}×{settings.loss.embedding.window_size}"
-    )
-    print(f"Embedding dim: {settings.model.embedding.embed_dim}")
+    print(f"Window size: {settings.dataset.window_size}×{settings.dataset.window_size}")
+    print(f"Embedding dim: {settings.model.embed_dim}")
     image_size = image.image_size(
         settings.dataset.coarse_grid_size,
         settings.dataset.window_size,

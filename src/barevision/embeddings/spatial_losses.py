@@ -26,7 +26,7 @@ from barevision.utils.checks import check_value
 from barevision.utils.grid import crop_to_grid_aligned, WindowGrid
 
 
-def _generate_normalized_coordinates(window_size: int) -> jnp.ndarray:
+def generate_normalized_coordinates(window_size: int) -> jnp.ndarray:
     """Generate normalized coordinate grids for a window.
 
     Coordinates are normalized to [0, 1] range.
@@ -232,7 +232,7 @@ def windowed_spatial_variance_losses(
     )
 
     # Precompute coordinates for this window size
-    coords = _generate_normalized_coordinates(window_size)
+    coords = generate_normalized_coordinates(window_size)
 
     # Split into windows
     grid = WindowGrid(window_size=window_size)

@@ -21,7 +21,7 @@ from barevision.flow.joint.losses import (
     JointEmbeddingReconstructionLoss,
 )
 from barevision.flow.joint.visualization import log_visualizations
-from barevision.flow.logging_utils import (
+from barevision.embeddings.logging_utils import (
     log_progress,
     print_footer,
     print_header,
