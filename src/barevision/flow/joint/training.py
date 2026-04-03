@@ -13,7 +13,6 @@ from barevision.flow.checkpoint_utils import (
     generate_run_name,
     restore_model_from_checkpoint,
     save_checkpoint,
-    save_best_checkpoint,
 )
 from barevision.flow.dataset.video import create_dataloader
 from barevision.flow.embeddings.spatial_losses import HierarchicalSpatialVarianceLoss
@@ -174,20 +173,9 @@ class Trainer:
                 self.tensorboard.log_scalar(
                     "Loss/validation", val_loss, step=global_step
                 )
-                if settings.validation.save_best and val_loss < best_val_loss:
+                if settings.checkpoint.save_best and val_loss < best_val_loss:
                     best_val_loss = val_loss
                     best_val_step = global_step
-                    checkpoint_path = save_best_checkpoint(
-                        model=self.model,
-                        step=global_step,
-                        val_loss=val_loss,
-                        settings=settings,
-                        run_name=self.run_name,
-                    )
-                    print(
-                        f"New best model saved at step {global_step} "
-                        f"(val_loss: {val_loss:.6f}): {checkpoint_path}"
-                    )
 
         if settings.validation.every_epochs > 0 and best_val_loss < float("inf"):
             print(f"\n{'=' * 60}")

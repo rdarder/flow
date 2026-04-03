@@ -60,10 +60,10 @@ def test_settings(tmp_path):
         checkpoint=CheckpointSettings(
             every_steps=5,
             location=str(tmp_path / "checkpoints"),
+            save_best=True,
         ),
         validation=ValidationSettings(
             every_epochs=1,
-            save_best=True,
         ),
     )
 
@@ -80,7 +80,7 @@ def model_and_logger(test_settings):
 def test_maybe_save_step_respects_interval(test_settings, model_and_logger, tmp_path):
     """Checkpointer only saves at step intervals."""
     model, logger = model_and_logger
-    checkpointer = Checkpointer(test_settings, "test_run", logger)
+    checkpointer = Checkpointer(test_settings.checkpoint, "test_run", logger)
 
     # Steps that shouldn't trigger save (not multiples of 5)
     checkpointer.maybe_save_step(model, epoch=1, step_in_epoch=1, global_step=1)
@@ -105,7 +105,7 @@ def test_maybe_save_step_disabled(test_settings, model_and_logger):
     """Checkpointer doesn't save when every_steps is 0."""
     test_settings.checkpoint.every_steps = 0
     model, logger = model_and_logger
-    checkpointer = Checkpointer(test_settings, "test_run", logger)
+    checkpointer = Checkpointer(test_settings.checkpoint, "test_run", logger)
 
     checkpointer.maybe_save_step(model, epoch=1, step_in_epoch=1, global_step=1)
     checkpointer.maybe_save_step(model, epoch=1, step_in_epoch=5, global_step=5)
@@ -117,7 +117,7 @@ def test_maybe_save_step_disabled(test_settings, model_and_logger):
 def test_maybe_save_best_only_on_improvement(test_settings, model_and_logger, tmp_path):
     """Best checkpoint only saved when validation loss improves."""
     model, logger = model_and_logger
-    checkpointer = Checkpointer(test_settings, "test_run", logger)
+    checkpointer = Checkpointer(test_settings.checkpoint, "test_run", logger)
 
     # First validation - should save (inf -> 1.0)
     checkpointer.maybe_save_best(model, epoch=1, global_step=10, val_loss=1.0)
@@ -140,9 +140,9 @@ def test_maybe_save_best_only_on_improvement(test_settings, model_and_logger, tm
 
 def test_maybe_save_best_disabled(test_settings, model_and_logger):
     """Best checkpoint not saved when save_best is False."""
-    test_settings.validation.save_best = False
+    test_settings.checkpoint.save_best = False
     model, logger = model_and_logger
-    checkpointer = Checkpointer(test_settings, "test_run", logger)
+    checkpointer = Checkpointer(test_settings.checkpoint, "test_run", logger)
 
     checkpointer.maybe_save_best(model, epoch=1, global_step=10, val_loss=0.5)
 
@@ -155,7 +155,7 @@ def test_checkpoint_contains_metadata(test_settings, model_and_logger, tmp_path)
     import orbax.checkpoint as ocp
 
     model, logger = model_and_logger
-    checkpointer = Checkpointer(test_settings, "test_run", logger)
+    checkpointer = Checkpointer(test_settings.checkpoint, "test_run", logger)
 
     checkpointer.maybe_save_step(model, epoch=2, step_in_epoch=5, global_step=5)
 
@@ -171,7 +171,6 @@ def test_checkpoint_contains_metadata(test_settings, model_and_logger, tmp_path)
     assert restored["step"] == 5
     assert restored["epoch"] == 2
     assert restored["step_in_epoch"] == 5
-    assert "config" in restored
     assert "model" in restored
 
 
@@ -180,7 +179,7 @@ def test_best_checkpoint_contains_val_loss(test_settings, model_and_logger, tmp_
     import orbax.checkpoint as ocp
 
     model, logger = model_and_logger
-    checkpointer = Checkpointer(test_settings, "test_run", logger)
+    checkpointer = Checkpointer(test_settings.checkpoint, "test_run", logger)
 
     checkpointer.maybe_save_best(model, epoch=1, global_step=10, val_loss=0.75)
 
@@ -200,7 +199,7 @@ def test_best_checkpoint_contains_val_loss(test_settings, model_and_logger, tmp_
 def test_close_logs_summary(test_settings, model_and_logger, capsys):
     """Checkpointer.close() logs training summary."""
     model, logger = model_and_logger
-    checkpointer = Checkpointer(test_settings, "test_run", logger)
+    checkpointer = Checkpointer(test_settings.checkpoint, "test_run", logger)
 
     # Simulate some checkpointing activity
     checkpointer.maybe_save_step(model, epoch=1, step_in_epoch=5, global_step=5)
@@ -220,7 +219,7 @@ def test_checkpoint_overwrites_best(test_settings, model_and_logger, tmp_path):
     import orbax.checkpoint as ocp
 
     model, logger = model_and_logger
-    checkpointer = Checkpointer(test_settings, "test_run", logger)
+    checkpointer = Checkpointer(test_settings.checkpoint, "test_run", logger)
 
     # First best
     checkpointer.maybe_save_best(model, epoch=1, global_step=10, val_loss=1.0)
@@ -247,18 +246,13 @@ def test_static_methods(test_settings, model_and_logger, tmp_path):
     import orbax.checkpoint as ocp
 
     model, logger = model_and_logger
-    checkpointer = Checkpointer(test_settings, "test_run", logger)
+    checkpointer = Checkpointer(test_settings.checkpoint, "test_run", logger)
 
     # Save a checkpoint
     checkpointer.maybe_save_step(model, epoch=1, step_in_epoch=5, global_step=5)
 
     checkpoint_dir = Path(test_settings.checkpoint.location) / "test_run"
     checkpoint_path = checkpoint_dir / "step_000005"
-
-    # Test load_config
-    config = Checkpointer.load_config(checkpoint_path)
-    assert config is not None
-    assert "checkpoint" in config
 
     # Test load_metadata
     metadata = Checkpointer.load_metadata(checkpoint_path)

@@ -137,7 +137,9 @@ class EmbeddingsTrainer:
             wrt=nnx.Param,
         )
         self.model = embeddings_model
-        self.checkpointer = Checkpointer(settings, self.run_name, self.logger)
+        self.checkpointer = Checkpointer(
+            settings.checkpoint, self.run_name, self.logger
+        )
 
     def _maybe_restore_from_checkpoint(self) -> int:
         """Load model parameters from checkpoint depending on settings.

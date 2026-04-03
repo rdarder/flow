@@ -1,11 +1,9 @@
 """Unified checkpoint management for Barevision.
 
-Provides both stateful checkpointing for training and stateless
-loading for inference/resumption.
+Provides checkpointing for training with periodic and best-model saves.
 """
 
 import shutil
-from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict
@@ -13,75 +11,43 @@ from typing import Any, Dict
 import orbax.checkpoint as ocp
 from flax import nnx
 
-from barevision.flow.settings import EmbeddingsSettings
+from barevision.flow.settings import CheckpointSettings
 from barevision.utils.console import ConsoleLogger
 
 
-def _convert_string_keys_to_int(obj: Any) -> Any:
-    """Recursively convert string keys that look like integers back to int.
-
-    Orbax/JSON serialization converts integer keys to strings. This function
-    reverses that for proper NNX state restoration.
-
-    Args:
-        obj: Dictionary or value to process
-
-    Returns:
-        Object with integer-like string keys converted to int
-    """
-    if isinstance(obj, dict):
-        return {
-            (
-                int(k) if isinstance(k, str) and k.isdigit() else k
-            ): _convert_string_keys_to_int(v)
-            for k, v in obj.items()
-        }
-    elif isinstance(obj, list):
-        return [_convert_string_keys_to_int(item) for item in obj]
-    else:
-        return obj
-
-
 class Checkpointer:
-    """Manages checkpoint saving and loading for training and inference.
+    """Manages checkpoint saving for training.
 
-    Provides both stateful checkpointing for training (tracking best models,
-    periodic saves) and stateless loading for inference and resumption.
+    Handles periodic checkpoints and best-model tracking based on validation loss.
 
     Attributes:
         logger: Console logger for messages
-        best_val_loss: Best validation loss seen so far (training only)
-        best_step: Global step where best validation was achieved (training only)
+        best_val_loss: Best validation loss seen so far
+        best_step: Global step where best validation was achieved
 
-    Example (training):
+    Example:
         ```python
-        checkpointer = Checkpointer(settings, run_name, logger)
+        checkpointer = Checkpointer(checkpoint_settings, run_name, logger)
         for epoch, batch in enumerate(loader):
             checkpointer.maybe_save_step(model, epoch, step, global_step)
         checkpointer.maybe_save_best(model, epoch, global_step, val_loss)
-        ```
-
-    Example (inference/resume):
-        ```python
-        config = Checkpointer.load_config(checkpoint_path)
-        step = Checkpointer.restore(checkpoint_path, model)
         ```
     """
 
     def __init__(
         self,
-        settings: EmbeddingsSettings,
+        checkpoint_settings: CheckpointSettings,
         run_name: str,
         logger: ConsoleLogger,
     ):
-        """Initialize checkpointer with constant configuration.
+        """Initialize checkpointer with checkpoint configuration.
 
         Args:
-            settings: Embeddings settings (constant for training session)
+            checkpoint_settings: Checkpoint configuration
             run_name: Run identifier for checkpoint directory naming
             logger: Console logger for messages
         """
-        self.settings = settings
+        self.checkpoint_settings = checkpoint_settings
         self.run_name = run_name
         self.logger = logger
         self.best_val_loss = float("inf")
@@ -107,7 +73,7 @@ class Checkpointer:
             step_in_epoch: Step number within current epoch (1-indexed)
             global_step: Global step number (1-indexed)
         """
-        every_steps = self.settings.checkpoint.every_steps
+        every_steps = self.checkpoint_settings.every_steps
         if every_steps <= 0:
             return
 
@@ -130,7 +96,7 @@ class Checkpointer:
         """Consider saving the best model checkpoint.
 
         Saves if val_loss is better than the previous best.
-        No-op if validation.save_best is False.
+        No-op if checkpoint.save_best is False.
 
         Args:
             model: Model to checkpoint
@@ -138,7 +104,7 @@ class Checkpointer:
             global_step: Global step number (1-indexed)
             val_loss: Current validation loss
         """
-        if not self.settings.validation.save_best:
+        if not self.checkpoint_settings.save_best:
             return
 
         if val_loss < self.best_val_loss:
@@ -178,7 +144,7 @@ class Checkpointer:
             checkpoint_label = global_step
 
         checkpoint_path = self.get_checkpoint_path(
-            self.settings.checkpoint.location,
+            self.checkpoint_settings.location,
             self.run_name,
             checkpoint_label,
         )
@@ -192,7 +158,6 @@ class Checkpointer:
             "step": global_step,
             "epoch": epoch,
             "step_in_epoch": step_in_epoch,
-            "config": asdict(self.settings),
         }
 
         if val_loss is not None:
@@ -216,7 +181,7 @@ class Checkpointer:
 
     def close(self):
         """Log training summary."""
-        if self.settings.validation.save_best and self.best_val_loss < float("inf"):
+        if self.checkpoint_settings.save_best and self.best_val_loss < float("inf"):
             self.logger.log(f"\n{'=' * 60}")
             self.logger.log("Validation Summary:")
             self.logger.log(f"  Best validation loss: {self.best_val_loss:.6f}")
@@ -263,23 +228,6 @@ class Checkpointer:
         return Path(checkpoint_location).resolve() / run_name / step_str
 
     @staticmethod
-    def load_checkpoint(checkpoint_path: Path) -> Dict[str, Any]:
-        """Load checkpoint from disk.
-
-        Args:
-            checkpoint_path: Path to checkpoint directory
-
-        Returns:
-            Dictionary with keys: model, step, config, and optional metadata
-        """
-        checkpoint_path = Path(checkpoint_path).resolve()
-        checkpointer = ocp.PyTreeCheckpointer()
-        restored = checkpointer.restore(checkpoint_path, item=ocp.args.PyTreeRestore())
-
-        # Convert string keys back to integers for NNX compatibility
-        return _convert_string_keys_to_int(restored)
-
-    @staticmethod
     def restore(checkpoint_path: Path, model: nnx.Module) -> int:
         """Restore model state from checkpoint.
 
@@ -293,7 +241,11 @@ class Checkpointer:
         if not checkpoint_path.exists():
             raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
 
-        checkpoint_data = Checkpointer.load_checkpoint(checkpoint_path)
+        checkpoint_path = Path(checkpoint_path).resolve()
+        checkpointer = ocp.PyTreeCheckpointer()
+        checkpoint_data = checkpointer.restore(
+            checkpoint_path, item=ocp.args.PyTreeRestore()
+        )
 
         # Restore model state
         nnx.update(model, nnx.State(checkpoint_data["model"]))
@@ -301,29 +253,24 @@ class Checkpointer:
         return checkpoint_data["step"]
 
     @staticmethod
-    def load_config(checkpoint_path: Path) -> Dict[str, Any]:
-        """Extract configuration from a checkpoint without loading full model.
-
-        Args:
-            checkpoint_path: Path to checkpoint directory
-
-        Returns:
-            Configuration dictionary
-        """
-        checkpoint_data = Checkpointer.load_checkpoint(checkpoint_path)
-        return checkpoint_data.get("config", {})
-
-    @staticmethod
     def load_metadata(checkpoint_path: Path) -> Dict[str, Any]:
-        """Extract all metadata from a checkpoint without loading model state.
+        """Extract metadata from a checkpoint without loading model state.
 
         Args:
             checkpoint_path: Path to checkpoint directory
 
         Returns:
-            Dictionary with step, epoch, step_in_epoch, and any other metadata
+            Dictionary with step, epoch, step_in_epoch, and best_val_loss
         """
-        checkpoint_data = Checkpointer.load_checkpoint(checkpoint_path)
+        if not checkpoint_path.exists():
+            raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
+
+        checkpoint_path = Path(checkpoint_path).resolve()
+        checkpointer = ocp.PyTreeCheckpointer()
+        checkpoint_data = checkpointer.restore(
+            checkpoint_path, item=ocp.args.PyTreeRestore()
+        )
+
         return {
             "step": checkpoint_data.get("step"),
             "epoch": checkpoint_data.get("epoch"),

@@ -295,11 +295,9 @@ class ValidationSettings:
 
     Attributes:
         every_epochs: Run validation every N epochs (0 to disable validation)
-        save_best: Whether to save best model checkpoint based on validation loss
     """
 
     every_epochs: int = 1
-    save_best: bool = True
 
     def __post_init__(self):
         check_value(
@@ -316,6 +314,7 @@ class CheckpointSettings:
         every_steps: Save checkpoint every N steps (0 to disable periodic checkpointing)
         location: Base directory for checkpoints (default "checkpoints")
                   Final path will be {location}/{run_name}/
+        save_best: Whether to save best model checkpoint based on validation loss
         save_final: Whether to save a final checkpoint when training completes
         resume_from: Path to checkpoint to resume training from (optional)
                      If provided, loads model weights and continues from saved step
@@ -323,6 +322,7 @@ class CheckpointSettings:
 
     every_steps: int = 100
     location: str = "checkpoints"
+    save_best: bool = True
     resume_from: str = ""  # Empty string = no resume
 
     def __post_init__(self):

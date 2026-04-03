@@ -396,7 +396,10 @@ def compute_hierarchical_spatial_variance_loss(
         )
         return total_loss, aux
     else:
-        return total_loss, {"self_loss": total_self_loss, "cross_loss": total_cross_loss}
+        return total_loss, {
+            "self_loss": total_self_loss,
+            "cross_loss": total_cross_loss,
+        }
 
 
 class HierarchicalSpatialVarianceLoss:
