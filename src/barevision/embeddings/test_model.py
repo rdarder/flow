@@ -9,6 +9,8 @@ from barevision.embeddings.model import (
     StemBlock,
     StandardBlock,
     count_parameters,
+)
+from barevision.embeddings.gaussian import (
     gaussian_kernel_2d,
     depthwise_gaussian_initializer,
 )

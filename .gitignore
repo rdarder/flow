@@ -17,3 +17,5 @@ notebooks/
 flow.npy
 experiments/
 .qwen/
+changes.md
+progress.md

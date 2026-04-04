@@ -4,6 +4,7 @@ Provides window splitting/stitching for attention-based operations.
 """
 
 import jax.numpy as jnp
+from jax import numpy as jnp
 
 
 class WindowGrid:
@@ -148,3 +149,23 @@ def crop_to_grid_aligned(feature_map: jnp.ndarray, window_size: int) -> jnp.ndar
     start_w = (W - crop_w) // 2
 
     return feature_map[:, start_h : start_h + crop_h, start_w : start_w + crop_w, :]
+
+
+def generate_normalized_coordinates(window_size: int) -> jnp.ndarray:
+    """Generate normalized coordinate grids for a window.
+
+    Coordinates are normalized to [0, 1] range.
+
+    Args:
+        window_size: Window dimension
+
+    Returns:
+        coords: (N, 2) array of (y, x) positions where N = window_size²
+    """
+    # Generate 1D coordinate arrays normalized to [0, 1]
+    ys = jnp.arange(window_size).astype(jnp.float32) / (window_size - 1)
+    xs = jnp.arange(window_size).astype(jnp.float32) / (window_size - 1)
+
+    # Create 2D grid and reshape to (N, 2)
+    coords_2d = jnp.stack(jnp.meshgrid(ys, xs, indexing="ij"), axis=-1)
+    return coords_2d.reshape(-1, 2)  # (N, 2)

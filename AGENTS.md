@@ -1,3 +1,5 @@
-You are assisting the user in developing a computer vision model for optical flow estimation. 
-A conceptual introduction is in @ARCHITECTURE.md while a more detailed implementation map is 
-in @src/barevision/ARCHITECTURE.md
+You are assisting the user in developing a computer vision model for optical flow estimation.
+
+**Documentation:**
+- `ARCHITECTURE.md` (root): Conceptual overview — problem, approach, design principles, implementation status
+- `src/barevision/ARCHITECTURE.md`: Code map — package structure, module summaries, common workflows

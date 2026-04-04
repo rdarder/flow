@@ -23,27 +23,34 @@ import jax.numpy as jnp
 
 from barevision.embeddings.settings import SpatialVarianceLossSettings
 from barevision.utils.checks import check_value
-from barevision.utils.grid import crop_to_grid_aligned, WindowGrid
+from barevision.utils.grid import (
+    crop_to_grid_aligned,
+    WindowGrid,
+    generate_normalized_coordinates,
+)
 
 
-def generate_normalized_coordinates(window_size: int) -> jnp.ndarray:
-    """Generate normalized coordinate grids for a window.
-
-    Coordinates are normalized to [0, 1] range.
-
+def _compute_attention_and_variance(
+    logits: jnp.ndarray,
+    coords: jnp.ndarray,
+    temperature: float,
+) -> jnp.ndarray:
+    """Compute attention weights and spatial variance.
+    
+    This helper is designed to be used with jax.checkpoint for memory efficiency.
+    It computes attention weights and then the spatial variance in one go.
+    
     Args:
-        window_size: Window dimension
-
+        logits: (B, N, N) attention logits
+        coords: (N, 2) normalized coordinates
+        temperature: Softmax temperature
+        
     Returns:
-        coords: (N, 2) array of (y, x) positions where N = window_size²
+        (B, N) spatial variance per query position
     """
-    # Generate 1D coordinate arrays normalized to [0, 1]
-    ys = jnp.arange(window_size).astype(jnp.float32) / (window_size - 1)
-    xs = jnp.arange(window_size).astype(jnp.float32) / (window_size - 1)
-
-    # Create 2D grid and reshape to (N, 2)
-    coords_2d = jnp.stack(jnp.meshgrid(ys, xs, indexing="ij"), axis=-1)
-    return coords_2d.reshape(-1, 2)  # (N, 2)
+    attn_weights = jax.nn.softmax(logits / temperature, axis=-1)
+    variance = _compute_spatial_variance(attn_weights, coords)
+    return variance
 
 
 def _compute_spatial_variance(
@@ -115,11 +122,17 @@ def self_attention_spatial_variance(
     # Compute self-attention logits: q·k for all pairs
     logits = flat_windows @ flat_windows.transpose(0, 2, 1)  # (B, N, N)
 
-    # Softmax to get attention weights
-    attn_weights = jax.nn.softmax(logits / temperature, axis=-1)
-
-    # Compute spatial variance
-    variance = _compute_spatial_variance(attn_weights, coords)
+    if need_aux:
+        # When aux is needed, compute attention weights explicitly
+        attn_weights = jax.nn.softmax(logits / temperature, axis=-1)
+        variance = _compute_spatial_variance(attn_weights, coords)
+    else:
+        # When aux is not needed, use checkpoint to recompute attention
+        # during backward pass instead of storing it
+        variance = jax.checkpoint(
+            _compute_attention_and_variance,
+            static_argnums=(2,),  # temperature is static
+        )(logits, coords, temperature)
 
     # Reshape back to spatial grid
     variance_grid = variance.reshape(B, H, W)
@@ -168,11 +181,17 @@ def cross_attention_spatial_variance(
     # Compute cross-attention logits: q1·k2 for all pairs
     logits = flat1 @ flat2.transpose(0, 2, 1)  # (B, N, N)
 
-    # Softmax to get attention weights
-    attn_weights = jax.nn.softmax(logits / temperature, axis=-1)
-
-    # Compute spatial variance
-    variance = _compute_spatial_variance(attn_weights, coords)
+    if need_aux:
+        # When aux is needed, compute attention weights explicitly
+        attn_weights = jax.nn.softmax(logits / temperature, axis=-1)
+        variance = _compute_spatial_variance(attn_weights, coords)
+    else:
+        # When aux is not needed, use checkpoint to recompute attention
+        # during backward pass instead of storing it
+        variance = jax.checkpoint(
+            _compute_attention_and_variance,
+            static_argnums=(2,),  # temperature is static
+        )(logits, coords, temperature)
 
     # Reshape back to spatial grid
     variance_grid = variance.reshape(B, H, W)

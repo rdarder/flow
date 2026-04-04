@@ -1,11 +1,3 @@
-"""Training script for standalone embeddings model with spatial variance loss.
-
-This script trains the hierarchical embedding model independently from flow estimation,
-using spatial variance loss to encourage spatially concentrated attention patterns.
-
-Entry point: python -m barevision.embeddings.training
-"""
-
 import datetime
 import time
 from functools import partial
@@ -25,24 +17,17 @@ from barevision.embeddings.model import (
 )
 from barevision.embeddings.spatial_losses import HierarchicalSpatialVarianceLoss
 from barevision.embeddings.visualization import log_visualizations
-from barevision.embeddings.logging_utils import (
-    should_log_something,
-)
 from barevision.embeddings.settings import Settings
 from barevision.utils.console import ConsoleLogger
 from barevision.utils.logging import TensorboardLogger
+from barevision.embeddings.logging_utils import log_diagnostics
+from barevision.utils import image
 
 
 class EmbeddingsTrainer:
-    """Trainer for standalone embeddings model.
-
-    Trains hierarchical embedding model with spatial variance loss.
-    Checkpointing uses training loss for preservation decisions.
-    """
-
     def __init__(self, settings: Settings):
         self.settings = settings
-        self.run_name = self.generate_run_name(prefix=settings.run_name_prefix)
+        self.run_name = self._generate_run_name(prefix=settings.run_name_prefix)
         self.logger = ConsoleLogger()
         self.tensorboard = TensorboardLogger(
             log_dir=settings.logging.tensorboard_dir,
@@ -56,7 +41,6 @@ class EmbeddingsTrainer:
             settings.loss.spatial_variance
         )
 
-        # Optimizer for embeddings model only
         self.optimizer = nnx.Optimizer(
             embeddings_model,
             optax.chain(
@@ -71,31 +55,21 @@ class EmbeddingsTrainer:
         )
 
     @staticmethod
-    def generate_run_name(prefix: str) -> str:
+    def _generate_run_name(prefix: str) -> str:
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         return f"{prefix}_{timestamp}"
 
     def _report_model_params(self):
-        """Report model parameter counts."""
         total_params = count_parameters(self.model)
         self.logger.log(f"Embedding model parameters: {total_params}\n")
 
     def _should_validate(self, epoch: int) -> bool:
-        """Check if validation should run this epoch."""
         return (
             self.settings.validation.every_epochs > 0
             and (epoch % self.settings.validation.every_epochs) == 0
         )
 
     def _maybe_run_validation(self, epoch: int, global_step: int):
-        """Run validation if due and log results.
-
-        Validation is for monitoring only - checkpointing uses training loss.
-
-        Args:
-            epoch: Current epoch number
-            global_step: Current global step
-        """
         if not self._should_validate(epoch):
             return
 
@@ -103,10 +77,8 @@ class EmbeddingsTrainer:
         val_loss = self._run_validation()
         self.logger.log(f"Validation loss: {val_loss:.6f}")
         self.tensorboard.log_scalar("Loss/validation", val_loss, step=global_step)
-        # Note: No checkpoint save here - checkpoints use training loss
 
     def __call__(self):
-        """Main embeddings training loop."""
         self._log_header()
         self.logger.log("")
 
@@ -124,15 +96,6 @@ class EmbeddingsTrainer:
         self.logger.log("=" * 60)
 
     def _train_epoch(self, epoch: int, global_step: int):
-        """Train for one epoch.
-
-        Args:
-            epoch: Current epoch number
-            global_step: Current global step
-
-        Returns:
-            Updated global step
-        """
         epoch_seed = self.settings.training.seed + epoch
 
         loader = create_dataloader(
@@ -143,10 +106,9 @@ class EmbeddingsTrainer:
         )
         epoch_start = time.time()
 
-        for step, (img1, img2, metadata) in enumerate(loader):
+        for epoch_step, (img1, img2, metadata) in enumerate(loader):
             train_loss = self._train_step_and_maybe_log(
                 epoch=epoch,
-                step=step,
                 global_step=global_step,
                 img1=img1,
                 img2=img2,
@@ -163,11 +125,6 @@ class EmbeddingsTrainer:
         return global_step
 
     def _run_validation(self) -> float:
-        """Run validation on validation dataset.
-
-        Returns:
-            Average validation loss
-        """
         loader = create_dataloader(
             self.settings.dataset,
             split="val",
@@ -196,49 +153,36 @@ class EmbeddingsTrainer:
     def _train_step_and_maybe_log(
         self,
         epoch: int,
-        step: int,
         global_step: int,
         img1: jnp.ndarray,
         img2: jnp.ndarray,
         metadata: list,
         epoch_start: float,
     ) -> float:
-        """Execute training step and optionally log/visualize.
 
-        Encapsulates the need_aux decision and all logging logic.
-
-        Args:
-            epoch: Current epoch number
-            step: Step within epoch
-            global_step: Global step number
-            img1: First frame
-            img2: Second frame
-            metadata: Batch metadata
-            epoch_start: Epoch start time for speed calculation
-
-        Returns:
-            Loss value
-        """
-        # Determine if we should compute aux data for logging/visualization
-        need_aux = should_log_something(self.settings.logging, global_step)
-
-        # Execute training step
         loss, aux = _compute_loss_and_grads(
-            self.model, self.loss_fn_obj, self.optimizer, (img1, img2), need_aux
+            self.model,
+            self.loss_fn_obj,
+            self.optimizer,
+            (img1, img2),
+            need_aux=self._log_this_step(global_step),
         )
 
-        # Log progress if due
-        if global_step % self.settings.logging.every_steps == 0:
+        if self._log_this_step(global_step):
             self._log_progress(epoch, global_step, loss, aux, epoch_start, img1)
-
-        # Log visualizations if due (requires aux data)
-        if (
-            global_step % self.settings.logging.visualizations_every_steps == 0
-            and need_aux
-        ):
-            self._log_visualizations(img1, img2, aux, metadata[0], global_step, epoch)
+        if self._should_log_visualizations(global_step):
+            self._log_visualizations(img1, img2, aux, metadata[0], global_step)
 
         return loss
+
+    def _log_this_step(self, step: int):
+        return (
+            step % self.settings.logging.visualizations_every_steps == 0
+            or self._should_log_visualizations(step)
+        )
+
+    def _should_log_visualizations(self, step: int):
+        return step % self.settings.logging.every_steps == 0
 
     def _log_progress(
         self,
@@ -249,17 +193,6 @@ class EmbeddingsTrainer:
         epoch_start: float,
         img1: jnp.ndarray,
     ):
-        """Log training progress metrics.
-
-        Args:
-            epoch: Current epoch number
-            global_step: Global step number
-            loss: Combined loss value
-            aux: Auxiliary data from training step
-            epoch_start: Epoch start time
-            img1: Input frame for diagnostics
-        """
-        # Log metrics
         self.tensorboard.log_scalar("Loss/total", float(loss), global_step)
         self.tensorboard.log_scalar(
             "Loss/spatial_variance/self", float(aux["self_loss"]), global_step
@@ -267,9 +200,6 @@ class EmbeddingsTrainer:
         self.tensorboard.log_scalar(
             "Loss/spatial_variance/cross", float(aux["cross_loss"]), global_step
         )
-
-        # Log embedding statistics
-        from barevision.embeddings.logging_utils import log_diagnostics
 
         log_diagnostics(
             self.tensorboard,
@@ -279,7 +209,6 @@ class EmbeddingsTrainer:
             self.settings.loss.spatial_variance.window_size,
         )
 
-        # Print progress line
         steps_per_sec = global_step / (time.time() - epoch_start)
         self_var = float(aux["self_loss"])
         cross_var = float(aux["cross_loss"])
@@ -296,18 +225,7 @@ class EmbeddingsTrainer:
         aux: dict,
         metadata: dict,
         global_step: int,
-        epoch: int,
     ):
-        """Log training visualizations.
-
-        Args:
-            img1: First frame
-            img2: Second frame
-            aux: Auxiliary data from training step
-            metadata: Batch metadata
-            global_step: Global step number
-            epoch: Current epoch number
-        """
         pyramid1, pyramid2 = aux["pyramids"]
 
         log_visualizations(
@@ -325,7 +243,6 @@ class EmbeddingsTrainer:
 
     def _log_header(self):
         """Log training configuration header."""
-        from barevision.utils import image
 
         self.logger.log("=" * 60)
         self.logger.log("EMBEDDINGS TRAINING (Spatial Variance Loss)")

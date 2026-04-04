@@ -14,13 +14,13 @@ import pytest
 
 from barevision.embeddings.spatial_losses import (
     _compute_spatial_variance,
-    generate_normalized_coordinates,
     self_attention_spatial_variance,
     cross_attention_spatial_variance,
     windowed_spatial_variance_losses,
     compute_hierarchical_spatial_variance_loss,
     HierarchicalSpatialVarianceLoss,
 )
+from barevision.utils.grid import generate_normalized_coordinates
 from barevision.embeddings.settings import SpatialVarianceLossSettings
 
 

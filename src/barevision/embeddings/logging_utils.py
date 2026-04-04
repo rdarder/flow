@@ -12,10 +12,9 @@ from barevision.embeddings import (
     self_attention_spatial_variance,
     cross_attention_spatial_variance,
 )
-from barevision.embeddings.spatial_losses import generate_normalized_coordinates
 from barevision.embeddings.settings import Settings, LoggingSettings
 from barevision.utils import image
-from barevision.utils.grid import WindowGrid
+from barevision.utils.grid import WindowGrid, generate_normalized_coordinates
 from barevision.utils.logging import TensorboardLogger
 
 
@@ -353,10 +352,3 @@ def print_header(settings: Settings):
     if settings.dataset.max_samples > 0:
         print(f"Max samples per epoch: {settings.dataset.max_samples}")
     print()
-
-
-def should_log_something(settings: LoggingSettings, step: int):
-    return (
-        step % settings.visualizations_every_steps == 0
-        or step % settings.every_steps == 0
-    )
