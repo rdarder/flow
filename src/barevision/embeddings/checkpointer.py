@@ -5,7 +5,6 @@ Uses training loss for both periodic saving and best checkpoint preservation.
 """
 
 from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
 from typing import Any, Sequence, Optional
 

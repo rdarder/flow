@@ -6,6 +6,7 @@ currently used by the embeddings training script.
 
 from dataclasses import dataclass
 
+from barevision.embeddings.checkpointer import CheckpointSettings
 from barevision.utils.checks import check_value
 
 
@@ -29,7 +30,7 @@ class DatasetSettings:
     window_size: int = 16
     num_levels: int = 3
     min_frame_distance: int = 1
-    max_frame_distance: int = 5
+    max_frame_distance: int = 3
     max_samples: int = -1
     num_workers: int = 4
 
@@ -71,8 +72,8 @@ class LoggingSettings:
     """
 
     tensorboard_dir: str = "runs"
-    every_steps: int = 100
-    visualizations_every_steps: int = 100
+    every_steps: int = 200
+    visualizations_every_steps: int = 1000
 
     def __post_init__(self):
         check_value(self.tensorboard_dir, "log_dir cannot be empty")
@@ -129,10 +130,10 @@ class SpatialVarianceLossSettings:
     """
 
     window_size: int = 16
-    level_weight_decay: float = 1.0
-    lambda_self: float = 0.5
-    self_temperature: float = 0.3
-    cross_temperature: float = 0.3
+    level_weight_decay: float = 1.1
+    lambda_self: float = 0.6
+    self_temperature: float = 0.25
+    cross_temperature: float = 0.25
 
     def __post_init__(self):
         check_value(
@@ -220,6 +221,6 @@ class Settings:
     loss: LossSettings
     training: TrainingSettings
     logging: LoggingSettings
-    checkpoint: "barevision.embeddings.checkpointer.CheckpointSettings"
+    checkpoint: CheckpointSettings
     validation: ValidationSettings
     run_name_prefix: str = "embeddings"

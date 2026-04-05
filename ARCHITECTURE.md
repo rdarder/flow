@@ -1,189 +1,131 @@
-# Barevision: Hierarchical Optical Flow Architecture
+# Barevision: Architecture
 
-This document outlines the design and architecture of the Barevision optical flow model. The system is divided into two primary components:
+## Problem Statement
 
-1. **The Embedding Engine** (Currently Implemented): A self-supervised hierarchical feature extractor trained with spatial variance loss.
-2. **The Flow Estimation Pipeline** (Currently Implemented): A hierarchical tracker utilizing attention-based feature matching with reconstruction loss.
+Barevision provides **non-semantic perception** for low-cost robots: understanding space well enough to move safely, localize, and navigate. Not object recognition or semantic labeling.
 
----
+**Target**: Single camera, cheap hardware (~$10 NPU, 0.5 TOPS), limited power. Robot moves slowly, builds understanding iteratively.
 
-## 1. The Embedding Engine (Implemented)
+## Constraints
 
-The embedding engine processes raw RGB frames into a multi-scale pyramid of dense, visually unique feature embeddings. It is designed to be highly efficient on NPUs by strictly utilizing dense and grouped convolutions without complex routing or spatial padding.
+These constraints shaped every design decision:
 
-### Architecture: The "Decoupled Cascade" with Symmetric Mean Subtraction
+**Hardware**: $10 NPU, 0.5 TOPS INT8, limited ONNX operators.
 
-To prevent the destruction of high-frequency structural details during downsampling, feature extraction is strictly decoupled from spatial reduction. Additionally, Local Contrast Normalization (LCN) is applied to boost the uniqueness of local textures.
+**Critical limitation**: No `GatherND` at inference. Cannot do variable-offset slicing (per-region frame warping). Workaround: shift entire frames based on coarse flow predictions.
 
-* **Strictly `VALID` Padding:** The network uses no artificial padding (`padding='VALID'`). This drops edge pixels at every convolution, structurally preventing misleading boundary data (zero-padding) from corrupting the embeddings.
-* **L2 Normalized Hypersphere:** The final embeddings at each level are L2 normalized to unit length. Crucially, no ReLU activation is applied before normalization, allowing the network to utilize the full [-1.0, 1.0] cosine similarity space.
-* **Symmetric Mean Subtraction:** A depthwise 3×3 convolution with SAME padding computes a local mean per channel, which is subtracted from the hidden features before embedding projection. This removes common background signals and boosts local uniqueness.
+**Budget**: ~$25 for compute + camera in a $100 robot.
 
-**Pyramid Blocks:**
+## Approach
 
-1. **StemBlock (Level 0):** Operates on raw 3-channel RGB. Expands the receptive field to 25 pixels using two stacked 3x3 `stride=1` convolutions.
-   * `Conv(Dense, 3→32)` → `GroupNorm` → `GELU`
-   * `Conv(Groups=8, 32→32)` → `GroupNorm` → `GELU`
-   * **Mean Conv:** `Conv(Depthwise, 3×3, stride=1, SAME)` → local_mean per channel
-   * **Local Contrast Normalization:** `rich_features - local_mean`
-   * *Branch A (Embed):* 1x1 Conv (32→16) → L2 Norm (operates on residuals)
-   * *Branch B (Downsample):* Strided slice `local_mean[:, 1:-1:2, 1:-1:2, :]`
+**Hierarchical embeddings for optical flow**:
 
-2. **StandardBlock (Levels 1 to N):** Refines features for coarser levels.
-   * `Conv(Groups=8, 32→32)` → `GroupNorm` → `GELU`
-   * **Mean Conv:** `Conv(Depthwise, 3×3, stride=1, SAME)` → local_mean per channel
-   * **Local Contrast Normalization:** `rich_features - local_mean`
-   * *Branch A (Embed):* 1x1 Conv (32→16) → L2 Norm (operates on residuals)
-   * *Branch B (Downsample):* Strided slice `local_mean[:, 1:-1:2, 1:-1:2, :]` (Omitted on the final level).
+1. Project each frame into dense 16-dim feature vectors (unique within frame, matchable across frames)
+2. Process at multiple scales: coarse levels see large motions as small shifts
+3. Self-supervised: train on raw video, no labeled flow data
 
-### Resolution and the Spatial Buffer
+**Why hierarchical**: Matching each pixel requires searching an area growing with square of displacement. Hierarchical processing makes this tractable—coarse estimate first, then refine in small windows.
 
-Because the network drops edge pixels via `VALID` padding, the physical resolution of the feature maps shrinks slightly more than a standard 2x downsample at every level. For example, to get a clean 16x16 grid at Level 2, the network must ingest an 83x83 crop at Level 0.
+**Why self-supervised**: No labeling budget, academic datasets may not match reality, video has enough temporal consistency to learn.
 
-This means the finer levels (Level 0 and Level 1) physically cover a wider field of view than the coarsest level. This "extra" resolution acts as a crucial spatial buffer that becomes necessary during the flow estimation phase.
+## Design Decisions
 
----
+### VALID Padding (no zero-padding)
 
-## 2. Flow Estimation Pipeline (Not Implemented)
+Convolutions use VALID padding:
+- Avoids wasting compute on artifact-laden border data
+- Enables frame shifting: when coarse flow re-aligns frames, valid regions nest hierarchically (shifted coarse frame is a crop of fine frame)
 
-The flow estimation pipeline estimates optical flow using attention-based feature matching across pyramid levels. The system processes each level independently and uses reconstruction loss for training.
+### Mean Subtraction
 
-### Hierarchical Flow Estimation
+Each block has a depthwise convolution extracting the DC component. Output is:
+1. Passed to next level (downsampled)
+2. Subtracted from embeddings before normalization
 
-**Architecture:** The flow estimator operates at all pyramid levels:
+**Why**: DC component contributes little to uniqueness. Removing it boosts the unique signal. Improved loss by 10-15%.
 
-1. **Per-Level Processing:** Each level's embeddings are split into 16×16 windows
-2. **Independent Estimation:** A dedicated MLP predicts flow for each window
-3. **Multi-Level Loss:** Reconstruction loss computed at each level
+**Trade-off**: Only 3×3 receptive field.
 
-**Spatial Buffer Utilization:** The centered crop strategy (from VALID padding) provides symmetric buffer space on all sides:
-- Level 0: 79×79 → 64×64 (7-8 pixels buffer per side)
-- Level 1: 37×37 → 32×32 (2-3 pixels buffer per side)
-- Level 2: 16×16 → 16×16 (no crop needed)
+### Spatial Variance Loss
 
-This buffer accommodates motion near window boundaries and enables future window-shifting strategies.
+Early attempts used entropy minimization for "sharp" attention. Model learned scattered sharp peaks (entropy doesn't care about position).
 
-### The Constellation & Centroids
+**Solution**: Position-aware variance:
+- Compute attention scores over lookup window
+- Find center of mass of attention-weighted positions
+- Minimize variance of positions weighted by attention
 
-Because the embeddings form stable "signatures" or "constellations" of attention peaks rather than single solid blobs, tracking relies on comparing the center of mass (Centroid) of the Self-Attention map to the Cross-Attention map.
+Encourages attention to concentrate around a single peak.
 
-### Temperature Scaling
+Two terms: self-attention variance (within frame) + cross-attention variance (frame 1 → frame 2).
 
-Two separate temperature parameters control attention sharpness during embeddings training:
+### L2 Normalization
 
-* **`self_temperature` (default: 0.3):** Controls self-attention softmax sharpness. Lower values produce sharper peaks concentrated near the source pixel.
-* **`cross_temperature` (default: 0.3):** Controls cross-attention softmax sharpness. Lower values produce sharper peaks for confident cross-frame matching.
+Embeddings are L2-normalized. Added early to prevent extreme filter weights. May no longer be necessary with spatial variance loss.
 
-This separation allows independent tuning of self-attention (embedding uniqueness) and cross-attention (matching confidence) behavior.
+**Open question**: Candidate for removal if experiments show it's unnecessary.
 
-### The Boundary Problem (Centroid Drag)
+### JAX/Flax Over PyTorch
 
-When a feature moves near the edge of a 16x16 window, the boundary physically truncates part of the attention signature. Taking the geometric centroid of a truncated signature artificially skews the flow estimate backward (Centroid Drag).
+Chosen to avoid "batteries included" complexity and build custom components from scratch.
 
-### Solution: The Flow Estimator
+**Trade-off**: Pure functional style can be awkward; ecosystem less mature.
 
-Instead of utilizing explicit mathematical geometry to correct boundary clipping, the pipeline employs a small, per-embedding MLP to statistically predict the local residual flow based on cheap spatial features.
+## Entry Points
 
-For every embedding, the following 8-float feature vector is computed:
+### Training
 
-1. **Self-Relative Centroid (2 floats):** Offset of self-attention centroid from source position. Should be ~0 for well-formed self-attention.
-2. **Cross-Relative Centroid (2 floats):** Offset of cross-attention centroid from source position. This is the primary flow signal.
-3. **Cross-Absolute Centroid (2 floats):** Absolute position of cross-attention centroid in the window [0, 1]. Provides boundary context for detecting edge clipping.
-4. **Self Max Peak (1 float):** Maximum attention weight in self-attention map. Indicates self-attention sharpness (confidence).
-5. **Cross Max Peak (1 float):** Maximum attention weight in cross-attention map. Indicates matching confidence.
-
-These 8 floats are passed through a 2-layer MLP:
-```
-Linear(8 → 16) → ReLU → Linear(16 → 16) → ReLU → Linear(16 → 2, no bias) → tanh → scale
+```bash
+python -m barevision.embeddings.training [OPTIONS]
 ```
 
-The network outputs two values:
-* **Residual U:** The local X displacement.
-* **Residual V:** The local Y displacement.
+Run `python -m barevision.embeddings.training -h` for all options.
 
-Output is bounded to [-0.5, 0.5] in normalized coordinates (half-window maximum flow).
+**Key hyperparameters**:
+- Softmax temperature (~0.3): Lower = sharper attention peaks
+- Level weight decay (~1.0): Coarser levels get weight = decay^level
+- Self/cross loss balance (~0.5): Weight between self and cross attention loss
+- Embedding dimension (16), Hidden dimension (32)
+- Lookup window size (16)
+- Number of levels (3)
+- Frame distance (1-5): Temporal distance between frame pairs
 
-**Design rationale:**
+### Smoke Test
 
-* **Translation invariance:** By using relative centroids (offset from source), the same flow pattern produces identical features regardless of position in the window. This removes the need for absolute source position and reduces the learning burden.
-* **Boundary detection:** Cross-absolute centroid position provides context for detecting when flow approaches window edges, helping the model distinguish real flow from boundary clipping artifacts.
-* **Confidence signals:** Max peak values for both self and cross attention serve as confidence indicators, useful for downstream aggregation and detecting ambiguous matches.
-* **Conservative initialization:** Output layer uses small kernel weights (normal(0.02)) with no bias, starting with near-zero predictions and no direction preference.
-
-### Flow Aggregation
-
-At each level, the predicted residual flows are aggregated across the entire image. The confidence features (max peaks) are available for future confidence-weighted aggregation. This robust aggregation is then used for training with reconstruction loss.
-
----
-
-## 3. Training Strategy (Partially Implemented)
-
-The model uses a two-phase training approach with separate objectives for embeddings and flow estimation.
-
-### Phase 1: Standalone Embeddings Training (Primary)
-
-Embeddings are trained independently using **Spatial Variance Loss** to encourage spatially concentrated attention patterns:
-
-**Spatial Variance Loss Formulation:**
-- For each query position, compute the weighted mean position from attention weights
-- Measure the variance of attention-weighted coordinates around that mean
-- Minimize variance → attention peaks become spatially localized
-
-**Properties:**
-- Lower variance = attention concentrates near specific locations
-- Self-attention: peaks cluster around the source pixel (encourages unique embeddings)
-- Cross-attention: finds specific matches in the target frame (encourages confident matching)
-- Space-aware: Unlike entropy, spatial variance penalizes scattered attention even if the distribution is peaky
-
-**Loss combination:**
-```
-total_loss = lambda_self * self_variance + (1 - lambda_self) * cross_variance
+```bash
+python -m barevision.embeddings.smoke_test
 ```
 
-Where:
-- `self_variance`: Spatial variance of self-attention (default weight: 0.5)
-- `cross_variance`: Spatial variance of cross-attention (default weight: 0.5)
-- Both computed hierarchically across pyramid levels with configurable weighting
+Small model, minimal data, few steps. Validates checkpointing, logging, visualization, loss, gradients. Catches integration errors unit tests miss.
 
-This formulation ensures embeddings are both distinctive (sharp self-attention) and matchable (sharp cross-attention), with the spatial constraint preventing scattered attention patterns.
+### Tests
 
-### Phase 2: Flow Estimation Training
+```bash
+pytest src/barevision
+```
 
-Flow estimation is trained using **Reconstruction Loss** in latent space:
+### Checkpoints
 
-**Reconstruction Loss:**
-- Uses estimated flow to warp Frame 1 embeddings
-- Minimizes L2 distance between warped Frame 1 and Frame 2 embeddings
-- Computed independently at each pyramid level
-- Ensures embeddings are trackable across frames
+Configurable directory (default: `checkpoints/`). Orbax CheckpointManager with loss-based preservation (keeps best N).
 
-**Future: Joint Fine-Tuning**
-The architecture supports loading pretrained embeddings and fine-tuning jointly with flow estimation, combining spatial variance and reconstruction losses. This is deferred pending validation of the standalone embeddings baseline.
+## Known Limitations
 
----
+1. **Frame shifting at fine levels**: Frames may have moved significantly, making cross-attention unreliable. Current level decay is global; needs per-pixel weighting.
 
-## 4. Training Infrastructure
+2. **Textureless areas**: Uniform regions produce similar embeddings, diluting training signal.
 
-### Checkpointing
+3. **Mean subtraction receptive field**: Only 3×3, too local especially at fine levels.
 
-**Standalone Embeddings Checkpoints:**
-- Saved during embeddings training (`embeddings/training.py`)
-- Contains model state, step, and `EmbeddingsSettings` configuration
-- Can be loaded into flow estimation pipeline later
+4. **GatherND limitation**: Forces whole-frame shifting. Cannot handle multi-modal flow (independent object motion vs. camera motion) without redesign.
 
-**Joint Training Checkpoints (Outdated):**
-- Legacy checkpoints from combined training approach
-- Contains full `Settings` object with joint configuration
+5. **JAX ecosystem**: Orbax and Flax have poor documentation, frequent breaking changes. Workaround: write standalone test scripts to probe behavior empirically.
 
-### Validation
+## Notes for Implementors
 
-Training includes automatic validation on a held-out set (15% of videos):
-- Runs at the end of each epoch (configurable frequency)
-- Tracks best validation loss for model selection
-- Logs metrics to TensorBoard for monitoring
-
-### Inference
-
-Trained models can be used for optical flow estimation via the inference script, which loads checkpoints and estimates flow between arbitrary image pairs.
-
-See `src/barevision/ARCHITECTURE.md` for detailed implementation documentation.
+- **Get embeddings working first**, then add flow. Embeddings are the foundation.
+- **Test JAX libraries empirically**. Don't trust documentation.
+- **Keep training stages isolated**. Don't combine embeddings and flow training until each works independently.
+- **Texture helps**. Static, textured scenery is ideal for early training.
+- **L2 normalization may be removable**. Test ablation if simplifying.
+- **Whole-frame operations** (where per-region would make sense) are due to GatherND limitation.
+- **Don't confuse training time vs inference time**. The hardware limits apply only to inference time, not training.

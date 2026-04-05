@@ -36,15 +36,15 @@ def _compute_attention_and_variance(
     temperature: float,
 ) -> jnp.ndarray:
     """Compute attention weights and spatial variance.
-    
+
     This helper is designed to be used with jax.checkpoint for memory efficiency.
     It computes attention weights and then the spatial variance in one go.
-    
+
     Args:
         logits: (B, N, N) attention logits
         coords: (N, 2) normalized coordinates
         temperature: Softmax temperature
-        
+
     Returns:
         (B, N) spatial variance per query position
     """

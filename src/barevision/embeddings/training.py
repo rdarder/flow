@@ -165,7 +165,7 @@ class EmbeddingsTrainer:
             self.loss_fn_obj,
             self.optimizer,
             (img1, img2),
-            need_aux=self._log_this_step(global_step),
+            return_aux=self._log_this_step(global_step),
         )
 
         if self._log_this_step(global_step):

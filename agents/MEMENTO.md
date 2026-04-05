@@ -28,7 +28,7 @@ We maintain two documents on this workflow:
 
 ### 1. Understand
 
-Read `ARCHITECTURE.md`, `changes.md`, `progress.md`, and relevant code. Understand the gap between current state and desired state. Ask questions if anything is unclear—update docs if needed.
+Read `ARCHITECTURE.md`, `changes.md`, `progress.md`, `NAVIGATION.md` and relevant code. Understand the gap between current state and desired state. Ask questions if anything is unclear—update docs if needed.
 
 ### 2. Scope
 
