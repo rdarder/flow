@@ -5,26 +5,31 @@ Multi-scale feature pyramid for coarse-to-fine patch matching.
 Architecture (Decoupled Cascade with Symmetric Mean Subtraction, 3 levels):
     Input: (B, H, W, 3) RGB
       ↓
-    StemBlock (Level 0):
-      - Conv1: 3×3, stride=1, dense (3→32 ch) → GroupNorm → GELU
-      - Conv2: 3×3, stride=1, grouped (8 groups, 32→32 ch) → GroupNorm → GELU
-      - Mean Conv: 3×3, stride=1, depthwise (32 groups, SAME padding) → local_mean
+    Preprocessor:
+      - Conv: 3×3, stride=1, dense (3→hidden_dim ch) → GroupNorm → GELU
+      ↓
+    EmbeddingBlock (Level 0):
+      - Conv1: 3×3, stride=1, grouped (num_groups, hidden_dim→hidden_dim ch)
+      - GroupNorm → GELU
+      - Mean Conv: 3×3, stride=1, depthwise (SAME padding) → local_mean
       - Local Contrast Normalization: rich_features - local_mean
-      - Branch A (Embed): 1×1 Conv (32→16 ch) → L2 Norm
+      - Branch A (Embed): 1×1 Conv (hidden_dim→embed_dim ch) → L2 Norm
       - Branch B (Downsample): strided slice of local_mean [:, 1:-1:2, 1:-1:2, :]
       ↓
-    StandardBlock (Level 1):
-      - Conv1: 3×3, stride=1, grouped (8 groups, 32→32 ch) → GroupNorm → GELU
-      - Mean Conv: 3×3, stride=1, depthwise (32 groups, SAME padding) → local_mean
+    EmbeddingBlock (Level 1):
+      - Conv1: 3×3, stride=1, grouped (num_groups, hidden_dim→hidden_dim ch)
+      - GroupNorm → GELU
+      - Mean Conv: 3×3, stride=1, depthwise (SAME padding) → local_mean
       - Local Contrast Normalization: rich_features - local_mean
-      - Branch A (Embed): 1×1 Conv (32→16 ch) → L2 Norm
+      - Branch A (Embed): 1×1 Conv (hidden_dim→embed_dim ch) → L2 Norm
       - Branch B (Downsample): strided slice of local_mean [:, 1:-1:2, 1:-1:2, :]
       ↓
-    StandardBlock (Level 2, last):
-      - Conv1: 3×3, stride=1, grouped (8 groups, 32→32 ch) → GroupNorm → GELU
-      - Mean Conv: 3×3, stride=1, depthwise (32 groups, SAME padding) → local_mean
+    EmbeddingBlock (Level 2, last):
+      - Conv1: 3×3, stride=1, grouped (num_groups, hidden_dim→hidden_dim ch)
+      - GroupNorm → GELU
+      - Mean Conv: 3×3, stride=1, depthwise (SAME padding) → local_mean
       - Local Contrast Normalization: rich_features - local_mean
-      - Branch A (Embed): 1×1 Conv (32→16 ch) → L2 Norm
+      - Branch A (Embed): 1×1 Conv (hidden_dim→embed_dim ch) → L2 Norm
       - Branch B: None (last level)
 
 Output: List of feature maps [Level_0, Level_1, Level_2]
@@ -32,8 +37,8 @@ Output: List of feature maps [Level_0, Level_1, Level_2]
 
 Note: Uses VALID padding for feature convs, SAME padding for mean_conv.
       Receptive field expands through stacked stride=1 convolutions before downsampling.
-      Stem Block: 25 pixel RF (two 3×3 stacked)
-      Standard Block: Inherits RF from previous levels + 2 pixel expansion
+      Preprocessor + Block: 25 pixel RF (two 3×3 stacked)
+      Block only: Inherits RF from previous levels + 2 pixel expansion
 
 Symmetric Mean Subtraction Design:
     - Depthwise 3×3 convolution computes local mean per channel (learnable Gaussian init)
@@ -54,47 +59,36 @@ from barevision.embeddings.gaussian import depthwise_gaussian_initializer
 from barevision.embeddings.settings import ModelSettings
 
 
-class StemBlock(nnx.Module):
-    """Root block of the pyramid (Level 0 only).
+class Preprocessor(nnx.Module):
+    """Preprocessor layer for hierarchical embedding model.
 
-    Uses two stacked 3×3 convolutions to expand receptive field from 9 to 25 pixels
-    before applying Local Contrast Normalization and splitting into embedding and
-    downsampling branches.
+    Expands RGB input to hidden dimension and applies initial feature extraction.
+    Separated from EmbeddingBlock to enable ablation studies.
 
     Input: (B, H, W, 3) RGB
-    Returns: (embedding, downsampled_output)
-        - embedding: (B, H-4, W-4, embed_dim) L2-normalized
-        - downsampled_output: (B, (H-7)//2, (W-7)//2, hidden_dim)
+    Output: (B, H-2, W-2, hidden_dim)
 
-    Symmetric Mean Subtraction:
-        - depthwise 3x3 conv computes local mean per channel (SAME padding)
-        - Subtracts local mean from rich_features to boost uniqueness
-        - Strided slice of mean output provides downsampling for next level
+    Note: Drops 2 pixels due to 3×3 VALID convolution.
     """
 
     def __init__(
         self,
+        in_channels: int,
         hidden_dim: int,
-        embed_dim: int,
         num_groups: int,
         *,
         rngs: nnx.Rngs,
     ):
-        """Initialize StemBlock.
+        """Initialize Preprocessor.
 
         Args:
-            hidden_dim: Hidden feature dimension
-            embed_dim: Output embedding dimension
-            num_groups: Number of groups for grouped convolutions
+            in_channels: Input channels (typically 3 for RGB)
+            hidden_dim: Output hidden dimension
+            num_groups: Number of groups for GroupNorm
             rngs: NNX RNGs for parameter initialization
         """
-        self.hidden_dim = hidden_dim
-        self.embed_dim = embed_dim
-        self.num_groups = num_groups
-
-        # Conv1: Dense 3×3, stride=1, RGB (3 ch) → hidden_dim ch
-        self.conv1 = nnx.Conv(
-            in_features=3,
+        self.conv = nnx.Conv(
+            in_features=in_channels,
             out_features=hidden_dim,
             kernel_size=(3, 3),
             strides=(1, 1),
@@ -102,93 +96,29 @@ class StemBlock(nnx.Module):
             feature_group_count=1,
             rngs=rngs,
         )
-        self.norm1 = nnx.GroupNorm(
+        self.norm = nnx.GroupNorm(
             num_groups=num_groups // 2, num_features=hidden_dim, rngs=rngs
         )
 
-        # Conv2: Grouped 3×3, stride=1, hidden_dim ch → hidden_dim ch
-        self.conv2 = nnx.Conv(
-            in_features=hidden_dim,
-            out_features=hidden_dim,
-            kernel_size=(3, 3),
-            strides=(1, 1),
-            padding="VALID",
-            feature_group_count=num_groups,
-            rngs=rngs,
-        )
-        self.norm2 = nnx.GroupNorm(
-            num_groups=num_groups // 2, num_features=hidden_dim, rngs=rngs
-        )
-
-        # Mean Conv: Depthwise 3×3, stride=1, SAME padding
-        # Computes local mean for contrast normalization
-        self.mean_conv = nnx.Conv(
-            in_features=hidden_dim,
-            out_features=hidden_dim,
-            kernel_size=(3, 3),
-            strides=(1, 1),
-            padding="SAME",
-            feature_group_count=hidden_dim,  # Depthwise convolution
-            kernel_init=depthwise_gaussian_initializer(sigma=1.0),
-            rngs=rngs,
-        )
-
-        # Branch A: 1×1 Conv for embedding projection (operates on residuals)
-        self.embed_conv = nnx.Conv(
-            in_features=hidden_dim,
-            out_features=embed_dim,
-            kernel_size=(1, 1),
-            padding="VALID",
-            rngs=rngs,
-        )
-
-    def __call__(self, x: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
-        """Forward pass through StemBlock.
+    def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
+        """Forward pass through preprocessor.
 
         Args:
-            x: Input tensor of shape (B, H, W, 3)
+            x: Input tensor of shape (B, H, W, in_channels)
 
         Returns:
-            Tuple of (embedding, downsampled_output)
+            Tensor of shape (B, H-2, W-2, hidden_dim)
         """
-        # First convolution: dense 3×3, expands RF to 9 pixels
-        x = self.conv1(x)
-        x = self.norm1(x)
-        x = nnx.gelu(x)
-
-        # Second convolution: grouped 3×3, expands RF to 25 pixels
-        x = self.conv2(x)
-        x = self.norm2(x)
-        x = nnx.gelu(x)
-        rich_features = x
-
-        # Local Contrast Normalization
-        # Depthwise conv computes per-channel local mean (preserves dimensions via SAME)
-        local_mean = self.mean_conv(rich_features)
-
-        # Subtract local mean to remove common background signals
-        # This boosts uniqueness of local textures before embedding projection
-        x_unique = rich_features - local_mean
-
-        # Branch A: Embedding projection (operates on residuals)
-        embedding = self.embed_conv(x_unique)
-        norm = jnp.linalg.norm(embedding, axis=-1, keepdims=True)
-        embedding = embedding / (norm + 1e-8)
-
-        # Branch B: Downsampling via strided slice of local_mean
-        # Mimics 3x3 VALID stride=2 convolution behavior
-        # Slice [1:-1:2] starts at index 1, ends before last, stride 2
-        downsampled = local_mean[:, 1:-1:2, 1:-1:2, :]
-
-        return embedding, downsampled
+        x = self.conv(x)
+        x = self.norm(x)
+        return nnx.gelu(x)
 
 
-class StandardBlock(nnx.Module):
-    """Standard block for pyramid levels 1 to N.
+class EmbeddingBlock(nnx.Module):
+    """Embedding block for pyramid levels.
 
-    Uses a single 3×3 convolution (inherits receptive field from previous levels)
-    before applying Local Contrast Normalization and splitting into embedding and
-    downsampling branches.
+    Applies grouped convolution, local contrast normalization, and produces
+    embedding + optional downsampling output.
 
     Input: (B, H, W, hidden_dim)
     Returns: (embedding, downsampled_output or None)
@@ -210,7 +140,7 @@ class StandardBlock(nnx.Module):
         *,
         rngs: nnx.Rngs,
     ):
-        """Initialize StandardBlock.
+        """Initialize EmbeddingBlock.
 
         Args:
             hidden_dim: Hidden feature dimension
@@ -261,7 +191,7 @@ class StandardBlock(nnx.Module):
         )
 
     def __call__(self, x: jnp.ndarray) -> Tuple[jnp.ndarray, Optional[jnp.ndarray]]:
-        """Forward pass through StandardBlock.
+        """Forward pass through EmbeddingBlock.
 
         Args:
             x: Input tensor of shape (B, H, W, hidden_dim)
@@ -314,24 +244,20 @@ class HierarchicalEmbeddingModel(nnx.Module):
     ):
         self.settings = settings
 
-        # Build pyramid levels
-        self.blocks = nnx.List()
-
-        # StemBlock for Level 0
-        self.blocks.append(
-            StemBlock(
-                hidden_dim=settings.hidden_dim,
-                embed_dim=settings.embed_dim,
-                num_groups=settings.num_groups,
-                rngs=rngs,
-            )
+        # Preprocessor: expands RGB to hidden_dim
+        self.preprocessor = Preprocessor(
+            in_channels=3,
+            hidden_dim=settings.hidden_dim,
+            num_groups=settings.num_groups,
+            rngs=rngs,
         )
 
-        # StandardBlocks for Levels 1 to N-1
-        for i in range(1, settings.num_levels):
+        # Build pyramid levels - all blocks are identical
+        self.blocks = nnx.List()
+        for i in range(settings.num_levels):
             is_last = i == settings.num_levels - 1
             self.blocks.append(
-                StandardBlock(
+                EmbeddingBlock(
                     hidden_dim=settings.hidden_dim,
                     embed_dim=settings.embed_dim,
                     num_groups=settings.num_groups,
@@ -350,8 +276,10 @@ class HierarchicalEmbeddingModel(nnx.Module):
             List of feature maps, one per level.
             Each level has shape (B, H_l, W_l, embed_dim)
         """
-        feature_maps = []
+        # Preprocess RGB to hidden_dim
+        x = self.preprocessor(x)
 
+        feature_maps = []
         for i, block in enumerate(self.blocks):
             embedding, downsampled = block(x)
             feature_maps.append(embedding)

@@ -6,8 +6,8 @@ from flax import nnx
 
 from barevision.embeddings.model import (
     HierarchicalEmbeddingModel,
-    StemBlock,
-    StandardBlock,
+    EmbeddingBlock,
+    Preprocessor,
     count_parameters,
 )
 from barevision.embeddings.gaussian import (
@@ -21,69 +21,49 @@ from barevision.utils.image import (
 )
 
 
-class TestStemBlock:
-    """Tests for StemBlock (Level 0)."""
+class TestPreprocessor:
+    """Tests for Preprocessor module."""
 
-    def test_stem_output_shapes(self):
-        """Test StemBlock returns correct shapes."""
-        model = StemBlock(
-            hidden_dim=32, embed_dim=16, num_groups=8, rngs=nnx.Rngs(jr.PRNGKey(0))
-        )
-        x = jnp.ones((1, 83, 83, 3))  # Example input
-        embedding, downsampled = model(x)
-
-        # Embedding: drops 4 pixels (two 3×3 convs), 16 channels
-        assert embedding.shape == (1, 79, 79, 16), f"Got {embedding.shape}"
-        # Downsampled: (79 - 3) // 2 + 1 = 39, 32 channels
-        assert downsampled.shape == (1, 39, 39, 32), f"Got {downsampled.shape}"
-
-    def test_stem_gradient_flow(self):
-        """Test gradients flow through StemBlock."""
-        from jax import grad
-
-        model = StemBlock(
-            hidden_dim=32, embed_dim=16, num_groups=8, rngs=nnx.Rngs(jr.PRNGKey(0))
+    def test_preprocessor_output_shape(self):
+        """Test Preprocessor returns correct shape."""
+        preprocessor = Preprocessor(
+            in_channels=3,
+            hidden_dim=32,
+            num_groups=8,
+            rngs=nnx.Rngs(jr.PRNGKey(0)),
         )
         x = jnp.ones((1, 83, 83, 3))
+        output = preprocessor(x)
 
-        def loss_fn(m, inp):
-            emb, _ = m(inp)
-            return emb.sum()
-
-        grads = grad(loss_fn, argnums=0)(model, x)
-        grad_state = nnx.state(grads)
-
-        # Check gradients exist
-        assert "conv1" in grad_state
-        assert "conv2" in grad_state
-        assert "embed_conv" in grad_state
-        assert "mean_conv" in grad_state  # mean_conv is learnable
+        # Drops 2 pixels due to 3×3 VALID convolution
+        assert output.shape == (1, 81, 81, 32), f"Got {output.shape}"
 
 
-class TestStandardBlock:
-    """Tests for StandardBlock (Levels 1+)."""
+class TestEmbeddingBlock:
+    """Tests for unified EmbeddingBlock."""
 
-    def test_standard_block_output_shapes(self):
-        """Test StandardBlock returns correct shapes."""
-        model = StandardBlock(
+    def test_embedding_block_output_shapes(self):
+        """Test EmbeddingBlock returns correct shapes."""
+        # Test non-last level
+        block = EmbeddingBlock(
             hidden_dim=32,
             embed_dim=16,
             num_groups=8,
             is_last_level=False,
             rngs=nnx.Rngs(jr.PRNGKey(0)),
         )
-        x = jnp.ones((1, 39, 39, 32))  # From Stem downsample
-        embedding, downsampled = model(x)
+        x = jnp.ones((1, 81, 81, 32))  # From preprocessor output
+        embedding, downsampled = block(x)
 
         # Embedding: drops 2 pixels (one 3×3 conv), 16 channels
-        assert embedding.shape == (1, 37, 37, 16), f"Got {embedding.shape}"
-        # Downsampled: (37 - 3) // 2 + 1 = 18, 32 channels
+        assert embedding.shape == (1, 79, 79, 16), f"Got {embedding.shape}"
+        # Downsampled: (79 - 3) // 2 + 1 = 39, 32 channels
         assert downsampled is not None
-        assert downsampled.shape == (1, 18, 18, 32), f"Got {downsampled.shape}"
+        assert downsampled.shape == (1, 39, 39, 32), f"Got {downsampled.shape}"
 
-    def test_standard_block_last_level(self):
-        """Test StandardBlock at last level returns None for downsample."""
-        model = StandardBlock(
+    def test_embedding_block_last_level(self):
+        """Test EmbeddingBlock at last level returns None for downsample."""
+        block = EmbeddingBlock(
             hidden_dim=32,
             embed_dim=16,
             num_groups=8,
@@ -91,12 +71,37 @@ class TestStandardBlock:
             rngs=nnx.Rngs(jr.PRNGKey(0)),
         )
         x = jnp.ones((1, 18, 18, 32))
-        embedding, downsampled = model(x)
+        embedding, downsampled = block(x)
 
         # Embedding: drops 2 pixels, 16 channels
         assert embedding.shape == (1, 16, 16, 16), f"Got {embedding.shape}"
         # No downsampling at last level
         assert downsampled is None  # type: ignore
+
+    def test_embedding_block_gradient_flow(self):
+        """Test gradients flow through EmbeddingBlock."""
+        from jax import grad
+
+        block = EmbeddingBlock(
+            hidden_dim=32,
+            embed_dim=16,
+            num_groups=8,
+            is_last_level=False,
+            rngs=nnx.Rngs(jr.PRNGKey(0)),
+        )
+        x = jnp.ones((1, 81, 81, 32))
+
+        def loss_fn(m, inp):
+            emb, _ = m(inp)
+            return emb.sum()
+
+        grads = grad(loss_fn, argnums=0)(block, x)
+        grad_state = nnx.state(grads)
+
+        # Check gradients exist
+        assert "conv1" in grad_state
+        assert "embed_conv" in grad_state
+        assert "mean_conv" in grad_state  # mean_conv is learnable
 
 
 class TestSymmetricMeanSubtraction:
@@ -159,21 +164,22 @@ class TestSymmetricMeanSubtraction:
 
     def test_lcn_subtraction_preserves_dimensions(self):
         """Test that LCN subtraction preserves spatial dimensions."""
-        model = StemBlock(
-            hidden_dim=32, embed_dim=16, num_groups=8, rngs=nnx.Rngs(jr.PRNGKey(0))
+        block = EmbeddingBlock(
+            hidden_dim=32,
+            embed_dim=16,
+            num_groups=8,
+            is_last_level=False,
+            rngs=nnx.Rngs(jr.PRNGKey(0)),
         )
-        x = jnp.ones((1, 83, 83, 3))
+        x = jnp.ones((1, 81, 81, 32))
 
         # Get intermediate features by running forward pass manually
-        h = model.conv1(x)
-        h = model.norm1(h)
-        h = nnx.gelu(h)
-        h = model.conv2(h)
-        h = model.norm2(h)
+        h = block.conv1(x)
+        h = block.norm1(h)
         rich_features = nnx.gelu(h)
 
         # mean_conv with SAME padding should preserve dimensions
-        local_mean = model.mean_conv(rich_features)
+        local_mean = block.mean_conv(rich_features)
         assert (
             local_mean.shape == rich_features.shape
         ), "mean_conv should preserve dimensions with SAME padding"
@@ -184,12 +190,16 @@ class TestSymmetricMeanSubtraction:
 
     def test_strided_slice_downsampling(self):
         """Test that strided slice produces correct downsampling dimensions."""
-        model = StemBlock(
-            hidden_dim=32, embed_dim=16, num_groups=8, rngs=nnx.Rngs(jr.PRNGKey(0))
+        block = EmbeddingBlock(
+            hidden_dim=32,
+            embed_dim=16,
+            num_groups=8,
+            is_last_level=False,
+            rngs=nnx.Rngs(jr.PRNGKey(0)),
         )
-        x = jnp.ones((1, 83, 83, 3))
+        x = jnp.ones((1, 81, 81, 32))
 
-        embedding, downsampled = model(x)
+        embedding, downsampled = block(x)
 
         # After mean_conv (SAME): still 79x79
         # After strided slice [1:-1:2]: (79-2)//2 = 38... wait let me recalculate
@@ -199,8 +209,12 @@ class TestSymmetricMeanSubtraction:
 
     def test_lcn_removes_low_frequency_content(self):
         """Test that LCN subtraction removes common background signals."""
-        model = StemBlock(
-            hidden_dim=32, embed_dim=16, num_groups=8, rngs=nnx.Rngs(jr.PRNGKey(0))
+        block = EmbeddingBlock(
+            hidden_dim=32,
+            embed_dim=16,
+            num_groups=8,
+            is_last_level=False,
+            rngs=nnx.Rngs(jr.PRNGKey(0)),
         )
 
         # Create input with uniform signal + small unique variation
@@ -209,7 +223,7 @@ class TestSymmetricMeanSubtraction:
         rich_features = uniform + variation
 
         # Apply mean convolution (should extract the uniform component)
-        local_mean = model.mean_conv(rich_features)
+        local_mean = block.mean_conv(rich_features)
 
         # After subtraction, mean should be close to zero
         x_unique = rich_features - local_mean
@@ -225,16 +239,20 @@ class TestSymmetricMeanSubtraction:
         """Test that mean_conv parameters are trainable."""
         from jax import grad
 
-        model = StemBlock(
-            hidden_dim=32, embed_dim=16, num_groups=8, rngs=nnx.Rngs(jr.PRNGKey(0))
+        block = EmbeddingBlock(
+            hidden_dim=32,
+            embed_dim=16,
+            num_groups=8,
+            is_last_level=False,
+            rngs=nnx.Rngs(jr.PRNGKey(0)),
         )
-        x = jnp.ones((1, 83, 83, 3))
+        x = jnp.ones((1, 81, 81, 32))
 
         def loss_fn(m, inp):
             emb, _ = m(inp)
             return emb.sum()
 
-        grads = grad(loss_fn, argnums=0)(model, x)
+        grads = grad(loss_fn, argnums=0)(block, x)
         grad_state = nnx.state(grads)
 
         # mean_conv should have gradients
@@ -280,19 +298,20 @@ class TestHierarchicalEmbeddingModel:
             ), f"Level {i} should be larger than level {i + 1}"
 
         # Verify exact dimensions
-        # Level 0: 83 - 4 = 79
+        # Preprocessor: 83 - 2 = 81
+        # Level 0: 81 - 2 = 79, downsample: (79-3)//2 + 1 = 39
+        # Level 1: 39 - 2 = 37, downsample: (37-3)//2 + 1 = 18
+        # Level 2: 18 - 2 = 16
         assert pyramid[0].shape[1:] == (
             79,
             79,
             16,
         ), f"Level 0 shape: {pyramid[0].shape}"
-        # Level 1: (79 - 3) // 2 + 1 = 39, then 39 - 2 = 37
         assert pyramid[1].shape[1:] == (
             37,
             37,
             16,
         ), f"Level 1 shape: {pyramid[1].shape}"
-        # Level 2: (37 - 3) // 2 + 1 = 18, then 18 - 2 = 16
         assert pyramid[2].shape[1:] == (
             16,
             16,
@@ -310,13 +329,13 @@ class TestHierarchicalEmbeddingModel:
             ),
             rngs=nnx.Rngs(jr.PRNGKey(0)),
         )
-        # For 1 level (Stem only) targeting any size: input drops 4
+        # For 1 level (Preprocessor + Block): input drops 2 + 2 = 4
         x = jnp.ones((1, 20, 20, 3))
         pyramid = model(x)
 
         assert len(pyramid) == 1
         assert pyramid[0].shape[-1] == 16
-        # Single StemBlock: 20 - 4 = 16
+        # Preprocessor + Block: 20 - 2 - 2 = 16
         assert pyramid[0].shape[1] == 16
 
     def test_batch_processing(self):
@@ -338,7 +357,7 @@ class TestHierarchicalEmbeddingModel:
             assert level.shape[0] == 4, "Batch size should be preserved"
 
     def test_parameter_count(self):
-        """Test parameter counting with Symmetric Mean Subtraction architecture."""
+        """Test parameter counting with unified architecture."""
         model = HierarchicalEmbeddingModel(
             ModelSettings(
                 hidden_dim=32,
@@ -350,30 +369,20 @@ class TestHierarchicalEmbeddingModel:
         )
         param_count = count_parameters(model)
 
-        # Stem Block:
-        #   Conv1 (dense 3×3, 3→32): 3*32*9 + 32 = 896
-        #   Norm1 (GroupNorm, 32 ch): 32 + 32 = 64
-        #   Conv2 (grouped 3×3, 8g, 32→32): 8*4*4*9 + 32 = 1184
-        #   Norm2 (GroupNorm, 32 ch): 64
+        # Preprocessor:
+        #   Conv (dense 3×3, 3→32): 3*32*9 + 32 = 896
+        #   Norm (GroupNorm, 32 ch): 32 + 32 = 64
+        #   Preprocessor total: 896 + 64 = 960
+        #
+        # EmbeddingBlock (×3, identical):
+        #   Conv1 (grouped 3×3, 8g, 32→32): 8*4*4*9 + 32 = 1184
+        #   Norm1 (GroupNorm, 32 ch): 64
         #   Mean Conv (depthwise 3×3, 32g, 32→32): 32*9 + 32 = 320
         #   Embed conv (1×1, 32→16): 32*16 + 16 = 528
-        #   Stem total: 896 + 64 + 1184 + 64 + 320 + 528 = 3,056
+        #   Per block total: 1184 + 64 + 320 + 528 = 2096
+        #   3 blocks: 2096 * 3 = 6288
         #
-        # Standard Block 1 (non-last):
-        #   Conv1 (grouped 3×3, 8g, 32→32): 1184
-        #   Norm1 (GroupNorm, 32 ch): 64
-        #   Mean Conv (depthwise 3×3, 32g, 32→32): 320
-        #   Embed conv (1×1, 32→16): 528
-        #   Standard 1 total: 1184 + 64 + 320 + 528 = 2,096
-        #
-        # Standard Block 2 (last):
-        #   Conv1: 1184
-        #   Norm1: 64
-        #   Mean Conv: 320
-        #   Embed conv: 528
-        #   Standard 2 total: 1184 + 64 + 320 + 528 = 2,096
-        #
-        # Total: 3,056 + 2,096 + 2,096 = 7,248
+        # Total: 960 + 6288 = 7248
         assert param_count == 7248, f"Expected 7248 parameters, got {param_count}"
 
     def test_gradient_flow(self):
@@ -398,26 +407,28 @@ class TestHierarchicalEmbeddingModel:
         # Compute gradients
         grads = grad(loss_fn, argnums=0)(model, x)
 
-        # Check that model has gradients (non-zero)
+        # Check that model has gradients
         grad_state = nnx.state(grads)
 
-        # Check first block (StemBlock) has gradients
+        # Check preprocessor has gradients
+        assert "preprocessor" in grad_state
+        assert "conv" in grad_state["preprocessor"]
+
+        # Check blocks have gradients
         assert "blocks" in grad_state
-        stem_grads = grad_state["blocks"][0]  # type: ignore
-        assert "conv1" in stem_grads
-        assert "conv2" in stem_grads
-        assert "mean_conv" in stem_grads  # New: mean_conv should have gradients
+        block0_grads = grad_state["blocks"][0]  # type: ignore
+        assert "conv1" in block0_grads
+        assert "mean_conv" in block0_grads
 
         # Verify gradients exist for level 0
-        level0_conv1 = stem_grads["conv1"]["kernel"]  # type: ignore
+        level0_conv1 = block0_grads["conv1"]["kernel"]  # type: ignore
         assert level0_conv1 is not None
-        assert level0_conv1.shape == (3, 3, 3, 32)
+        assert level0_conv1.shape == (3, 3, 4, 32)  # grouped: (3, 3, 32/8, 32)
 
         # Verify mean_conv gradients exist
-        level0_mean = stem_grads["mean_conv"]["kernel"]  # type: ignore
+        level0_mean = block0_grads["mean_conv"]["kernel"]  # type: ignore
         assert level0_mean is not None
-        # Depthwise convolution: feature_group_count=32 creates (3, 3, 1, 32) per group
-        # But total shape is (3, 3, 1, 32) since each group processes 1 input channel
+        # Depthwise convolution: feature_group_count=32 creates (3, 3, 1, 32)
         assert level0_mean.shape == (3, 3, 1, 32)
 
 
@@ -431,7 +442,8 @@ class TestDimensionalMath:
         # L1 downsample reverse: (18-1)*2 + 3 = 37
         # L1: 37 + 2 = 39
         # L0 downsample reverse: (39-1)*2 + 3 = 79
-        # L0: 79 + 4 = 83
+        # Preprocessor: 79 + 2 = 81
+        # Input: 81 + 2 = 83
         result = calculate_required_input_size(16, num_levels=3)
         assert result == 83, f"Expected 83, got {result}"
 
@@ -442,14 +454,16 @@ class TestDimensionalMath:
         # L1 downsample reverse: (50-1)*2 + 3 = 101
         # L1: 101 + 2 = 103
         # L0 downsample reverse: (103-1)*2 + 3 = 207
-        # L0: 207 + 4 = 211
+        # Preprocessor: 207 + 2 = 209
+        # Input: 209 + 2 = 211
         result = calculate_required_input_size(48, num_levels=3)
         assert result == 211, f"Expected 211, got {result}"
 
     def test_calculate_coarse_output_size_3_levels(self):
         """Test output size calculation for 3 levels with 83×83 input."""
         result = calculate_coarse_output_size(83, num_levels=3)
-        # L0: 83 - 4 = 79, downsample: (79-3)//2 + 1 = 39
+        # Preprocessor: 83 - 2 = 81
+        # L0: 81 - 2 = 79, downsample: (79-3)//2 + 1 = 39
         # L1: 39 - 2 = 37, downsample: (37-3)//2 + 1 = 18
         # L2: 18 - 2 = 16
         assert result == 16, f"Expected 16, got {result}"
@@ -471,7 +485,7 @@ class TestDimensionalMath:
 
     def test_single_level_math(self):
         """Test dimensional math for single level."""
-        # Single level (Stem only): input drops 4
+        # Single level (Preprocessor + Block): input drops 2 + 2 = 4
         input_size = 20
         output = calculate_coarse_output_size(input_size, num_levels=1)
         assert output == 16, f"Expected 16, got {output}"

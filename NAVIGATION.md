@@ -24,7 +24,7 @@ Embedding pyramid model, training loop, and spatial variance loss.
 
 **logging_utils.py:** Training diagnostics and console logging utilities. Exports: `log_diagnostics`, `ConsoleLogger`.
 
-**model.py:** Hierarchical embedding pyramid: StemBlock (Level 0), StandardBlock (L1-N). Decoupled cascade with symmetric mean subtraction, VALID padding, L2-normalized outputs. Exports: `HierarchicalEmbeddingModel`, `StemBlock`, `StandardBlock`, `EmbeddingBlock`.
+**model.py:** Hierarchical embedding pyramid: Preprocessor (RGB→hidden_dim), EmbeddingBlock (unified for all levels). Decoupled cascade with symmetric mean subtraction, VALID padding, L2-normalized outputs. Exports: `HierarchicalEmbeddingModel`, `EmbeddingBlock`, `Preprocessor`, `count_parameters`.
 
 **settings.py:** Tyro-based CLI configuration. All hyperparameters for model, dataset, training, loss, logging, checkpointing. Exports: `Settings` and component dataclasses.
 
