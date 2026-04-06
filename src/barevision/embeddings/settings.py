@@ -96,12 +96,18 @@ class ModelSettings:
         hidden_dim: Hidden feature dimension
         num_groups: Number of groups for grouped convolutions
         num_levels: Number of pyramid levels
+        use_group_norm: If True, apply GroupNorm after convolutions
+        use_mean_subtraction: If True, subtract local mean from features (contrast normalization)
+        use_l2_norm: If True, L2-normalize output embeddings
     """
 
     embed_dim: int = 16
     hidden_dim: int = 32
     num_groups: int = 4
     num_levels: int = 3
+    use_group_norm: bool = True
+    use_mean_subtraction: bool = True
+    use_l2_norm: bool = True
 
     def __post_init__(self):
         check_value(

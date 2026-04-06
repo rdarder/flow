@@ -76,6 +76,7 @@ class Preprocessor(nnx.Module):
         in_channels: int,
         hidden_dim: int,
         num_groups: int,
+        use_group_norm: bool = True,
         *,
         rngs: nnx.Rngs,
     ):
@@ -85,8 +86,10 @@ class Preprocessor(nnx.Module):
             in_channels: Input channels (typically 3 for RGB)
             hidden_dim: Output hidden dimension
             num_groups: Number of groups for GroupNorm
+            use_group_norm: If True, apply GroupNorm after convolution
             rngs: NNX RNGs for parameter initialization
         """
+        self.use_group_norm = use_group_norm
         self.conv = nnx.Conv(
             in_features=in_channels,
             out_features=hidden_dim,
@@ -96,9 +99,10 @@ class Preprocessor(nnx.Module):
             feature_group_count=1,
             rngs=rngs,
         )
-        self.norm = nnx.GroupNorm(
-            num_groups=num_groups // 2, num_features=hidden_dim, rngs=rngs
-        )
+        if use_group_norm:
+            self.norm = nnx.GroupNorm(
+                num_groups=num_groups // 2, num_features=hidden_dim, rngs=rngs
+            )
 
     def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
         """Forward pass through preprocessor.
@@ -110,7 +114,8 @@ class Preprocessor(nnx.Module):
             Tensor of shape (B, H-2, W-2, hidden_dim)
         """
         x = self.conv(x)
-        x = self.norm(x)
+        if self.use_group_norm:
+            x = self.norm(x)
         return nnx.gelu(x)
 
 
@@ -122,7 +127,7 @@ class EmbeddingBlock(nnx.Module):
 
     Input: (B, H, W, hidden_dim)
     Returns: (embedding, downsampled_output or None)
-        - embedding: (B, H-2, W-2, embed_dim) L2-normalized
+        - embedding: (B, H-2, W-2, embed_dim) L2-normalized (if use_l2_norm)
         - downsampled_output: (B, (H-5)//2, (W-5)//2, hidden_dim) or None if last level
 
     Symmetric Mean Subtraction:
@@ -137,6 +142,9 @@ class EmbeddingBlock(nnx.Module):
         embed_dim: int,
         num_groups: int,
         is_last_level: bool = False,
+        use_group_norm: bool = True,
+        use_mean_subtraction: bool = True,
+        use_l2_norm: bool = True,
         *,
         rngs: nnx.Rngs,
     ):
@@ -147,12 +155,18 @@ class EmbeddingBlock(nnx.Module):
             embed_dim: Output embedding dimension
             num_groups: Number of groups for grouped convolutions
             is_last_level: If True, skip downsampling branch
+            use_group_norm: If True, apply GroupNorm after conv1
+            use_mean_subtraction: If True, subtract local mean from features
+            use_l2_norm: If True, L2-normalize output embeddings
             rngs: NNX RNGs for parameter initialization
         """
         self.hidden_dim = hidden_dim
         self.embed_dim = embed_dim
         self.num_groups = num_groups
         self.is_last_level = is_last_level
+        self.use_group_norm = use_group_norm
+        self.use_mean_subtraction = use_mean_subtraction
+        self.use_l2_norm = use_l2_norm
 
         # Conv1: Grouped 3×3, stride=1
         self.conv1 = nnx.Conv(
@@ -164,22 +178,25 @@ class EmbeddingBlock(nnx.Module):
             feature_group_count=num_groups,
             rngs=rngs,
         )
-        self.norm1 = nnx.GroupNorm(
-            num_groups=num_groups // 2, num_features=hidden_dim, rngs=rngs
-        )
+        if use_group_norm:
+            self.norm1 = nnx.GroupNorm(
+                num_groups=num_groups // 2, num_features=hidden_dim, rngs=rngs
+            )
 
         # Mean Conv: Depthwise 3×3, stride=1, SAME padding
-        # Computes local mean for contrast normalization
-        self.mean_conv = nnx.Conv(
-            in_features=hidden_dim,
-            out_features=hidden_dim,
-            kernel_size=(3, 3),
-            strides=(1, 1),
-            padding="SAME",
-            feature_group_count=hidden_dim,  # Depthwise convolution
-            kernel_init=depthwise_gaussian_initializer(sigma=1.0),
-            rngs=rngs,
-        )
+        # Computes local mean for contrast normalization and downsampling
+        # Always created if mean subtraction is enabled OR if we need downsampling
+        if use_mean_subtraction or not is_last_level:
+            self.mean_conv = nnx.Conv(
+                in_features=hidden_dim,
+                out_features=hidden_dim,
+                kernel_size=(3, 3),
+                strides=(1, 1),
+                padding="SAME",
+                feature_group_count=hidden_dim,  # Depthwise convolution
+                kernel_init=depthwise_gaussian_initializer(sigma=1.0),
+                rngs=rngs,
+            )
 
         # Branch A: 1×1 Conv for embedding projection (operates on residuals)
         self.embed_conv = nnx.Conv(
@@ -201,28 +218,37 @@ class EmbeddingBlock(nnx.Module):
         """
         # Feature extraction: grouped 3×3
         x = self.conv1(x)
-        x = self.norm1(x)
+        if self.use_group_norm:
+            x = self.norm1(x)
         x = nnx.gelu(x)
         rich_features = x
 
-        # Local Contrast Normalization
-        # Depthwise conv computes per-channel local mean (preserves dimensions via SAME)
-        local_mean = self.mean_conv(rich_features)
-
-        # Subtract local mean to remove common background signals
-        # This boosts uniqueness of local textures before embedding projection
-        x_unique = rich_features - local_mean
+        # Local Contrast Normalization (optional)
+        if self.use_mean_subtraction:
+            # Depthwise conv computes per-channel local mean (preserves dimensions via SAME)
+            local_mean = self.mean_conv(rich_features)
+            # Subtract local mean to remove common background signals
+            # This boosts uniqueness of local textures before embedding projection
+            x_unique = rich_features - local_mean
+        else:
+            x_unique = rich_features
+            local_mean = None
 
         # Branch A: Embedding projection (operates on residuals)
         embedding = self.embed_conv(x_unique)
-        norm = jnp.linalg.norm(embedding, axis=-1, keepdims=True)
-        embedding = embedding / (norm + 1e-8)
+        if self.use_l2_norm:
+            norm = jnp.linalg.norm(embedding, axis=-1, keepdims=True)
+            embedding = embedding / (norm + 1e-8)
 
         # Branch B: Downsampling via strided slice of local_mean (if not last level)
         # Mimics 3x3 VALID stride=2 convolution behavior
         downsampled = None
         if not self.is_last_level:
-            downsampled = local_mean[:, 1:-1:2, 1:-1:2, :]
+            if self.use_mean_subtraction:
+                downsampled = local_mean[:, 1:-1:2, 1:-1:2, :]
+            else:
+                # No mean_conv was created, use rich_features directly
+                downsampled = rich_features[:, 1:-1:2, 1:-1:2, :]
 
         return embedding, downsampled
 
@@ -249,6 +275,7 @@ class HierarchicalEmbeddingModel(nnx.Module):
             in_channels=3,
             hidden_dim=settings.hidden_dim,
             num_groups=settings.num_groups,
+            use_group_norm=settings.use_group_norm,
             rngs=rngs,
         )
 
@@ -262,6 +289,9 @@ class HierarchicalEmbeddingModel(nnx.Module):
                     embed_dim=settings.embed_dim,
                     num_groups=settings.num_groups,
                     is_last_level=is_last,
+                    use_group_norm=settings.use_group_norm,
+                    use_mean_subtraction=settings.use_mean_subtraction,
+                    use_l2_norm=settings.use_l2_norm,
                     rngs=rngs,
                 )
             )
