@@ -43,6 +43,8 @@ There are two driving forces: a behavior change will often lead to changes too l
 
 Discuss and adjust with me. I'll let you know when we're done scoping the change.
 
+** Stop here. Wait for explicit confirmation before proceeding to Rehearse.**
+
 ### 3. Rehearse
 
 Here we think about how would we go about writing the changes. Mostly 
@@ -55,11 +57,17 @@ Here we're rehearsing what we'll face when you actually implement the changes. W
 
 Clarify implementation details: edge cases, failure modes, integration points. Adjust scope if needed. Agree on what "done" looks like.
 
+** Stop here. Wait for explicit confirmation before implementing.**
+
 ### 4. Implement
 
 - Write code, docs, tests
 - User reviews, you iterate
 - Update `progress.md` to reflect new state (edit as a whole, don't append)
+
+** Stop here. Present your changes and wait for user approval before committing.**
+
+### 5. Commit
 - Session ends with a git commit
 - Repeat the git commit summary in your response so I know what was done right away.
 
