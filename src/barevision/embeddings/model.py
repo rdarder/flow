@@ -233,15 +233,16 @@ class EmbeddingBlock(nnx.Module):
         rich_features = x
 
         # Local Contrast Normalization (optional)
-        if self.use_mean_subtraction:
-            # Depthwise conv computes per-channel local mean (preserves dimensions via SAME)
+        # Compute local_mean if needed for subtraction OR downsampling
+        need_mean_conv = self.use_mean_subtraction or (not self.is_last_level and self.use_mean_conv_for_downsampling)
+        local_mean = None
+        if need_mean_conv and hasattr(self, 'mean_conv'):
             local_mean = self.mean_conv(rich_features)
-            # Subtract local mean to remove common background signals
-            # This boosts uniqueness of local textures before embedding projection
+        
+        if self.use_mean_subtraction and local_mean is not None:
             x_unique = rich_features - local_mean
         else:
             x_unique = rich_features
-            local_mean = None
 
         # Branch A: Embedding projection (operates on residuals)
         embedding = self.embed_conv(x_unique)
@@ -250,10 +251,9 @@ class EmbeddingBlock(nnx.Module):
             embedding = embedding / (norm + 1e-8)
 
         # Branch B: Downsampling (if not last level)
-        # Use mean_conv output if available and enabled, otherwise strided slice of rich_features
         downsampled = None
         if not self.is_last_level:
-            if self.use_mean_conv_for_downsampling and hasattr(self, 'mean_conv'):
+            if self.use_mean_conv_for_downsampling and local_mean is not None:
                 downsampled = local_mean[:, 1:-1:2, 1:-1:2, :]
             else:
                 downsampled = rich_features[:, 1:-1:2, 1:-1:2, :]
