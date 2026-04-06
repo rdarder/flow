@@ -45,7 +45,7 @@ class EmbeddingsTrainer:
             embeddings_model,
             optax.chain(
                 optax.clip_by_global_norm(1.0),
-                optax.adam(settings.training.learning_rate),
+                optax.adamw(settings.training.learning_rate),
             ),
             wrt=nnx.Param,
         )
