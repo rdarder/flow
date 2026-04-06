@@ -99,6 +99,8 @@ class ModelSettings:
         use_group_norm: If True, apply GroupNorm after convolutions
         use_mean_subtraction: If True, subtract local mean from features (contrast normalization)
         use_l2_norm: If True, L2-normalize output embeddings
+        use_preprocessor: If True, use Preprocessor layer (RGB→hidden_dim). If False, first block takes RGB directly
+        use_mean_conv_for_downsampling: If True, use mean_conv output for downsampling. If False, strided slice of rich_features
     """
 
     embed_dim: int = 16
@@ -108,6 +110,8 @@ class ModelSettings:
     use_group_norm: bool = True
     use_mean_subtraction: bool = True
     use_l2_norm: bool = True
+    use_preprocessor: bool = True
+    use_mean_conv_for_downsampling: bool = True
 
     def __post_init__(self):
         check_value(

@@ -28,11 +28,11 @@ We maintain two documents on this workflow:
 
 ### 1. Understand
 
-Read `ARCHITECTURE.md`, `changes.md`, `progress.md`, `NAVIGATION.md` and relevant code. Understand the gap between current state and desired state. Ask questions if anything is unclear—update docs if needed.
+Read `ARCHITECTURE.md`, `intent.md`, `progress.md`, `NAVIGATION.md` and relevant code. Understand the gap between current state and desired state. Ask questions if anything is unclear—update docs if needed.
 
 ### 2. Scope
 
-We want to decide what's the smallest change we can make that affects the system behavior in the direction of the expected changes in `changes.md`. 
+We want to decide what's the smallest change we can make that affects the system behavior in the direction of the expected changes in `intent.md`. 
 
 - The change must not be elusive or just preparatory. Ideally it changes behavior.
 - We don't propose changes that result in dead code, waiting for some future change to integrate it. Always integrated changes, working on mainline.
@@ -82,12 +82,12 @@ Clarify implementation details: edge cases, failure modes, integration points. A
 - Optional bullets: behavior details, implementation notes
 - Avoid lists of synthetic artifact changes: "created module something.py; added two tests". 
 - If relevant, mention how to experience the changes (running with a certain configuration, or how to tell that something changed by using the software)
-- progress.md and changes.md are not commited. they're explicitly in .gitignore.
+- progress.md and intent.md are not commited. they're explicitly in .gitignore.
 
 ### Progress.md
-- **Scope:** Document only what changed during this changes.md cycle. Do not document pre-existing system behavior.
+- **Scope:** Document only what changed during this intent.md cycle. Do not document pre-existing system behavior.
 - **Net effect, not chronology:** If session 1 does A, session 2 does B, session 3 undoes A, progress.md says "B" — not "A, then B, then not A".
-- **Own words, not checkboxes:** Don't list changes.md items as done/pending. Describe the actual state in behavioral terms, including any deviations from the original plan.
-- **No "remaining" lists:** Do not track what's left to do. The gap between changes.md (desired) and progress.md (accomplished) must be computed fresh each session by reading both documents. This prevents drift and forces real understanding.
+- **Own words, not checkboxes:** Don't list intent.md items as done/pending. Describe the actual state in behavioral terms, including any deviations from the original plan.
+- **No "remaining" lists:** Do not track what's left to do. The gap between intent.md (desired) and progress.md (accomplished) must be computed fresh each session by reading both documents. This prevents drift and forces real understanding.
 - **Rewrite, don't append:** Read progress.md and edit it to reflect the new accumulated state. Don't just add a section for your session.
 - **Describe behavior, not artifacts:** Focus on what the system does, not what files were created.

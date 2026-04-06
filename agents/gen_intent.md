@@ -1,6 +1,6 @@
-# Brainstorm → changes.md Workflow
+# Brainstorm → intent.md Workflow
 
-You are helping the user distill a brainstorming session into a `changes.md` document.
+You are helping the user distill a brainstorming session into a `intent.md` document.
 
 **Context:** The user just finished a brainstorming conversation (with you or another agent). The output is raw: mental models, explored options, false starts, detailed specs, and tentative decisions. Your job is to extract the **actionable core** without losing hard-won insights.
 
@@ -8,7 +8,7 @@ You are helping the user distill a brainstorming session into a `changes.md` doc
 
 ## Goal
 
-Produce a `changes.md` that:
+Produce a `intent.md` that:
 - Describes **what behavior** the user wants (not how to implement it)
 - Captures **constraints** discovered during brainstorm (hard limits, not preferences)
 - Records **decisions** made (rejected/adopted ideas with rationale)
@@ -40,10 +40,10 @@ Before drafting, ask the user:
 4. *"What's still unknown or needs experimentation?"*
 
 **Optional Questions (if brainstorm was complex):**
-5. *"Should I split this into multiple changes.md files? (e.g., 'MoE architecture' + 'MoE training' as separate epics)"*
+5. *"Should I split this into multiple intent.md files? (e.g., 'MoE architecture' + 'MoE training' as separate epics)"*
 6. *"Is there a detailed spec that should stay in a brainstorm/ file for reference?"*
 
-### 3. Draft changes.md
+### 3. Draft intent.md
 
 Use this structure:
 
@@ -97,7 +97,7 @@ Iterate until the user approves.
 
 ## Rules
 
-### ✅ Include in changes.md
+### ✅ Include in intent.md
 
 - **Behavioral goals** ("embeddings that adapt to scene changes")
 - **Hard constraints** ("$10 NPU budget", "no padding")
@@ -105,7 +105,7 @@ Iterate until the user approves.
 - **Unknowns** ("optimal expert count: will ablate 16/32/64")
 - **Key insights** ("sum of Rank-1 matrices can achieve full rank")
 
-### ❌ Exclude from changes.md
+### ❌ Exclude from intent.md
 
 - **Project task ordering** ("First implement X, then Y", "Phase 1 → Phase 2")
 - **File-by-file implementation plans** ("Add MoESettings to settings.py")

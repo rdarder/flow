@@ -46,6 +46,7 @@ class TestEmbeddingBlock:
         """Test EmbeddingBlock returns correct shapes."""
         # Test non-last level
         block = EmbeddingBlock(
+            in_channels=32,
             hidden_dim=32,
             embed_dim=16,
             num_groups=8,
@@ -64,6 +65,7 @@ class TestEmbeddingBlock:
     def test_embedding_block_last_level(self):
         """Test EmbeddingBlock at last level returns None for downsample."""
         block = EmbeddingBlock(
+            in_channels=32,
             hidden_dim=32,
             embed_dim=16,
             num_groups=8,
@@ -83,6 +85,7 @@ class TestEmbeddingBlock:
         from jax import grad
 
         block = EmbeddingBlock(
+            in_channels=32,
             hidden_dim=32,
             embed_dim=16,
             num_groups=8,
@@ -165,6 +168,7 @@ class TestSymmetricMeanSubtraction:
     def test_lcn_subtraction_preserves_dimensions(self):
         """Test that LCN subtraction preserves spatial dimensions."""
         block = EmbeddingBlock(
+            in_channels=32,
             hidden_dim=32,
             embed_dim=16,
             num_groups=8,
@@ -191,6 +195,7 @@ class TestSymmetricMeanSubtraction:
     def test_strided_slice_downsampling(self):
         """Test that strided slice produces correct downsampling dimensions."""
         block = EmbeddingBlock(
+            in_channels=32,
             hidden_dim=32,
             embed_dim=16,
             num_groups=8,
@@ -210,6 +215,7 @@ class TestSymmetricMeanSubtraction:
     def test_lcn_removes_low_frequency_content(self):
         """Test that LCN subtraction removes common background signals."""
         block = EmbeddingBlock(
+            in_channels=32,
             hidden_dim=32,
             embed_dim=16,
             num_groups=8,
@@ -240,6 +246,7 @@ class TestSymmetricMeanSubtraction:
         from jax import grad
 
         block = EmbeddingBlock(
+            in_channels=32,
             hidden_dim=32,
             embed_dim=16,
             num_groups=8,

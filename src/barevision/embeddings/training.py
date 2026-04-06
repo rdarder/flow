@@ -270,9 +270,11 @@ class EmbeddingsTrainer:
             f"Window size: {self.settings.loss.spatial_variance.window_size}×{self.settings.loss.spatial_variance.window_size}"
         )
         self.logger.log("")
-        self.logger.log("Normalization configuration:")
+        self.logger.log("Model configuration:")
+        self.logger.log(f"  - Preprocessor: {self.settings.model.use_preprocessor}")
         self.logger.log(f"  - GroupNorm: {self.settings.model.use_group_norm}")
         self.logger.log(f"  - Mean subtraction: {self.settings.model.use_mean_subtraction}")
+        self.logger.log(f"  - Mean conv for downsampling: {self.settings.model.use_mean_conv_for_downsampling}")
         self.logger.log(f"  - L2 norm: {self.settings.model.use_l2_norm}")
 
         image_size = image.image_size(

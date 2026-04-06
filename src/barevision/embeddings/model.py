@@ -125,7 +125,7 @@ class EmbeddingBlock(nnx.Module):
     Applies grouped convolution, local contrast normalization, and produces
     embedding + optional downsampling output.
 
-    Input: (B, H, W, hidden_dim)
+    Input: (B, H, W, in_channels)
     Returns: (embedding, downsampled_output or None)
         - embedding: (B, H-2, W-2, embed_dim) L2-normalized (if use_l2_norm)
         - downsampled_output: (B, (H-5)//2, (W-5)//2, hidden_dim) or None if last level
@@ -138,6 +138,7 @@ class EmbeddingBlock(nnx.Module):
 
     def __init__(
         self,
+        in_channels: int,
         hidden_dim: int,
         embed_dim: int,
         num_groups: int,
@@ -145,12 +146,14 @@ class EmbeddingBlock(nnx.Module):
         use_group_norm: bool = True,
         use_mean_subtraction: bool = True,
         use_l2_norm: bool = True,
+        use_mean_conv_for_downsampling: bool = True,
         *,
         rngs: nnx.Rngs,
     ):
         """Initialize EmbeddingBlock.
 
         Args:
+            in_channels: Input channels (3 for RGB on first block, hidden_dim otherwise)
             hidden_dim: Hidden feature dimension
             embed_dim: Output embedding dimension
             num_groups: Number of groups for grouped convolutions
@@ -158,6 +161,7 @@ class EmbeddingBlock(nnx.Module):
             use_group_norm: If True, apply GroupNorm after conv1
             use_mean_subtraction: If True, subtract local mean from features
             use_l2_norm: If True, L2-normalize output embeddings
+            use_mean_conv_for_downsampling: If True, use mean_conv for downsampling
             rngs: NNX RNGs for parameter initialization
         """
         self.hidden_dim = hidden_dim
@@ -167,20 +171,25 @@ class EmbeddingBlock(nnx.Module):
         self.use_group_norm = use_group_norm
         self.use_mean_subtraction = use_mean_subtraction
         self.use_l2_norm = use_l2_norm
+        self.use_mean_conv_for_downsampling = use_mean_conv_for_downsampling
 
         # Conv1: Grouped 3×3, stride=1
+        # Use num_groups=1 (dense) for first block with 3-channel RGB input
+        effective_num_groups = 1 if in_channels == 3 else num_groups
         self.conv1 = nnx.Conv(
-            in_features=hidden_dim,
+            in_features=in_channels,
             out_features=hidden_dim,
             kernel_size=(3, 3),
             strides=(1, 1),
             padding="VALID",
-            feature_group_count=num_groups,
+            feature_group_count=effective_num_groups,
             rngs=rngs,
         )
         if use_group_norm:
+            # GroupNorm uses num_groups // 2 to match block's grouping
+            effective_norm_groups = 1 if in_channels == 3 else num_groups // 2
             self.norm1 = nnx.GroupNorm(
-                num_groups=num_groups // 2, num_features=hidden_dim, rngs=rngs
+                num_groups=effective_norm_groups, num_features=hidden_dim, rngs=rngs
             )
 
         # Mean Conv: Depthwise 3×3, stride=1, SAME padding
@@ -211,7 +220,7 @@ class EmbeddingBlock(nnx.Module):
         """Forward pass through EmbeddingBlock.
 
         Args:
-            x: Input tensor of shape (B, H, W, hidden_dim)
+            x: Input tensor of shape (B, H, W, in_channels)
 
         Returns:
             Tuple of (embedding, downsampled_output or None)
@@ -240,14 +249,13 @@ class EmbeddingBlock(nnx.Module):
             norm = jnp.linalg.norm(embedding, axis=-1, keepdims=True)
             embedding = embedding / (norm + 1e-8)
 
-        # Branch B: Downsampling via strided slice of local_mean (if not last level)
-        # Mimics 3x3 VALID stride=2 convolution behavior
+        # Branch B: Downsampling (if not last level)
+        # Use mean_conv output if available and enabled, otherwise strided slice of rich_features
         downsampled = None
         if not self.is_last_level:
-            if self.use_mean_subtraction:
+            if self.use_mean_conv_for_downsampling and hasattr(self, 'mean_conv'):
                 downsampled = local_mean[:, 1:-1:2, 1:-1:2, :]
             else:
-                # No mean_conv was created, use rich_features directly
                 downsampled = rich_features[:, 1:-1:2, 1:-1:2, :]
 
         return embedding, downsampled
@@ -270,21 +278,28 @@ class HierarchicalEmbeddingModel(nnx.Module):
     ):
         self.settings = settings
 
-        # Preprocessor: expands RGB to hidden_dim
-        self.preprocessor = Preprocessor(
-            in_channels=3,
-            hidden_dim=settings.hidden_dim,
-            num_groups=settings.num_groups,
-            use_group_norm=settings.use_group_norm,
-            rngs=rngs,
-        )
+        # Preprocessor: expands RGB to hidden_dim (optional)
+        if settings.use_preprocessor:
+            self.preprocessor = Preprocessor(
+                in_channels=3,
+                hidden_dim=settings.hidden_dim,
+                num_groups=settings.num_groups,
+                use_group_norm=settings.use_group_norm,
+                rngs=rngs,
+            )
+        else:
+            self.preprocessor = None
 
         # Build pyramid levels - all blocks are identical
+        # First block takes RGB (3 ch) if no preprocessor, otherwise hidden_dim
         self.blocks = nnx.List()
         for i in range(settings.num_levels):
             is_last = i == settings.num_levels - 1
+            is_first = i == 0
+            in_channels = 3 if (is_first and not settings.use_preprocessor) else settings.hidden_dim
             self.blocks.append(
                 EmbeddingBlock(
+                    in_channels=in_channels,
                     hidden_dim=settings.hidden_dim,
                     embed_dim=settings.embed_dim,
                     num_groups=settings.num_groups,
@@ -292,6 +307,7 @@ class HierarchicalEmbeddingModel(nnx.Module):
                     use_group_norm=settings.use_group_norm,
                     use_mean_subtraction=settings.use_mean_subtraction,
                     use_l2_norm=settings.use_l2_norm,
+                    use_mean_conv_for_downsampling=settings.use_mean_conv_for_downsampling,
                     rngs=rngs,
                 )
             )
@@ -306,8 +322,9 @@ class HierarchicalEmbeddingModel(nnx.Module):
             List of feature maps, one per level.
             Each level has shape (B, H_l, W_l, embed_dim)
         """
-        # Preprocess RGB to hidden_dim
-        x = self.preprocessor(x)
+        # Preprocess RGB to hidden_dim (if enabled)
+        if self.preprocessor is not None:
+            x = self.preprocessor(x)
 
         feature_maps = []
         for i, block in enumerate(self.blocks):
