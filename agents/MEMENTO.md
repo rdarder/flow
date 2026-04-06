@@ -63,9 +63,8 @@ Clarify implementation details: edge cases, failure modes, integration points. A
 
 - Write code, docs, tests
 - User reviews, you iterate
-- Update `progress.md` to reflect what was done.
 
-** Stop here. Present your changes and wait for user approval before committing.**
+** Stop here. Update `progress.md` before presenting changes. Wait for user approval before committing.**
 
 ### 5. Commit
 - Session ends with a git commit
