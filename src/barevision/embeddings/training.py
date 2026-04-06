@@ -69,25 +69,37 @@ class EmbeddingsTrainer:
             and (epoch % self.settings.validation.every_epochs) == 0
         )
 
-    def _maybe_run_validation(self, epoch: int, global_step: int):
-        if not self._should_validate(epoch):
-            return
+    def _maybe_validate_and_checkpoint(self, epoch: int, global_step: int):
+        should_validate = (
+            self.settings.validation.every_epochs > 0
+            and epoch % self.settings.validation.every_epochs == 0
+        )
+        should_checkpoint = (
+            self.settings.checkpoint.every_epochs > 0
+            and epoch % self.settings.checkpoint.every_epochs == 0
+        )
 
-        self.logger.log(f"\nRunning validation at epoch {epoch}...")
-        val_loss = self._run_validation()
-        self.logger.log(f"Validation loss: {val_loss:.6f}")
-        self.tensorboard.log_scalar("Loss/validation", val_loss, step=global_step)
+        if should_checkpoint:
+            self.logger.log(f"\nRunning validation at epoch {epoch}...")
+            # we always run a validation before checkpointing so we know the validation loss.
+            val_loss = self._run_validation(global_step)
+            self.checkpointer.save_epoch(self.model, epoch, val_loss)
+        elif should_validate:
+            # if we needed to both checkpoint and validate this was dealt with on the checkpoint case.
+            self.logger.log(f"\nRunning validation at epoch {epoch}...")
+            self._run_validation(global_step)
 
     def __call__(self):
         self._log_header()
         self.logger.log("")
 
-        global_step = self.checkpointer.maybe_restore(self.model)
+        self.checkpointer.maybe_restore(self.model)
         self._report_model_params()
 
+        global_step = 0
         for epoch in range(1, self.settings.training.epochs + 1):
             global_step = self._train_epoch(epoch, global_step)
-            self._maybe_run_validation(epoch, global_step)
+            self._maybe_validate_and_checkpoint(epoch, global_step)
 
         self.checkpointer.close()
         self.tensorboard.close()
@@ -106,25 +118,22 @@ class EmbeddingsTrainer:
         )
         epoch_start = time.time()
 
-        for epoch_step, (img1, img2, metadata) in enumerate(loader):
-            train_loss = self._train_step_and_maybe_log(
+        for batch_idx, (img1, img2, metadata) in enumerate(loader):
+            global_step += 1
+            step_in_epoch = batch_idx + 1  # 1-indexed
+            self._train_step_and_maybe_log(
                 epoch=epoch,
                 global_step=global_step,
+                step_in_epoch=step_in_epoch,
                 img1=img1,
                 img2=img2,
                 metadata=metadata,
                 epoch_start=epoch_start,
             )
-            self.checkpointer.save_step(
-                model=self.model,
-                step=global_step,
-                train_loss=train_loss,
-            )
-            global_step += 1
 
         return global_step
 
-    def _run_validation(self) -> float:
+    def _run_validation(self, step: int) -> float:
         loader = create_dataloader(
             self.settings.dataset,
             split="val",
@@ -147,33 +156,38 @@ class EmbeddingsTrainer:
         if num_batches == 0:
             return 0.0
 
-        avg_loss = total_loss / num_batches
-        return avg_loss
+        val_loss = total_loss / num_batches
+
+        self.logger.log(f"Validation loss: {val_loss:.6f}")
+        self.tensorboard.log_scalar("Loss/validation", val_loss, step=step)
+
+        return val_loss
 
     def _train_step_and_maybe_log(
         self,
         epoch: int,
         global_step: int,
+        step_in_epoch: int,
         img1: jnp.ndarray,
         img2: jnp.ndarray,
         metadata: list,
         epoch_start: float,
-    ) -> float:
+    ):
+        should_log = self._log_this_step(global_step)
+        should_visualize = self._should_log_visualizations(global_step)
 
         loss, aux = _compute_loss_and_grads(
             self.model,
             self.loss_fn_obj,
             self.optimizer,
             (img1, img2),
-            return_aux=self._log_this_step(global_step),
+            return_aux=should_log or should_visualize,
         )
 
-        if self._log_this_step(global_step):
-            self._log_progress(epoch, global_step, loss, aux, epoch_start, img1)
-        if self._should_log_visualizations(global_step):
+        if should_log:
+            self._log_progress(epoch, global_step, step_in_epoch, loss, aux, epoch_start, img1)
+        if should_visualize:
             self._log_visualizations(img1, img2, aux, metadata[0], global_step)
-
-        return loss
 
     def _log_this_step(self, step: int):
         return (
@@ -188,6 +202,7 @@ class EmbeddingsTrainer:
         self,
         epoch: int,
         global_step: int,
+        step_in_epoch: int,
         loss: float,
         aux: dict,
         epoch_start: float,
@@ -209,7 +224,7 @@ class EmbeddingsTrainer:
             self.settings.loss.spatial_variance.window_size,
         )
 
-        steps_per_sec = global_step / (time.time() - epoch_start)
+        steps_per_sec = step_in_epoch / (time.time() - epoch_start)
         self_var = float(aux["self_loss"])
         cross_var = float(aux["cross_loss"])
         self.logger.log(

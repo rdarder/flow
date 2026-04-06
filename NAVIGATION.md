@@ -18,7 +18,7 @@ Data loading for video frames.
 
 Embedding pyramid model, training loop, and spatial variance loss.
 
-**checkpointer.py:** Orbax CheckpointManager wrapper for embeddings training. Saves/loads model state with training-loss-based preservation policy. Exports: `CheckpointManagerWrapper`, `CheckpointSettings`.
+**checkpointer.py:** Orbax CheckpointManager wrapper for embeddings training. Epoch-based checkpointing with validation-loss-based preservation policy. Exports: `CheckpointManagerWrapper`, `CheckpointSettings`.
 
 **gaussian.py:** Gaussian kernel initializers for depthwise convolutions. Used for mean subtraction layer. Exports: `gaussian_kernel_2d`, `depthwise_gaussian_initializer`.
 

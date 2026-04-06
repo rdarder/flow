@@ -58,9 +58,9 @@ def create_smoke_test_settings() -> Settings:
             visualizations_every_steps=1,  # Visualize every step
         ),
         checkpoint=CheckpointSettings(
-            every_steps=2,  # Checkpoint every 2 steps
+            every_epochs=2,  # Checkpoint every 2 epochs
             location="test_checkpoints",
-            keep_best_n=2,  # Keep best 2 by training loss
+            keep_best_n=2,  # Keep best 2 by validation loss
         ),
         validation=ValidationSettings(
             every_epochs=2,  # Validate every 2 epochs
@@ -77,7 +77,7 @@ if __name__ == "__main__":
     print("Running full training loop with:")
     print("  - Logging every step")
     print("  - Visualizations every step")
-    print("  - Checkpointing every 2 steps")
+    print("  - Checkpointing every 2 epochs")
     print("  - Validation every 2 epochs")
     print()
 

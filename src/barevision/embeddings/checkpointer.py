@@ -6,7 +6,7 @@ Uses training loss for both periodic saving and best checkpoint preservation.
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Sequence, Optional
+from typing import Optional
 
 import orbax.checkpoint as ocp
 from orbax.checkpoint import checkpoint_managers as cm
@@ -15,10 +15,8 @@ from orbax.checkpoint.args import StandardSave, StandardRestore
 
 from orbax.checkpoint.checkpoint_managers import (
     PreservationPolicy,
-    SaveDecisionPolicy,
     PolicyCheckpointInfo,
-    DecisionContext,
-    FixedIntervalPolicy,
+    PreservationContext,
 )
 
 from barevision.utils.checks import check_value
@@ -30,22 +28,22 @@ class CheckpointSettings:
     """Checkpoint configuration for model persistence.
 
     Attributes:
-        every_steps: Save checkpoint every N steps (0 to disable periodic checkpointing)
+        every_epochs: Save checkpoint every N epochs (0 to disable)
         location: Base directory for checkpoints (default "checkpoints")
-        keep_best_n: Number of best checkpoints to keep based on training loss (0 to disable)
+        keep_best_n: Number of best checkpoints to keep based on validation loss (0 to disable)
         resume_from: Path to checkpoint to resume training from (optional)
-                     If provided, loads model weights and continues from saved step
+                     If provided, loads model weights only (training always starts from epoch 1)
     """
 
-    every_steps: int = 100
+    every_epochs: int = 1
     location: str = "checkpoints"
     keep_best_n: int = 3
     resume_from: Optional[Path] = None
 
     def __post_init__(self):
         check_value(
-            self.every_steps >= 0,
-            f"every_steps must be >= 0, got {self.every_steps}",
+            self.every_epochs >= 0,
+            f"every_epochs must be >= 0, got {self.every_epochs}",
         )
         check_value(self.location, "location cannot be empty")
         check_value(
@@ -68,117 +66,70 @@ class CheckpointManagerWrapper:
         # Create checkpoint directory
         self._checkpoint_dir = Path(settings.location).resolve() / run_name
 
-        # Setup preservation policy: keep best N by training loss
+        # Setup preservation policy: keep best N by validation loss
         preservation_policy = KeepBestLossN(
             n=self.settings.keep_best_n,
             mode="min",  # Lower loss is better
         )
 
-        save_policy = self.get_save_policy()
-
         # Create CheckpointManager
         self._manager = ocp.CheckpointManager(
             directory=self._checkpoint_dir,
             options=ocp.CheckpointManagerOptions(
-                save_decision_policy=save_policy,
                 preservation_policy=preservation_policy,
                 create=True,
                 enable_async_checkpointing=False,
             ),
         )
 
-    def get_save_policy(self) -> SaveDecisionPolicy:
-        if self.settings.every_steps > 0:
-            return FixedIntervalPolicy(interval=self.settings.every_steps)
-        return NeverSavePolicy()
-
-    def save_step(
+    def save_epoch(
         self,
         model: nnx.Module,
-        step: int,
-        train_loss: float,
+        epoch: int,
+        val_loss: float,
     ):
-        """Save a checkpoint with training loss.
+        """Save a checkpoint with validation loss.
 
-        The CheckpointManager decides internally whether to actually save
-        based on the save policy. Training loss is used for preservation
-        decisions (keeping the best N checkpoints).
+        Validation loss is used for preservation decisions (keeping the best N checkpoints).
 
         Args:
             model: Model to checkpoint
-            step: Global step number (1-indexed)
-            train_loss: Current training loss (used for preservation decisions)
+            epoch: Epoch number (1-indexed)
+            val_loss: Validation loss (used for preservation decisions)
         """
         graphdef, tree = nnx.split(model)
-        saved = self._manager.save(
-            step,
+        self._manager.save(
+            epoch,
             args=StandardSave(tree),
-            metrics={"train_loss": train_loss},
+            metrics={"val_loss": val_loss},
         )
+        self.logger.log(f"Checkpoint saved at epoch {epoch} (val_loss: {val_loss:.6f})")
 
-        if saved:
-            self.logger.log(f"Checkpoint saved at step {step} ")
 
-    def _to_tree(
-        self, model: nnx.Module, step: int = 1, epoch: int = 1, step_in_epoch: int = 1
-    ):
-        graphdef, model_state = nnx.split(model)
-        data = {
-            "model": model_state,
-            "step": step,
-            "epoch": epoch,
-            "step_in_epoch": step_in_epoch,
-        }
 
     def close(self):
         pass
 
-    def maybe_restore(self, model: nnx.Module) -> int:
-        """Restore model state from the latest checkpointed state..
+    def maybe_restore(self, model: nnx.Module):
+        """Restore model state from the latest checkpoint.
 
         Args:
             model: Model instance to restore into (must have compatible structure)
 
-        Returns:
-            Global step from checkpoint
+        Note:
+            Training always starts from epoch 1, step 1. Only model weights are restored.
         """
         if self.settings.resume_from is None:
-            return 1
+            return
         if not self.settings.resume_from.exists():
             raise FileNotFoundError(
                 f"Checkpoint not found: {self.settings.resume_from}"
             )
-        step = self._manager.latest_step()
         graphdef, tree = nnx.split(model)
         restored = self._manager.restore(step=None, args=StandardRestore(tree))
         nnx.update(model, restored)
 
-        return step
 
-    @staticmethod
-    def load_metadata(checkpoint_path: Path) -> dict[str, Any]:
-        """Extract metadata from a checkpoint without loading model state.
-
-        Args:
-            checkpoint_path: Path to checkpoint directory
-
-        Returns:
-            Dictionary with step, epoch, step_in_epoch
-        """
-        if not checkpoint_path.exists():
-            raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
-
-        checkpoint_path = Path(checkpoint_path).resolve()
-        checkpointer = ocp.PyTreeCheckpointer()
-        checkpoint_data = checkpointer.restore(
-            checkpoint_path, item=ocp.args.PyTreeRestore()
-        )
-
-        return {
-            "step": checkpoint_data.get("step"),
-            "epoch": checkpoint_data.get("epoch"),
-            "step_in_epoch": checkpoint_data.get("step_in_epoch"),
-        }
 
 
 class KeepBestLossN(PreservationPolicy):
@@ -211,22 +162,12 @@ class KeepBestLossN(PreservationPolicy):
         keep_indices = set(idx for idx, _ in scored[: self._n])
         return [i in keep_indices for i in range(len(checkpoints))]
 
-    # Score each checkpoint by loss
+    # Score each checkpoint by validation loss
     def _get_score(self, ckpt: cm.PolicyCheckpointInfo) -> float:
-        if ckpt.metrics is None or "train_loss" not in ckpt.metrics:
+        if ckpt.metrics is None or "val_loss" not in ckpt.metrics:
             # No loss = worst score (will be deleted first)
             return float("inf")
-        return ckpt.metrics["train_loss"]
+        return ckpt.metrics["val_loss"]
 
 
-class NeverSavePolicy(SaveDecisionPolicy):
-    """Save policy that never saves. Used when every_steps=0."""
 
-    def should_save(
-        self,
-        step: PolicyCheckpointInfo,
-        previous_steps: Sequence[PolicyCheckpointInfo],
-        *,
-        context: DecisionContext,
-    ) -> bool:
-        return False

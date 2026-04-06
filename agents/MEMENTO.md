@@ -63,7 +63,7 @@ Clarify implementation details: edge cases, failure modes, integration points. A
 
 - Write code, docs, tests
 - User reviews, you iterate
-- Update `progress.md` to reflect new state (edit as a whole, don't append)
+- Update `progress.md` to reflect what was done.
 
 ** Stop here. Present your changes and wait for user approval before committing.**
 
@@ -80,9 +80,12 @@ Clarify implementation details: edge cases, failure modes, integration points. A
 - Optional bullets: behavior details, implementation notes
 - Avoid lists of synthetic artifact changes: "created module something.py; added two tests". 
 - If relevant, mention how to experience the changes (running with a certain configuration, or how to tell that something changed by using the software)
+- progress.md and changes.md are not commited. they're explicitly in .gitignore.
 
 ### Progress.md
-- Describe behavior, not artifacts
-- Rewrite to reflect current state (anti-changelog)
-- The goal of `progress.md` is that in a new session, you can read the code, changes.md and progress.md and determine what is still remaining from changes.md
-
+- **Scope:** Document only what changed during this changes.md cycle. Do not document pre-existing system behavior.
+- **Net effect, not chronology:** If session 1 does A, session 2 does B, session 3 undoes A, progress.md says "B" — not "A, then B, then not A".
+- **Own words, not checkboxes:** Don't list changes.md items as done/pending. Describe the actual state in behavioral terms, including any deviations from the original plan.
+- **No "remaining" lists:** Do not track what's left to do. The gap between changes.md (desired) and progress.md (accomplished) must be computed fresh each session by reading both documents. This prevents drift and forces real understanding.
+- **Rewrite, don't append:** Read progress.md and edit it to reflect the new accumulated state. Don't just add a section for your session.
+- **Describe behavior, not artifacts:** Focus on what the system does, not what files were created.
