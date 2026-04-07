@@ -28,6 +28,7 @@ Design Rationale:
     - L2 Norm: Prevents magnitude exploitation of spatial variance loss
 
 FLOPs per pixel (per level): ~512 (vs. ~2048 for previous architecture)
+Parameters: ~1,496 (down from ~7,248)
 """
 
 from typing import List, Tuple
@@ -95,12 +96,14 @@ class EmbeddingBlock(nnx.Module):
 
         # PW Project: Grouped 1×1, dw_channels → embed_dim
         # Each group independently projects (dw_channels/project_groups) → (embed_dim/project_groups)
+        # use_bias=False: L2 normalization makes bias redundant
         self.pw_project = nnx.Conv(
             in_features=dw_channels,
             out_features=settings.embed_dim,
             kernel_size=(1, 1),
             padding="VALID",
             feature_group_count=settings.project_groups,
+            use_bias=False,
             rngs=rngs,
         )
 

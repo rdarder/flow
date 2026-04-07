@@ -182,14 +182,14 @@ class TestHierarchicalEmbeddingModel:
         #     Other blocks: 16*4 + 4 = 68
         #   DW (4 ch × 8 = 32 filters, depthwise 3×3):
         #     32 * 9 + 32 = 320
-        #   PW Project (32→16, 4 groups = 4× (8→4)):
-        #     4 * (8*4) + 16 = 144
-        #   Per block (first): 16 + 320 + 144 = 480
-        #   Per block (other): 68 + 320 + 144 = 532
+        #   PW Project (32→16, 4 groups = 4× (8→4)), no bias:
+        #     4 * (8*4) + 0 = 128
+        #   Per block (first): 16 + 320 + 128 = 474
+        #   Per block (other): 68 + 320 + 128 = 516
         #
-        # Total: 480 + 532 + 532 = 1544
+        # Total: 464 + 516 + 516 = 1496
 
-        assert param_count == 1544, f"Expected 1544 parameters, got {param_count}"
+        assert param_count == 1496, f"Expected 1496 parameters, got {param_count}"
 
     def test_gradient_flow_full_model(self):
         """Test that gradients flow through the full model."""
