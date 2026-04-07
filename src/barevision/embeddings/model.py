@@ -34,6 +34,7 @@ Universal Inverted Bottleneck (UIB) block structure:
 
 Note: VALID padding throughout. Each conv followed by GroupNorm + ReLU.
       L2 normalization on level outputs prevents softmax collapse.
+      Downsampling convolutions are initialized with Gaussian kernels for spatial averaging.
 """
 
 from dataclasses import dataclass
@@ -41,6 +42,8 @@ from typing import List, Tuple
 
 import jax.numpy as jnp
 from flax import nnx
+
+from barevision.embeddings.gaussian import depthwise_gaussian_initializer
 
 
 @dataclass(frozen=True)
@@ -54,6 +57,7 @@ class UIBConfig:
         use_dw_before_expand: If True, add DW conv before expansion
         use_dw_after_expand: If True, add DW conv after expansion
         downsample_after: If True, add 3×3 stride=2 DW conv at end
+        downsample_gaussian_sigma: Sigma for Gaussian kernel initialization of downsample conv (default 1.0)
         use_l2_norm: If True, L2-normalize output
     """
 
@@ -63,6 +67,7 @@ class UIBConfig:
     use_dw_before_expand: bool = True
     use_dw_after_expand: bool = True
     downsample_after: bool = False
+    downsample_gaussian_sigma: float = 1.0
     use_l2_norm: bool = False
 
     def output_size(self, input_size: int) -> int:
@@ -329,6 +334,7 @@ class UniversalInvertedBlock(nnx.Module):
                 strides=(2, 2),
                 padding="VALID",
                 feature_group_count=config.out_channels,  # Depthwise
+                kernel_init=depthwise_gaussian_initializer(config.downsample_gaussian_sigma),
                 rngs=rngs,
             )
             self.norm_downsample = nnx.GroupNorm(
