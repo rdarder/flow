@@ -2,36 +2,42 @@
 
 Multi-scale feature pyramid for coarse-to-fine patch matching.
 
-Simplified Architecture (3 identical levels):
+Architecture (MobileNet V4-inspired Universal Inverted Blocks):
     Input: (B, H, W, 3) RGB
       ↓
-    Block0: Compact(3→4) → DW×8(stride=2) → Project(32→16, 4g) → L2
-      → (B, (H-3)//2+1, (W-3)//2+1, 16)
+    Level 0:
+      UIB_0: DW(3→3) → PW(3→32) → DW(32→32) → PW(32→16)
+      UIB_1: DW(16→16) → PW(16→32) → DW(32→32) → PW(32→16) → Downsample → L2
+      → output_0: (B, (H-9)//2, (W-9)//2, 16)
       ↓
-    Block1: Compact(16→4) → DW×8(stride=2) → Project(32→16, 4g) → L2
-      → (B, (H'-3)//2+1, (W'-3)//2+1, 16)
+    Level 1:
+      UIB_0: DW(16→16) → PW(16→32) → DW(32→32) → PW(32→16)
+      UIB_1: DW(16→16) → PW(16→32) → DW(32→32) → PW(32→16) → Downsample → L2
+      → output_1: (B, (H'-9)//2, (W'-9)//2, 16)
       ↓
-    Block2: Compact(16→4) → DW×8(stride=2) → Project(32→16, 4g) → L2
-      → (B, (H''-3)//2+1, (W''-3)//2+1, 16)
+    Level 2:
+      UIB_0: DW(16→16) → PW(16→32) → DW(32→32) → PW(32→16)
+      UIB_1: DW(16→16) → PW(16→32) → DW(32→32) → PW(32→16) → Downsample → L2
+      → output_2: (B, (H''-9)//2, (W''-9)//2, 16)
 
 Output: List of feature maps [Level_0, Level_1, Level_2]
         Each level has 16 channels, spatial dimensions halve at each level.
 
-Note: All blocks are identical. No preprocessor, no mean subtraction, no GroupNorm.
-      L2 normalization on output is REQUIRED to prevent softmax collapse.
-      VALID padding throughout. Stride=2 in depthwise conv handles downsampling.
+Universal Inverted Block (UIB) structure:
+    - DW before expand (optional): 3×3 VALID, preserves channels
+    - PW expand: 1×1 VALID, expands to 32 channels
+    - DW after expand (optional): 3×3 VALID, preserves expanded channels
+    - PW compress: 1×1 VALID, compresses to output channels (16)
+    - Downsample (optional): 3×3 stride=2 VALID
+    - GroupNorm + ReLU after each conv
+    - L2 norm on output (configurable, default True for last UIB of each level)
 
-Design Rationale:
-    - PW Compact (dense): Mixes input channels, reduces redundancy (3→4 or 16→4)
-    - DW ×8: Eight different 3×3 spatial filters per compacted channel → 32 feature maps
-    - PW Project (grouped): Compacts spatial responses back to 16D embedding
-    - L2 Norm: Prevents magnitude exploitation of spatial variance loss
-
-FLOPs per pixel (per level): ~512 (vs. ~2048 for previous architecture)
-Parameters: ~1,496 (down from ~7,248)
+Note: VALID padding throughout. Each conv followed by GroupNorm + ReLU.
+      L2 normalization on level outputs prevents softmax collapse.
 """
 
-from typing import List, Tuple
+from dataclasses import dataclass
+from typing import List, Optional
 
 import jax.numpy as jnp
 from flax import nnx
@@ -39,97 +45,188 @@ from flax import nnx
 from barevision.embeddings.settings import ModelSettings
 
 
-class EmbeddingBlock(nnx.Module):
-    """Embedding block for pyramid levels.
+@dataclass(frozen=True)
+class UIBConfig:
+    """Configuration for a Universal Inverted Block.
 
-    Simplified architecture: Compact → Spatial (multi-filter, stride=2) → Project → L2
+    Attributes:
+        in_channels: Input channel count
+        out_channels: Output channel count
+        expanded_channels: Channel count after expansion (typically 32)
+        use_dw_before_expand: If True, add DW conv before expansion
+        use_dw_after_expand: If True, add DW conv after expansion
+        downsample_after: If True, add 3×3 stride=2 DW conv at end
+        use_l2_norm: If True, L2-normalize output
+    """
 
-    Input: (B, H, W, in_channels)  # 3 for first block, 16 for others
-    Output: (B, (H-3)//2+1, (W-3)//2+1, embed_dim)
+    in_channels: int
+    out_channels: int
+    expanded_channels: int = 32
+    use_dw_before_expand: bool = True
+    use_dw_after_expand: bool = True
+    downsample_after: bool = False
+    use_l2_norm: bool = False
 
-    Design:
-        1. PW Compact: Dense 1×1 convolution compresses channels (in_ch → 4)
-        2. DW ×8: Depthwise 3×3 with 8 filters per channel, stride=2, VALID padding
-        3. PW Project: Grouped 1×1 projection (32 → 16, 4 groups)
-        4. L2 Norm: Required to prevent softmax collapse
+
+class UniversalInvertedBlock(nnx.Module):
+    """Universal Inverted Block (UIB) inspired by MobileNet V4.
+
+    Flexible block with optional DW convs before/after expansion,
+    optional downsampling, and configurable L2 normalization.
+
+    Structure:
+        Input
+          ↓
+        [DW 3×3] → GN → ReLU         (if use_dw_before_expand)
+          ↓
+        PW Expand 1×1 → GN → ReLU
+          ↓
+        [DW 3×3] → GN → ReLU         (if use_dw_after_expand)
+          ↓
+        PW Compress 1×1 → GN → ReLU
+          ↓
+        [DW 3×3 stride=2] → GN → ReLU  (if downsample_after)
+          ↓
+        [L2 norm]                      (if use_l2_norm)
+        Output
+
+    All convolutions use VALID padding.
     """
 
     def __init__(
         self,
-        in_channels: int,
-        settings: ModelSettings,
+        config: UIBConfig,
         *,
         rngs: nnx.Rngs,
     ):
-        """Initialize EmbeddingBlock.
+        """Initialize UniversalInvertedBlock.
 
         Args:
-            in_channels: Input channels (3 for RGB on first block, 16 for others)
-            settings: Model architecture settings
+            config: UIB configuration
             rngs: NNX RNGs for parameter initialization
         """
-        self.settings = settings
-        self.in_channels = in_channels
+        self.config = config
 
-        # PW Compact: Dense 1×1, in_channels → compact_channels
-        self.pw_compact = nnx.Conv(
-            in_features=in_channels,
-            out_features=settings.compact_channels,
+        # DW before expand (optional)
+        if config.use_dw_before_expand:
+            self.dw_before = nnx.Conv(
+                in_features=config.in_channels,
+                out_features=config.in_channels,
+                kernel_size=(3, 3),
+                padding="VALID",
+                feature_group_count=config.in_channels,  # Depthwise
+                rngs=rngs,
+            )
+            self.norm_dw_before = nnx.GroupNorm(
+                num_groups=max(1, config.in_channels // 4),
+                num_features=config.in_channels,
+                rngs=rngs,
+            )
+
+        # PW Expand: 1×1, in_channels → expanded_channels
+        self.pw_expand = nnx.Conv(
+            in_features=config.in_channels,
+            out_features=config.expanded_channels,
             kernel_size=(1, 1),
             padding="VALID",
-            feature_group_count=1,  # Dense mixing
+            feature_group_count=1,  # Dense
+            rngs=rngs,
+        )
+        self.norm_expand = nnx.GroupNorm(
+            num_groups=max(1, config.expanded_channels // 4),
+            num_features=config.expanded_channels,
             rngs=rngs,
         )
 
-        # Depthwise: 3×3, stride=2, VALID padding
-        # Each of the compact_channels gets depthwise_multiplier filters
-        dw_channels = settings.compact_channels * settings.depthwise_multiplier
-        self.dw = nnx.Conv(
-            in_features=settings.compact_channels,
-            out_features=dw_channels,
-            kernel_size=(3, 3),
-            strides=(2, 2),
-            padding="VALID",
-            feature_group_count=settings.compact_channels,  # Depthwise
-            rngs=rngs,
-        )
+        # DW after expand (optional)
+        if config.use_dw_after_expand:
+            self.dw_after = nnx.Conv(
+                in_features=config.expanded_channels,
+                out_features=config.expanded_channels,
+                kernel_size=(3, 3),
+                padding="VALID",
+                feature_group_count=config.expanded_channels,  # Depthwise
+                rngs=rngs,
+            )
+            self.norm_dw_after = nnx.GroupNorm(
+                num_groups=max(1, config.expanded_channels // 4),
+                num_features=config.expanded_channels,
+                rngs=rngs,
+            )
 
-        # PW Project: Grouped 1×1, dw_channels → embed_dim
-        # Each group independently projects (dw_channels/project_groups) → (embed_dim/project_groups)
-        # use_bias=False: L2 normalization makes bias redundant
-        self.pw_project = nnx.Conv(
-            in_features=dw_channels,
-            out_features=settings.embed_dim,
+        # PW Compress: 1×1, expanded_channels → out_channels
+        self.pw_compress = nnx.Conv(
+            in_features=config.expanded_channels,
+            out_features=config.out_channels,
             kernel_size=(1, 1),
             padding="VALID",
-            feature_group_count=settings.project_groups,
-            use_bias=False,
+            feature_group_count=1,  # Dense
             rngs=rngs,
         )
+        self.norm_compress = nnx.GroupNorm(
+            num_groups=max(1, config.out_channels // 4),
+            num_features=config.out_channels,
+            rngs=rngs,
+        )
+
+        # Downsample (optional): 3×3 stride=2 DW
+        if config.downsample_after:
+            self.downsample = nnx.Conv(
+                in_features=config.out_channels,
+                out_features=config.out_channels,
+                kernel_size=(3, 3),
+                strides=(2, 2),
+                padding="VALID",
+                feature_group_count=config.out_channels,  # Depthwise
+                rngs=rngs,
+            )
+            self.norm_downsample = nnx.GroupNorm(
+                num_groups=max(1, config.out_channels // 4),
+                num_features=config.out_channels,
+                rngs=rngs,
+            )
 
     def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
-        """Forward pass through EmbeddingBlock.
+        """Forward pass through UIB.
 
         Args:
             x: Input tensor of shape (B, H, W, in_channels)
 
         Returns:
-            Tensor of shape (B, (H-3)//2+1, (W-3)//2+1, embed_dim)
+            Tensor of shape (B, H', W', out_channels)
         """
-        # PW Compact: channel mixing, reduce redundancy
-        x = self.pw_compact(x)
-        x = nnx.gelu(x)
+        # DW before expand
+        if self.config.use_dw_before_expand:
+            x = self.dw_before(x)
+            x = self.norm_dw_before(x)
+            x = nnx.relu(x)
 
-        # Depthwise: spatial filtering with downsampling
-        x = self.dw(x)
-        x = nnx.gelu(x)
+        # PW Expand
+        x = self.pw_expand(x)
+        x = self.norm_expand(x)
+        x = nnx.relu(x)
 
-        # PW Project: grouped channel mixing to embedding dim
-        x = self.pw_project(x)
+        # DW after expand
+        if self.config.use_dw_after_expand:
+            x = self.dw_after(x)
+            x = self.norm_dw_after(x)
+            x = nnx.relu(x)
 
-        # L2 normalization: REQUIRED to prevent softmax collapse
-        norm = jnp.linalg.norm(x, axis=-1, keepdims=True)
-        x = x / (norm + 1e-8)
+        # PW Compress
+        x = self.pw_compress(x)
+        x = self.norm_compress(x)
+        x = nnx.relu(x)
+
+        # Downsample
+        if self.config.downsample_after:
+            x = self.downsample(x)
+            x = self.norm_downsample(x)
+            x = nnx.relu(x)
+
+        # L2 normalization (optional)
+        if self.config.use_l2_norm:
+            norm = jnp.linalg.norm(x, axis=-1, keepdims=True)
+            x = x / (norm + 1e-8)
 
         return x
 
@@ -137,8 +234,14 @@ class EmbeddingBlock(nnx.Module):
 class HierarchicalEmbeddingModel(nnx.Module):
     """Hierarchical embedding model with multi-scale feature pyramid.
 
-    Three identical EmbeddingBlocks at successive resolutions.
-    Each block downsamples by ~2× via stride=2 depthwise convolution.
+    Builds a 3-level pyramid with 2 UIBs per level.
+    Each level downsamples once (on the second UIB).
+    Each level outputs 16D L2-normalized embeddings.
+
+    Default configuration (hardcoded for now):
+        Level 0: UIB_0(3→16, no downsample) → UIB_1(16→16, downsample, L2)
+        Level 1: UIB_0(16→16, no downsample) → UIB_1(16→16, downsample, L2)
+        Level 2: UIB_0(16→16, no downsample) → UIB_1(16→16, downsample, L2)
     """
 
     def __init__(
@@ -147,20 +250,53 @@ class HierarchicalEmbeddingModel(nnx.Module):
         *,
         rngs: nnx.Rngs,
     ):
-        self.settings = settings
+        """Initialize HierarchicalEmbeddingModel.
 
-        # Build pyramid levels - all blocks are identical
-        self.blocks = nnx.List()
-        for i in range(settings.num_levels):
-            is_first = i == 0
-            in_channels = 3 if is_first else settings.embed_dim
-            self.blocks.append(
-                EmbeddingBlock(
+        Args:
+            settings: Model settings (embed_dim, num_levels)
+            rngs: NNX RNGs for parameter initialization
+        """
+        self.settings = settings
+        self.expanded_channels = 32
+
+        # Build levels: each level is a list of 2 UIBs
+        self.levels = nnx.List()
+        for level_idx in range(settings.num_levels):
+            level_blocks = nnx.List()
+
+            for uib_idx in range(2):
+                is_first_uib = uib_idx == 0
+                is_last_uib = uib_idx == 1
+                is_first_level = level_idx == 0
+
+                # Determine input channels
+                if is_first_level and is_first_uib:
+                    in_channels = 3
+                else:
+                    in_channels = settings.embed_dim
+
+                # Determine output channels
+                out_channels = settings.embed_dim
+
+                # Downsample on second UIB of each level
+                downsample_after = is_last_uib
+
+                # L2 norm on last UIB of each level
+                use_l2_norm = is_last_uib
+
+                config = UIBConfig(
                     in_channels=in_channels,
-                    settings=settings,
-                    rngs=rngs,
+                    out_channels=out_channels,
+                    expanded_channels=self.expanded_channels,
+                    use_dw_before_expand=True,
+                    use_dw_after_expand=True,
+                    downsample_after=downsample_after,
+                    use_l2_norm=use_l2_norm,
                 )
-            )
+
+                level_blocks.append(UniversalInvertedBlock(config, rngs=rngs))
+
+            self.levels.append(level_blocks)
 
     def __call__(self, x: jnp.ndarray) -> List[jnp.ndarray]:
         """Forward pass through pyramid.
@@ -173,8 +309,13 @@ class HierarchicalEmbeddingModel(nnx.Module):
             Each level has shape (B, H_l, W_l, embed_dim)
         """
         feature_maps = []
-        for block in self.blocks:
-            x = block(x)
+
+        for level in self.levels:
+            # Run through all UIBs in this level
+            for uib in level:
+                x = uib(x)
+
+            # Collect output (last UIB of level, already L2-normalized)
             feature_maps.append(x)
 
         return feature_maps

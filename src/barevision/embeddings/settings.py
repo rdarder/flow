@@ -91,24 +91,16 @@ class LoggingSettings:
 class ModelSettings:
     """Model architecture settings for embeddings training.
 
-    Simplified architecture: Compact → Depthwise (stride=2) → Project → L2
-    All blocks are identical, no preprocessor, no mean subtraction.
+    Universal Inverted Block (UIB) based architecture.
+    Each level has 2 UIBs, second UIB downsamples.
 
     Attributes:
-        embed_dim: Output embedding dimension per level
-        compact_channels: Channels after PW compact (input compressed before spatial filtering)
-        depthwise_multiplier: Spatial filters per compacted channel (e.g., 8 means 8 different 3x3 filters)
-        project_groups: Number of groups for PW projection (each group is independent 8→4 conv)
-        num_levels: Number of pyramid levels
-        num_groups: Alias for project_groups (for backward compatibility)
+        embed_dim: Output embedding dimension per level (default 16)
+        num_levels: Number of pyramid levels (default 3)
     """
 
     embed_dim: int = 16
-    compact_channels: int = 4
-    depthwise_multiplier: int = 8
-    project_groups: int = 4
     num_levels: int = 3
-    num_groups: int = 4  # Alias for project_groups
 
     def __post_init__(self):
         check_value(
@@ -116,18 +108,6 @@ class ModelSettings:
         )
         check_value(
             self.embed_dim >= 1, f"embed_dim must be >= 1, got {self.embed_dim}"
-        )
-        check_value(
-            self.compact_channels >= 1,
-            f"compact_channels must be >= 1, got {self.compact_channels}",
-        )
-        check_value(
-            self.depthwise_multiplier >= 1,
-            f"depthwise_multiplier must be >= 1, got {self.depthwise_multiplier}",
-        )
-        check_value(
-            self.project_groups >= 1,
-            f"project_groups must be >= 1, got {self.project_groups}",
         )
 
 

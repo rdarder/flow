@@ -262,19 +262,17 @@ class EmbeddingsTrainer:
         self.logger.log("")
         self.logger.log(f"Pyramid levels: {self.settings.model.num_levels}")
         self.logger.log(f"Embedding dim: {self.settings.model.embed_dim}")
-        self.logger.log(f"Compact channels: {self.settings.model.compact_channels}")
-        self.logger.log(f"Depthwise multiplier: {self.settings.model.depthwise_multiplier}")
-        self.logger.log(f"Project groups: {self.settings.model.project_groups}")
         self.logger.log(
             f"Window size: {self.settings.loss.spatial_variance.window_size}×{self.settings.loss.spatial_variance.window_size}"
         )
         self.logger.log("")
-        self.logger.log("Model: Simplified (Compact → DW×8 → Project → L2)")
-        self.logger.log("  - All blocks identical")
-        self.logger.log("  - No preprocessor")
-        self.logger.log("  - No mean subtraction")
-        self.logger.log("  - No GroupNorm")
-        self.logger.log("  - L2 norm on output (required)")
+        self.logger.log("Model: Universal Inverted Block (UIB)")
+        self.logger.log("  - 2 UIBs per level")
+        self.logger.log("  - Second UIB downsamples")
+        self.logger.log("  - DW before/after expand")
+        self.logger.log("  - PW expand/compress")
+        self.logger.log("  - GroupNorm + ReLU after each conv")
+        self.logger.log("  - L2 norm on level outputs")
 
         image_size = image.image_size(
             self.settings.dataset.coarse_grid_size,
