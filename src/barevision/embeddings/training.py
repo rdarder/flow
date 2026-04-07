@@ -14,6 +14,8 @@ from barevision.dataset.video import create_dataloader
 from barevision.embeddings.model import (
     count_parameters,
     HierarchicalEmbeddingModel,
+    HierarchicalModelConfig,
+    make_default_model_config,
 )
 from barevision.embeddings.spatial_losses import HierarchicalSpatialVarianceLoss
 from barevision.embeddings.visualization import log_visualizations
@@ -35,8 +37,10 @@ class EmbeddingsTrainer:
             strict=True,
         )
 
+        # Create model from hardcoded config
+        self.model_config = make_default_model_config()
         rngs = nnx.Rngs(settings.training.seed)
-        embeddings_model = HierarchicalEmbeddingModel(settings.model, rngs=rngs)
+        embeddings_model = self.model_config.build_model(rngs=rngs)
         self.loss_fn_obj = HierarchicalSpatialVarianceLoss(
             settings.loss.spatial_variance
         )
@@ -109,9 +113,14 @@ class EmbeddingsTrainer:
 
     def _train_epoch(self, epoch: int, global_step: int):
         epoch_seed = self.settings.training.seed + epoch
+        image_size = self.model_config.target_to_input(
+            self.settings.dataset.coarse_grid_size,
+            self.settings.dataset.window_size,
+        )
 
         loader = create_dataloader(
             self.settings.dataset,
+            image_size=image_size,
             split="train",
             shuffle=True,
             random_seed=epoch_seed,
@@ -134,8 +143,13 @@ class EmbeddingsTrainer:
         return global_step
 
     def _run_validation(self, step: int) -> float:
+        image_size = self.model_config.target_to_input(
+            self.settings.dataset.coarse_grid_size,
+            self.settings.dataset.window_size,
+        )
         loader = create_dataloader(
             self.settings.dataset,
+            image_size=image_size,
             split="val",
             shuffle=False,
             random_seed=self.settings.training.seed,
@@ -260,8 +274,8 @@ class EmbeddingsTrainer:
         self.logger.log("EMBEDDINGS TRAINING (Spatial Variance Loss)")
         self.logger.log("=" * 60)
         self.logger.log("")
-        self.logger.log(f"Pyramid levels: {self.settings.model.num_levels}")
-        self.logger.log(f"Embedding dim: {self.settings.model.embed_dim}")
+        self.logger.log(f"Pyramid levels: {len(self.model_config.levels)}")
+        self.logger.log(f"Embedding dim: 16")
         self.logger.log(
             f"Window size: {self.settings.loss.spatial_variance.window_size}×{self.settings.loss.spatial_variance.window_size}"
         )
@@ -274,7 +288,7 @@ class EmbeddingsTrainer:
         self.logger.log("  - GroupNorm + ReLU after each conv")
         self.logger.log("  - L2 norm on level outputs")
 
-        image_size = self.settings.model.target_to_input(
+        image_size = self.model_config.target_to_input(
             self.settings.dataset.coarse_grid_size,
             self.settings.dataset.window_size,
         )

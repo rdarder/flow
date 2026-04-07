@@ -12,6 +12,7 @@ from barevision.embeddings.model import (
     LevelConfig,
     UIBConfig,
     count_parameters,
+    make_default_model_config,
 )
 
 
@@ -183,7 +184,7 @@ class TestHierarchicalModelConfig:
 
     def test_output_size_three_levels(self):
         """Test forward size calculation for 3-level model."""
-        config = HierarchicalModelConfig(embed_dim=16, num_levels=3)
+        config = make_default_model_config()
         result = config.output_size(137)
         # Level 0: 137 → 133 → 64
         # Level 1: 64 → 60 → 27
@@ -192,7 +193,7 @@ class TestHierarchicalModelConfig:
 
     def test_required_input_size_three_levels(self):
         """Test inverse size calculation for 3-level model."""
-        config = HierarchicalModelConfig(embed_dim=16, num_levels=3)
+        config = make_default_model_config()
         result = config.required_input_size(9)
         # Inverse of forward: should recover 137 (or close due to floor division)
         assert result <= 137, f"Expected <= 137, got {result}"
@@ -201,14 +202,14 @@ class TestHierarchicalModelConfig:
 
     def test_target_to_input(self):
         """Test target_to_input method."""
-        config = HierarchicalModelConfig(embed_dim=16, num_levels=3)
+        config = make_default_model_config()
         h, w = config.target_to_input(coarsest_grid_size=1, window_size=16)
         assert h == w, "Should be square"
         assert h > 16, "Input should be larger than target coarse dim"
 
     def test_roundtrip_consistency(self):
         """Test that forward and inverse are consistent for full model."""
-        config = HierarchicalModelConfig(embed_dim=16, num_levels=3)
+        config = make_default_model_config()
         input_size = 137
         output = config.output_size(input_size)
         recovered = config.required_input_size(output)
@@ -218,7 +219,7 @@ class TestHierarchicalModelConfig:
 
     def test_build_model(self):
         """Test that config can build a model."""
-        config = HierarchicalModelConfig(embed_dim=16, num_levels=3)
+        config = make_default_model_config()
         model = config.build_model(rngs=nnx.Rngs(jr.PRNGKey(0)))
         assert isinstance(model, HierarchicalEmbeddingModel)
         assert len(model.levels) == 3
@@ -413,7 +414,7 @@ class TestHierarchicalEmbeddingModel:
 
     def test_pyramid_output_shapes(self):
         """Test that model returns list of feature maps with correct shapes."""
-        config = HierarchicalModelConfig(embed_dim=16, num_levels=3)
+        config = make_default_model_config()
         model = config.build_model(rngs=nnx.Rngs(jr.PRNGKey(0)))
 
         # Default config: 2 UIBs per level, second downsamples
@@ -449,7 +450,30 @@ class TestHierarchicalEmbeddingModel:
 
     def test_pyramid_output_single_level(self):
         """Test model with single level."""
-        config = HierarchicalModelConfig(embed_dim=16, num_levels=1)
+        # Build custom single-level config
+        level_config = LevelConfig(
+            level_idx=0,
+            uib_configs=(
+                UIBConfig(
+                    in_channels=3,
+                    out_channels=16,
+                    expanded_channels=32,
+                    use_dw_before_expand=True,
+                    use_dw_after_expand=True,
+                    downsample_after=False,
+                ),
+                UIBConfig(
+                    in_channels=16,
+                    out_channels=16,
+                    expanded_channels=32,
+                    use_dw_before_expand=True,
+                    use_dw_after_expand=True,
+                    downsample_after=True,
+                    use_l2_norm=True,
+                ),
+            ),
+        )
+        config = HierarchicalModelConfig(levels=(level_config,))
         model = config.build_model(rngs=nnx.Rngs(jr.PRNGKey(0)))
 
         # Single level: UIB_0 (no downsample) → UIB_1 (downsample)
@@ -463,7 +487,7 @@ class TestHierarchicalEmbeddingModel:
 
     def test_batch_processing(self):
         """Test batch processing."""
-        config = HierarchicalModelConfig(embed_dim=16, num_levels=3)
+        config = make_default_model_config()
         model = config.build_model(rngs=nnx.Rngs(jr.PRNGKey(0)))
 
         x = jnp.ones((4, 137, 137, 3))
@@ -475,7 +499,7 @@ class TestHierarchicalEmbeddingModel:
 
     def test_parameter_count(self):
         """Test parameter counting for UIB-based model."""
-        config = HierarchicalModelConfig(embed_dim=16, num_levels=3)
+        config = make_default_model_config()
         model = config.build_model(rngs=nnx.Rngs(jr.PRNGKey(0)))
         param_count = count_parameters(model)
 
@@ -487,7 +511,7 @@ class TestHierarchicalEmbeddingModel:
         """Test that gradients flow through the full model."""
         from jax import grad
 
-        config = HierarchicalModelConfig(embed_dim=16, num_levels=3)
+        config = make_default_model_config()
         model = config.build_model(rngs=nnx.Rngs(jr.PRNGKey(0)))
         x = jnp.ones((1, 137, 137, 3))
 
@@ -516,7 +540,7 @@ class TestHierarchicalEmbeddingModel:
 
     def test_l2_norm_on_level_outputs(self):
         """Test that level outputs are L2-normalized."""
-        config = HierarchicalModelConfig(embed_dim=16, num_levels=3)
+        config = make_default_model_config()
         model = config.build_model(rngs=nnx.Rngs(jr.PRNGKey(0)))
 
         x = jnp.ones((1, 137, 137, 3)) * 10.0

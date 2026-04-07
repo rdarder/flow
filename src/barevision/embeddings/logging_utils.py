@@ -361,17 +361,10 @@ def print_header(settings: Settings):
     print("OPTICAL FLOW TRAINING")
     print("=" * 60)
     print()
-    print(f"Pyramid levels: {settings.model.num_levels}")
     print(
         f"Coarse grid: {settings.dataset.coarse_grid_size}×{settings.dataset.coarse_grid_size}"
     )
     print(f"Window size: {settings.dataset.window_size}×{settings.dataset.window_size}")
-    print(f"Embedding dim: {settings.model.embed_dim}")
-    image_size = settings.model.target_to_input(
-        settings.dataset.coarse_grid_size,
-        settings.dataset.window_size,
-    )
-    print(f"Image size: {image_size}")
     print()
     print(f"Epochs: {settings.training.epochs}")
     print(f"Batch size: {settings.dataset.batch_size}")

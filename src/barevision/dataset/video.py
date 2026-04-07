@@ -18,7 +18,7 @@ import jax.random as jr
 import numpy as np
 from PIL import Image
 
-from barevision.embeddings.model import HierarchicalModelConfig
+from typing import Tuple
 from barevision.utils.path import get_datasets_dir
 
 
@@ -252,6 +252,7 @@ def _shuffle_indices(
 
 def create_dataloader(
     dataset_settings,
+    image_size: Tuple[int, int],
     split: str,
     shuffle: bool = True,
     random_seed: int | None = None,
@@ -260,6 +261,7 @@ def create_dataloader(
 
     Args:
         dataset_settings: DatasetSettings object with batch_size, img_size, max_samples
+        image_size: Target image size (height, width) - calculated by caller
         split: 'train' or 'val'
         shuffle: Whether to shuffle the dataset (default True for train)
         random_seed: Random seed for shuffling (for reproducibility)
@@ -267,16 +269,6 @@ def create_dataloader(
     Yields:
         Tuple of (img1_batch, img2_batch, metadata_batch)
     """
-
-    # Create minimal config to calculate image size
-    model_config = HierarchicalModelConfig(
-        embed_dim=16,
-        num_levels=dataset_settings.num_levels,
-    )
-    image_size = model_config.target_to_input(
-        dataset_settings.coarse_grid_size,
-        dataset_settings.window_size,
-    )
     dataset = VideoFrameDataset(
         split=split,
         min_frame_distance=dataset_settings.min_frame_distance,

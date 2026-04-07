@@ -154,56 +154,16 @@ class LevelConfig:
 
 @dataclass(frozen=True)
 class HierarchicalModelConfig:
-    """Full model configuration for hierarchical embedding pyramid.
+    """Model configuration - just a list of level configs.
 
-    This is the main configuration class for the model. It owns all
-    size calculation methods and can build the model.
+    This is the complete model configuration. It holds the list of levels
+    and provides size calculation methods and model building.
 
     Attributes:
-        embed_dim: Embedding dimension per level (default 16)
-        num_levels: Number of pyramid levels (default 3)
-        expanded_channels: Channel count after PW expand (default 32)
-        uibs_per_level: UIBs per level (default 2)
+        levels: Tuple of LevelConfig, one per pyramid level
     """
 
-    embed_dim: int = 16
-    num_levels: int = 3
-    expanded_channels: int = 32
-    uibs_per_level: int = 2
-
-    def _make_level_config(self, level_idx: int) -> LevelConfig:
-        """Build default config for a level.
-
-        Args:
-            level_idx: Level index (0 = finest)
-
-        Returns:
-            LevelConfig with configured UIBs
-        """
-        uib_configs = []
-        for uib_idx in range(self.uibs_per_level):
-            is_first_uib = uib_idx == 0
-            is_first_level = level_idx == 0
-
-            in_channels = 3 if (is_first_level and is_first_uib) else self.embed_dim
-
-            uib_configs.append(
-                UIBConfig(
-                    in_channels=in_channels,
-                    out_channels=self.embed_dim,
-                    expanded_channels=self.expanded_channels,
-                    use_dw_before_expand=True,
-                    use_dw_after_expand=True,
-                    downsample_after=not is_first_uib,
-                    use_l2_norm=not is_first_uib,
-                )
-            )
-
-        return LevelConfig(level_idx=level_idx, uib_configs=tuple(uib_configs))
-
-    def level_configs(self) -> Tuple[LevelConfig, ...]:
-        """Return all level configs."""
-        return tuple(self._make_level_config(i) for i in range(self.num_levels))
+    levels: Tuple[LevelConfig, ...]
 
     def output_size(self, input_size: int) -> int:
         """Calculate final coarse output size given input (forward).
@@ -215,7 +175,7 @@ class HierarchicalModelConfig:
             Coarsest level output spatial dimension
         """
         size = input_size
-        for level_config in self.level_configs():
+        for level_config in self.levels:
             size = level_config.output_size(size)
         return size
 
@@ -229,7 +189,7 @@ class HierarchicalModelConfig:
             Required input spatial dimension
         """
         size = output_size
-        for level_config in reversed(self.level_configs()):
+        for level_config in reversed(self.levels):
             size = level_config.required_input_size(size)
         return size
 
@@ -490,7 +450,7 @@ class HierarchicalEmbeddingModel(nnx.Module):
         # Build levels from config
         self.levels = nnx.List([
             Level(level_config, rngs=rngs)
-            for level_config in config.level_configs()
+            for level_config in config.levels
         ])
 
     def __call__(self, x: jnp.ndarray) -> List[jnp.ndarray]:
@@ -540,3 +500,38 @@ def count_parameters(model: nnx.Module) -> int:
 
     count_recursive(state)
     return total
+
+
+def make_default_model_config() -> HierarchicalModelConfig:
+    """Build default 3-level model configuration.
+
+    Default: 3 levels, 2 UIBs per level, second UIB downsamples.
+    Embedding dim: 16, expanded channels: 32.
+
+    Returns:
+        HierarchicalModelConfig for default model
+    """
+    levels = []
+    for level_idx in range(3):
+        uib_configs = []
+        for uib_idx in range(2):
+            is_first_uib = uib_idx == 0
+            is_first_level = level_idx == 0
+
+            in_channels = 3 if (is_first_level and is_first_uib) else 16
+
+            uib_configs.append(
+                UIBConfig(
+                    in_channels=in_channels,
+                    out_channels=16,
+                    expanded_channels=32,
+                    use_dw_before_expand=True,
+                    use_dw_after_expand=True,
+                    downsample_after=not is_first_uib,
+                    use_l2_norm=not is_first_uib,
+                )
+            )
+
+        levels.append(LevelConfig(level_idx=level_idx, uib_configs=tuple(uib_configs)))
+
+    return HierarchicalModelConfig(levels=tuple(levels))

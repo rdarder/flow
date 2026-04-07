@@ -7,7 +7,6 @@ currently used by the embeddings training script.
 from dataclasses import dataclass
 
 from barevision.embeddings.checkpointer import CheckpointSettings
-from barevision.embeddings.model import HierarchicalModelConfig
 from barevision.utils.checks import check_value
 
 
@@ -189,11 +188,19 @@ class Settings:
     """Full settings for embeddings training.
 
     This is the main entry point for CLI configuration.
-    run_name_prefix: Prefix for auto-generated run names
+    Model configuration is hardcoded in training.py (not CLI-configurable yet).
+    
+    Attributes:
+        dataset: Dataset configuration
+        loss: Loss configuration
+        training: Training hyperparameters
+        logging: TensorBoard logging configuration
+        checkpoint: Checkpointing configuration
+        validation: Validation configuration
+        run_name_prefix: Prefix for auto-generated run names
     """
 
     dataset: DatasetSettings
-    model: HierarchicalModelConfig
     loss: LossSettings
     training: TrainingSettings
     logging: LoggingSettings
