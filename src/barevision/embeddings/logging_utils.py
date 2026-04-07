@@ -14,7 +14,11 @@ from barevision.embeddings.spatial_losses import (
     cross_attention_spatial_variance,
 )
 from barevision.utils import image
-from barevision.utils.grid import WindowGrid, generate_normalized_coordinates
+from barevision.utils.grid import (
+    WindowGrid,
+    generate_normalized_coordinates,
+    crop_to_grid_aligned,
+)
 from barevision.utils.logging import TensorboardLogger
 
 
@@ -23,6 +27,7 @@ def log_attention_statistics(
     embeddings: jnp.ndarray,
     step: int,
     window_size: int = 16,
+    temperature: float = 0.25,
     prefix: str = "Attention",
 ):
     """Log attention spatial variance distributions for diagnostic monitoring.
@@ -36,26 +41,30 @@ def log_attention_statistics(
         embeddings: (B, H, W, D) embeddings from a single frame
         step: Global step
         window_size: Attention window size
+        temperature: Softmax temperature (should match training setting)
         prefix: Tag prefix for organization
     """
     B, H, W, D = embeddings.shape
 
+    # Crop to grid-aligned dimensions (same as loss calculation)
+    embeddings_cropped = crop_to_grid_aligned(embeddings, window_size)
+    B_crop, H_crop, W_crop, D_crop = embeddings_cropped.shape
+
     # Split into windows
     grid = WindowGrid(window_size=window_size)
-    windows = grid.split(embeddings)
-    num_windows = (H // window_size) * (W // window_size)
-    flat_windows = windows.reshape(B * num_windows, window_size, window_size, D)
+    windows = grid.split(embeddings_cropped)
+    num_windows = (H_crop // window_size) * (W_crop // window_size)
+    flat_windows = windows.reshape(B_crop * num_windows, window_size, window_size, D_crop)
 
     # Precompute coordinates
     coords = generate_normalized_coordinates(window_size)
 
     # Compute spatial variances (both return tuple of (loss, aux))
-    # Use temperature=0.3 for diagnostic logging (same as training)
     self_variance, self_aux = self_attention_spatial_variance(
-        flat_windows, temperature=0.3, coords=coords
+        flat_windows, temperature=temperature, coords=coords
     )
     cross_variance, cross_aux = cross_attention_spatial_variance(
-        flat_windows, flat_windows, temperature=0.3, coords=coords
+        flat_windows, flat_windows, temperature=temperature, coords=coords
     )
 
     # Log histograms
@@ -193,7 +202,10 @@ def log_gradient_statistics(
 def log_metrics(logger: TensorboardLogger, loss, aux, step: int):
     """Log loss metrics to TensorBoard.
 
-    Works with both spatial variance loss and old entropy loss structures.
+    For spatial variance loss, logs:
+    - Total loss
+    - Self and cross loss components
+    - Per-level breakdown (if available in aux)
     """
     logger.log_scalar("Loss/total", float(loss), step)
 
@@ -202,23 +214,26 @@ def log_metrics(logger: TensorboardLogger, loss, aux, step: int):
         logger.log_scalar("Loss/spatial_variance/self", float(aux["self_loss"]), step)
         logger.log_scalar("Loss/spatial_variance/cross", float(aux["cross_loss"]), step)
 
-    # Old entropy loss structure (for backward compatibility)
-    if "entropy" in aux:
-        logger.log_scalar("Loss/entropy/self", float(aux["entropy"]["self_loss"]), step)
-        logger.log_scalar(
-            "Loss/entropy/cross", float(aux["entropy"]["cross_loss"]), step
-        )
-
-    # Reconstruction loss (only in joint training)
-    if "reconstruction" in aux:
-        logger.log_scalar(
-            "Loss/reconstruction", float(aux["reconstruction"]["loss"]), step
-        )
-    logger.log_scalar("Loss/entropy/total", float(aux["entropy"]["loss"]), step)
+        # Log per-level breakdown if available
+        if "level_losses" in aux and "level_weights" in aux:
+            for i, (level_loss, level_weight) in enumerate(
+                zip(aux["level_losses"], aux["level_weights"])
+            ):
+                logger.log_scalar(
+                    f"Loss/level_{i}/weighted_loss", float(level_loss), step
+                )
+                logger.log_scalar(
+                    f"Loss/level_{i}/weight", float(level_weight), step
+                )
 
 
 def log_diagnostics(
-    logger: TensorboardLogger, model, img1, step: int, window_size: int = 16
+    logger: TensorboardLogger,
+    model,
+    img1,
+    step: int,
+    window_size: int = 16,
+    temperature: float = 0.25,
 ):
     """Log gradient statistics, embeddings, and attention statistics.
 
@@ -226,7 +241,15 @@ def log_diagnostics(
     - Joint model (has model.embedding_model attribute)
     - Standalone embeddings model (model IS the embedding model)
 
-    For hierarchical models, uses coarsest pyramid level.
+    For hierarchical models, logs all pyramid levels.
+
+    Args:
+        logger: TensorBoard logger
+        model: NNX model
+        img1: Input frame for diagnostics
+        step: Global step
+        window_size: Attention window size
+        temperature: Softmax temperature (should match training setting)
     """
     log_gradient_statistics(logger, None, model, step)
 
@@ -238,9 +261,13 @@ def log_diagnostics(
         # Standalone embeddings model
         pyramid = model(img1)
 
-    embeddings = pyramid[-1]  # Coarsest level
-    log_embedding_statistics(logger, embeddings, step)
-    log_attention_statistics(logger, embeddings, step, window_size)
+    # Log statistics for all pyramid levels
+    for i, embeddings in enumerate(pyramid):
+        prefix = f"Embeddings/level{i}"
+        log_embedding_statistics(logger, embeddings, step, prefix=prefix)
+        log_attention_statistics(
+            logger, embeddings, step, window_size, temperature, prefix=f"Attention/level{i}"
+        )
 
 
 def format_progress_line(

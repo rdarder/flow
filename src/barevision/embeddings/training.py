@@ -20,7 +20,7 @@ from barevision.embeddings.visualization import log_visualizations
 from barevision.embeddings.settings import Settings
 from barevision.utils.console import ConsoleLogger
 from barevision.utils.logging import TensorboardLogger
-from barevision.embeddings.logging_utils import log_diagnostics
+from barevision.embeddings.logging_utils import log_diagnostics, log_metrics
 from barevision.utils import image
 
 
@@ -208,20 +208,17 @@ class EmbeddingsTrainer:
         epoch_start: float,
         img1: jnp.ndarray,
     ):
-        self.tensorboard.log_scalar("Loss/total", float(loss), global_step)
-        self.tensorboard.log_scalar(
-            "Loss/spatial_variance/self", float(aux["self_loss"]), global_step
-        )
-        self.tensorboard.log_scalar(
-            "Loss/spatial_variance/cross", float(aux["cross_loss"]), global_step
-        )
+        # Log loss metrics (total + per-level breakdown)
+        log_metrics(self.tensorboard, loss, aux, global_step)
 
+        # Log diagnostics for all pyramid levels
         log_diagnostics(
             self.tensorboard,
             self.model,
             img1,
             global_step,
             self.settings.loss.spatial_variance.window_size,
+            self.settings.loss.spatial_variance.self_temperature,
         )
 
         steps_per_sec = step_in_epoch / (time.time() - epoch_start)
