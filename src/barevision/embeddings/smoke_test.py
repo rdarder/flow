@@ -10,7 +10,6 @@ from barevision.embeddings.training import EmbeddingsTrainer
 from barevision.embeddings.settings import (
     Settings,
     DatasetSettings,
-    ModelSettings,
     LossSettings,
     SpatialVarianceLossSettings,
     TrainingSettings,
@@ -18,6 +17,7 @@ from barevision.embeddings.settings import (
     ValidationSettings,
 )
 from barevision.embeddings.checkpointer import CheckpointSettings
+from barevision.embeddings.model import HierarchicalModelConfig
 
 
 def create_smoke_test_settings() -> Settings:
@@ -33,7 +33,7 @@ def create_smoke_test_settings() -> Settings:
             max_samples=1,  # Only 1 sample per epoch
             num_workers=0,
         ),
-        model=ModelSettings(
+        model=HierarchicalModelConfig(
             embed_dim=8,  # Smaller embedding dim
             num_levels=2,
         ),

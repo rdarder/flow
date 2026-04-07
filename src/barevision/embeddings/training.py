@@ -21,7 +21,7 @@ from barevision.embeddings.settings import Settings
 from barevision.utils.console import ConsoleLogger
 from barevision.utils.logging import TensorboardLogger
 from barevision.embeddings.logging_utils import log_diagnostics, log_metrics
-from barevision.utils import image
+from barevision.embeddings.model import HierarchicalEmbeddingModel
 
 
 class EmbeddingsTrainer:
@@ -274,10 +274,9 @@ class EmbeddingsTrainer:
         self.logger.log("  - GroupNorm + ReLU after each conv")
         self.logger.log("  - L2 norm on level outputs")
 
-        image_size = image.image_size(
+        image_size = self.settings.model.target_to_input(
             self.settings.dataset.coarse_grid_size,
             self.settings.dataset.window_size,
-            self.settings.dataset.num_levels,
         )
         self.logger.log(f"Image size: {image_size}")
         self.logger.log("")

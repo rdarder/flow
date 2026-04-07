@@ -7,6 +7,7 @@ currently used by the embeddings training script.
 from dataclasses import dataclass
 
 from barevision.embeddings.checkpointer import CheckpointSettings
+from barevision.embeddings.model import HierarchicalModelConfig
 from barevision.utils.checks import check_value
 
 
@@ -84,30 +85,6 @@ class LoggingSettings:
         check_value(
             self.visualizations_every_steps >= 1,
             f"visualizations_every_steps must be >= 1, got {self.visualizations_every_steps}",
-        )
-
-
-@dataclass(frozen=True)
-class ModelSettings:
-    """Model architecture settings for embeddings training.
-
-    Universal Inverted Block (UIB) based architecture.
-    Each level has 2 UIBs, second UIB downsamples.
-
-    Attributes:
-        embed_dim: Output embedding dimension per level (default 16)
-        num_levels: Number of pyramid levels (default 3)
-    """
-
-    embed_dim: int = 16
-    num_levels: int = 3
-
-    def __post_init__(self):
-        check_value(
-            self.num_levels >= 1, f"num_levels must be >= 1, got {self.num_levels}"
-        )
-        check_value(
-            self.embed_dim >= 1, f"embed_dim must be >= 1, got {self.embed_dim}"
         )
 
 
@@ -216,7 +193,7 @@ class Settings:
     """
 
     dataset: DatasetSettings
-    model: ModelSettings
+    model: HierarchicalModelConfig
     loss: LossSettings
     training: TrainingSettings
     logging: LoggingSettings

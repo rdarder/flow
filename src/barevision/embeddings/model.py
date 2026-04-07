@@ -37,12 +37,10 @@ Note: VALID padding throughout. Each conv followed by GroupNorm + ReLU.
 """
 
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import List, Tuple
 
 import jax.numpy as jnp
 from flax import nnx
-
-from barevision.embeddings.settings import ModelSettings
 
 
 @dataclass(frozen=True)
@@ -66,6 +64,199 @@ class UIBConfig:
     use_dw_after_expand: bool = True
     downsample_after: bool = False
     use_l2_norm: bool = False
+
+    def output_size(self, input_size: int) -> int:
+        """Calculate output spatial size given input size (forward).
+
+        Args:
+            input_size: Input spatial dimension (H or W)
+
+        Returns:
+            Output spatial dimension after this UIB
+
+        Note: All convs use VALID padding.
+            - DW 3×3: -2 pixels
+            - PW 1×1: no change
+            - Downsample 3×3 stride=2: (in - 1) // 2
+        """
+        size = input_size
+        if self.use_dw_before_expand:
+            size -= 2
+        if self.use_dw_after_expand:
+            size -= 2
+        if self.downsample_after:
+            size = (size - 1) // 2
+        return size
+
+    def required_input_size(self, output_size: int) -> int:
+        """Calculate required input size given desired output (inverse).
+
+        Args:
+            output_size: Desired output spatial dimension (H or W)
+
+        Returns:
+            Required input spatial dimension for this UIB
+
+        Note: Inverse of forward calculation.
+            - Downsample 3×3 stride=2: out * 2 + 1
+            - DW 3×3: +2 pixels
+        """
+        size = output_size
+        if self.downsample_after:
+            size = size * 2 + 1
+        if self.use_dw_after_expand:
+            size += 2
+        if self.use_dw_before_expand:
+            size += 2
+        return size
+
+
+@dataclass(frozen=True)
+class LevelConfig:
+    """Configuration for a pyramid level.
+
+    Attributes:
+        level_idx: Level index (0 = finest, increasing = coarser)
+        uib_configs: Tuple of UIB configurations in order
+    """
+
+    level_idx: int
+    uib_configs: Tuple[UIBConfig, ...]
+
+    def output_size(self, input_size: int) -> int:
+        """Calculate output spatial size after all UIBs in this level (forward).
+
+        Args:
+            input_size: Input spatial dimension (H or W)
+
+        Returns:
+            Output spatial dimension after this level
+        """
+        size = input_size
+        for uib_config in self.uib_configs:
+            size = uib_config.output_size(size)
+        return size
+
+    def required_input_size(self, output_size: int) -> int:
+        """Calculate required input size given desired output (inverse).
+
+        Args:
+            output_size: Desired output spatial dimension (H or W)
+
+        Returns:
+            Required input spatial dimension for this level
+        """
+        size = output_size
+        for uib_config in reversed(self.uib_configs):
+            size = uib_config.required_input_size(size)
+        return size
+
+
+@dataclass(frozen=True)
+class HierarchicalModelConfig:
+    """Full model configuration for hierarchical embedding pyramid.
+
+    This is the main configuration class for the model. It owns all
+    size calculation methods and can build the model.
+
+    Attributes:
+        embed_dim: Embedding dimension per level (default 16)
+        num_levels: Number of pyramid levels (default 3)
+        expanded_channels: Channel count after PW expand (default 32)
+        uibs_per_level: UIBs per level (default 2)
+    """
+
+    embed_dim: int = 16
+    num_levels: int = 3
+    expanded_channels: int = 32
+    uibs_per_level: int = 2
+
+    def _make_level_config(self, level_idx: int) -> LevelConfig:
+        """Build default config for a level.
+
+        Args:
+            level_idx: Level index (0 = finest)
+
+        Returns:
+            LevelConfig with configured UIBs
+        """
+        uib_configs = []
+        for uib_idx in range(self.uibs_per_level):
+            is_first_uib = uib_idx == 0
+            is_first_level = level_idx == 0
+
+            in_channels = 3 if (is_first_level and is_first_uib) else self.embed_dim
+
+            uib_configs.append(
+                UIBConfig(
+                    in_channels=in_channels,
+                    out_channels=self.embed_dim,
+                    expanded_channels=self.expanded_channels,
+                    use_dw_before_expand=True,
+                    use_dw_after_expand=True,
+                    downsample_after=not is_first_uib,
+                    use_l2_norm=not is_first_uib,
+                )
+            )
+
+        return LevelConfig(level_idx=level_idx, uib_configs=tuple(uib_configs))
+
+    def level_configs(self) -> Tuple[LevelConfig, ...]:
+        """Return all level configs."""
+        return tuple(self._make_level_config(i) for i in range(self.num_levels))
+
+    def output_size(self, input_size: int) -> int:
+        """Calculate final coarse output size given input (forward).
+
+        Args:
+            input_size: Input spatial dimension (H or W)
+
+        Returns:
+            Coarsest level output spatial dimension
+        """
+        size = input_size
+        for level_config in self.level_configs():
+            size = level_config.output_size(size)
+        return size
+
+    def required_input_size(self, output_size: int) -> int:
+        """Calculate required input size given desired coarse output (inverse).
+
+        Args:
+            output_size: Desired coarsest level output spatial dimension
+
+        Returns:
+            Required input spatial dimension
+        """
+        size = output_size
+        for level_config in reversed(self.level_configs()):
+            size = level_config.required_input_size(size)
+        return size
+
+    def target_to_input(self, coarsest_grid_size: int, window_size: int) -> Tuple[int, int]:
+        """Calculate required input image size for target coarse grid.
+
+        Args:
+            coarsest_grid_size: Target grid dimension at coarsest level
+            window_size: Window size at coarsest level
+
+        Returns:
+            Tuple of (height, width) - assumed square
+        """
+        target = coarsest_grid_size * window_size
+        required = self.required_input_size(target)
+        return required, required
+
+    def build_model(self, *, rngs: nnx.Rngs) -> "HierarchicalEmbeddingModel":
+        """Build HierarchicalEmbeddingModel from this config.
+
+        Args:
+            rngs: NNX RNGs for parameter initialization
+
+        Returns:
+            Instantiated HierarchicalEmbeddingModel
+        """
+        return HierarchicalEmbeddingModel(self, rngs=rngs)
 
 
 class UniversalInvertedBlock(nnx.Module):
@@ -231,14 +422,52 @@ class UniversalInvertedBlock(nnx.Module):
         return x
 
 
+class Level(nnx.Module):
+    """Pyramid level containing multiple UIBs.
+
+    A level is a sequence of UIBs that processes features at one scale.
+    The level owns its configuration and delegates size calculations to it.
+    """
+
+    def __init__(
+        self,
+        config: LevelConfig,
+        *,
+        rngs: nnx.Rngs,
+    ):
+        """Initialize Level.
+
+        Args:
+            config: Level configuration
+            rngs: NNX RNGs for parameter initialization
+        """
+        self.config = config
+        self.uibs = nnx.List([
+            UniversalInvertedBlock(uib_config, rngs=rngs)
+            for uib_config in config.uib_configs
+        ])
+
+    def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
+        """Forward pass through all UIBs in this level.
+
+        Args:
+            x: Input tensor of shape (B, H, W, in_channels)
+
+        Returns:
+            Tensor of shape (B, H', W', out_channels)
+        """
+        for uib in self.uibs:
+            x = uib(x)
+        return x
+
+
 class HierarchicalEmbeddingModel(nnx.Module):
     """Hierarchical embedding model with multi-scale feature pyramid.
 
-    Builds a 3-level pyramid with 2 UIBs per level.
-    Each level downsamples once (on the second UIB).
-    Each level outputs 16D L2-normalized embeddings.
+    Built from HierarchicalModelConfig. Each level has 2 UIBs,
+    second UIB downsamples. Each level outputs 16D L2-normalized embeddings.
 
-    Default configuration (hardcoded for now):
+    Default configuration:
         Level 0: UIB_0(3→16, no downsample) → UIB_1(16→16, downsample, L2)
         Level 1: UIB_0(16→16, no downsample) → UIB_1(16→16, downsample, L2)
         Level 2: UIB_0(16→16, no downsample) → UIB_1(16→16, downsample, L2)
@@ -246,57 +475,23 @@ class HierarchicalEmbeddingModel(nnx.Module):
 
     def __init__(
         self,
-        settings: ModelSettings,
+        config: HierarchicalModelConfig,
         *,
         rngs: nnx.Rngs,
     ):
         """Initialize HierarchicalEmbeddingModel.
 
         Args:
-            settings: Model settings (embed_dim, num_levels)
+            config: Model configuration
             rngs: NNX RNGs for parameter initialization
         """
-        self.settings = settings
-        self.expanded_channels = 32
+        self.config = config
 
-        # Build levels: each level is a list of 2 UIBs
-        self.levels = nnx.List()
-        for level_idx in range(settings.num_levels):
-            level_blocks = nnx.List()
-
-            for uib_idx in range(2):
-                is_first_uib = uib_idx == 0
-                is_last_uib = uib_idx == 1
-                is_first_level = level_idx == 0
-
-                # Determine input channels
-                if is_first_level and is_first_uib:
-                    in_channels = 3
-                else:
-                    in_channels = settings.embed_dim
-
-                # Determine output channels
-                out_channels = settings.embed_dim
-
-                # Downsample on second UIB of each level
-                downsample_after = is_last_uib
-
-                # L2 norm on last UIB of each level
-                use_l2_norm = is_last_uib
-
-                config = UIBConfig(
-                    in_channels=in_channels,
-                    out_channels=out_channels,
-                    expanded_channels=self.expanded_channels,
-                    use_dw_before_expand=True,
-                    use_dw_after_expand=True,
-                    downsample_after=downsample_after,
-                    use_l2_norm=use_l2_norm,
-                )
-
-                level_blocks.append(UniversalInvertedBlock(config, rngs=rngs))
-
-            self.levels.append(level_blocks)
+        # Build levels from config
+        self.levels = nnx.List([
+            Level(level_config, rngs=rngs)
+            for level_config in config.level_configs()
+        ])
 
     def __call__(self, x: jnp.ndarray) -> List[jnp.ndarray]:
         """Forward pass through pyramid.
@@ -309,15 +504,9 @@ class HierarchicalEmbeddingModel(nnx.Module):
             Each level has shape (B, H_l, W_l, embed_dim)
         """
         feature_maps = []
-
         for level in self.levels:
-            # Run through all UIBs in this level
-            for uib in level:
-                x = uib(x)
-
-            # Collect output (last UIB of level, already L2-normalized)
+            x = level(x)
             feature_maps.append(x)
-
         return feature_maps
 
 

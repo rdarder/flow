@@ -67,9 +67,9 @@ Clarify implementation details: edge cases, failure modes, integration points. A
 ** Stop here. Before committing:**
 1. Update `progress.md` to reflect new system state
 2. Present a summary to me.
-3. Wait for explicit approval
+3. **STOP. Do not commit until the user explicitly says "commit", "approved", or similar.**
 
-### 5. Commit
+### 5. Commit (only after explicit user approval)
 - Session ends with a git commit
 - Repeat the git commit summary in your response so I know what was done right away.
 

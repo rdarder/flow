@@ -18,7 +18,7 @@ import jax.random as jr
 import numpy as np
 from PIL import Image
 
-from barevision.utils import image
+from barevision.embeddings.model import HierarchicalModelConfig
 from barevision.utils.path import get_datasets_dir
 
 
@@ -268,10 +268,14 @@ def create_dataloader(
         Tuple of (img1_batch, img2_batch, metadata_batch)
     """
 
-    image_size = image.image_size(
+    # Create minimal config to calculate image size
+    model_config = HierarchicalModelConfig(
+        embed_dim=16,
+        num_levels=dataset_settings.num_levels,
+    )
+    image_size = model_config.target_to_input(
         dataset_settings.coarse_grid_size,
         dataset_settings.window_size,
-        dataset_settings.num_levels,
     )
     dataset = VideoFrameDataset(
         split=split,

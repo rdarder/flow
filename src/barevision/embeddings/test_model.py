@@ -6,18 +6,222 @@ from flax import nnx
 
 from barevision.embeddings.model import (
     HierarchicalEmbeddingModel,
+    HierarchicalModelConfig,
     UniversalInvertedBlock,
+    Level,
+    LevelConfig,
     UIBConfig,
     count_parameters,
 )
-from barevision.embeddings.settings import ModelSettings
-from barevision.utils.image import (
-    calculate_required_input_size,
-    calculate_coarse_output_size,
-    calculate_uib_output_size,
-    calculate_level_output_size,
-    image_size,
-)
+
+
+class TestUIBConfig:
+    """Tests for UIBConfig size calculations."""
+
+    def test_output_size_no_downsample(self):
+        """Test forward size calculation without downsampling."""
+        config = UIBConfig(
+            in_channels=16,
+            out_channels=16,
+            expanded_channels=32,
+            use_dw_before_expand=True,
+            use_dw_after_expand=True,
+            downsample_after=False,
+        )
+        result = config.output_size(32)
+        # 2× DW 3×3 VALID: -4 pixels
+        assert result == 28, f"Expected 28, got {result}"
+
+    def test_output_size_with_downsample(self):
+        """Test forward size calculation with downsampling."""
+        config = UIBConfig(
+            in_channels=16,
+            out_channels=16,
+            expanded_channels=32,
+            use_dw_before_expand=True,
+            use_dw_after_expand=True,
+            downsample_after=True,
+        )
+        result = config.output_size(32)
+        # 2× DW: -4 → 28, then downsample: (28-1)//2 = 13
+        assert result == 13, f"Expected 13, got {result}"
+
+    def test_required_input_size_no_downsample(self):
+        """Test inverse size calculation without downsampling."""
+        config = UIBConfig(
+            in_channels=16,
+            out_channels=16,
+            expanded_channels=32,
+            use_dw_before_expand=True,
+            use_dw_after_expand=True,
+            downsample_after=False,
+        )
+        result = config.required_input_size(28)
+        # Inverse: +4 pixels
+        assert result == 32, f"Expected 32, got {result}"
+
+    def test_required_input_size_with_downsample(self):
+        """Test inverse size calculation with downsampling."""
+        config = UIBConfig(
+            in_channels=16,
+            out_channels=16,
+            expanded_channels=32,
+            use_dw_before_expand=True,
+            use_dw_after_expand=True,
+            downsample_after=True,
+        )
+        result = config.required_input_size(13)
+        # Inverse: downsample: 13*2+1=27, then +2+2=31
+        assert result == 31, f"Expected 31, got {result}"
+
+    def test_roundtrip_consistency(self):
+        """Test that forward and inverse are consistent."""
+        config = UIBConfig(
+            in_channels=16,
+            out_channels=16,
+            expanded_channels=32,
+            use_dw_before_expand=True,
+            use_dw_after_expand=True,
+            downsample_after=True,
+        )
+        input_size = 137
+        output = config.output_size(input_size)
+        recovered = config.required_input_size(output)
+        assert recovered == input_size, f"Roundtrip failed: {input_size} → {output} → {recovered}"
+
+
+class TestLevelConfig:
+    """Tests for LevelConfig size calculations."""
+
+    def test_output_size_two_uibs(self):
+        """Test forward size calculation for level with 2 UIBs."""
+        config = LevelConfig(
+            level_idx=0,
+            uib_configs=(
+                UIBConfig(
+                    in_channels=3,
+                    out_channels=16,
+                    expanded_channels=32,
+                    use_dw_before_expand=True,
+                    use_dw_after_expand=True,
+                    downsample_after=False,
+                ),
+                UIBConfig(
+                    in_channels=16,
+                    out_channels=16,
+                    expanded_channels=32,
+                    use_dw_before_expand=True,
+                    use_dw_after_expand=True,
+                    downsample_after=True,
+                ),
+            ),
+        )
+        result = config.output_size(137)
+        # UIB_0: 137 - 2 - 2 = 133
+        # UIB_1: 133 - 2 - 2 = 129, (129 - 1) // 2 = 64
+        assert result == 64, f"Expected 64, got {result}"
+
+    def test_required_input_size_two_uibs(self):
+        """Test inverse size calculation for level with 2 UIBs."""
+        config = LevelConfig(
+            level_idx=0,
+            uib_configs=(
+                UIBConfig(
+                    in_channels=3,
+                    out_channels=16,
+                    expanded_channels=32,
+                    use_dw_before_expand=True,
+                    use_dw_after_expand=True,
+                    downsample_after=False,
+                ),
+                UIBConfig(
+                    in_channels=16,
+                    out_channels=16,
+                    expanded_channels=32,
+                    use_dw_before_expand=True,
+                    use_dw_after_expand=True,
+                    downsample_after=True,
+                ),
+            ),
+        )
+        result = config.required_input_size(64)
+        # UIB_1 (reversed): 64*2+1 = 129, +2+2 = 133
+        # UIB_0 (reversed): 133 + 2 + 2 = 137
+        assert result == 137, f"Expected 137, got {result}"
+
+    def test_roundtrip_consistency(self):
+        """Test that forward and inverse are consistent for level."""
+        config = LevelConfig(
+            level_idx=0,
+            uib_configs=(
+                UIBConfig(
+                    in_channels=16,
+                    out_channels=16,
+                    expanded_channels=32,
+                    use_dw_before_expand=True,
+                    use_dw_after_expand=True,
+                    downsample_after=False,
+                ),
+                UIBConfig(
+                    in_channels=16,
+                    out_channels=16,
+                    expanded_channels=32,
+                    use_dw_before_expand=True,
+                    use_dw_after_expand=True,
+                    downsample_after=True,
+                ),
+            ),
+        )
+        input_size = 137
+        output = config.output_size(input_size)
+        recovered = config.required_input_size(output)
+        assert recovered == input_size, f"Roundtrip failed: {input_size} → {output} → {recovered}"
+
+
+class TestHierarchicalModelConfig:
+    """Tests for HierarchicalModelConfig size calculations."""
+
+    def test_output_size_three_levels(self):
+        """Test forward size calculation for 3-level model."""
+        config = HierarchicalModelConfig(embed_dim=16, num_levels=3)
+        result = config.output_size(137)
+        # Level 0: 137 → 133 → 64
+        # Level 1: 64 → 60 → 27
+        # Level 2: 27 → 23 → 9
+        assert result == 9, f"Expected 9, got {result}"
+
+    def test_required_input_size_three_levels(self):
+        """Test inverse size calculation for 3-level model."""
+        config = HierarchicalModelConfig(embed_dim=16, num_levels=3)
+        result = config.required_input_size(9)
+        # Inverse of forward: should recover 137 (or close due to floor division)
+        assert result <= 137, f"Expected <= 137, got {result}"
+        # Verify it produces the right output
+        assert config.output_size(result) == 9, f"Inverse doesn't produce correct output"
+
+    def test_target_to_input(self):
+        """Test target_to_input method."""
+        config = HierarchicalModelConfig(embed_dim=16, num_levels=3)
+        h, w = config.target_to_input(coarsest_grid_size=1, window_size=16)
+        assert h == w, "Should be square"
+        assert h > 16, "Input should be larger than target coarse dim"
+
+    def test_roundtrip_consistency(self):
+        """Test that forward and inverse are consistent for full model."""
+        config = HierarchicalModelConfig(embed_dim=16, num_levels=3)
+        input_size = 137
+        output = config.output_size(input_size)
+        recovered = config.required_input_size(output)
+        # Due to floor division, recovered may be <= input_size
+        assert config.output_size(recovered) == output, "Recovered doesn't produce same output"
+        assert recovered <= input_size, "Recovered should be <= original"
+
+    def test_build_model(self):
+        """Test that config can build a model."""
+        config = HierarchicalModelConfig(embed_dim=16, num_levels=3)
+        model = config.build_model(rngs=nnx.Rngs(jr.PRNGKey(0)))
+        assert isinstance(model, HierarchicalEmbeddingModel)
+        assert len(model.levels) == 3
 
 
 class TestUniversalInvertedBlock:
@@ -167,19 +371,55 @@ class TestUniversalInvertedBlock:
         assert not jnp.allclose(grad_state["pw_compress"]["kernel"], 0.0)
 
 
+class TestLevel:
+    """Tests for Level module."""
+
+    def test_level_forward_pass(self):
+        """Test Level forward pass with 2 UIBs."""
+        config = LevelConfig(
+            level_idx=0,
+            uib_configs=(
+                UIBConfig(
+                    in_channels=3,
+                    out_channels=16,
+                    expanded_channels=32,
+                    use_dw_before_expand=True,
+                    use_dw_after_expand=True,
+                    downsample_after=False,
+                ),
+                UIBConfig(
+                    in_channels=16,
+                    out_channels=16,
+                    expanded_channels=32,
+                    use_dw_before_expand=True,
+                    use_dw_after_expand=True,
+                    downsample_after=True,
+                    use_l2_norm=True,
+                ),
+            ),
+        )
+        level = Level(config, rngs=nnx.Rngs(jr.PRNGKey(0)))
+
+        x = jnp.ones((1, 137, 137, 3))
+        output = level(x)
+
+        # UIB_0: 137 - 2 - 2 = 133
+        # UIB_1: 133 - 2 - 2 = 129, (129 - 1) // 2 = 64
+        assert output.shape == (1, 64, 64, 16), f"Got {output.shape}"
+
+
 class TestHierarchicalEmbeddingModel:
     """Tests for HierarchicalEmbeddingModel forward pass."""
 
     def test_pyramid_output_shapes(self):
         """Test that model returns list of feature maps with correct shapes."""
-        settings = ModelSettings(embed_dim=16, num_levels=3)
-        model = HierarchicalEmbeddingModel(settings, rngs=nnx.Rngs(jr.PRNGKey(0)))
+        config = HierarchicalModelConfig(embed_dim=16, num_levels=3)
+        model = config.build_model(rngs=nnx.Rngs(jr.PRNGKey(0)))
 
         # Default config: 2 UIBs per level, second downsamples
-        # Each level: UIB_0 (no downsample, -4 pix) → UIB_1 (downsample)
-        # Level 0: input 137×137 → UIB_0: 133×133 → UIB_1: (133-4-1)//2 = 64
-        # Level 1: 64×64 → UIB_0: 60×60 → UIB_1: (60-4-1)//2 = 27
-        # Level 2: 27×27 → UIB_0: 23×23 → UIB_1: (23-4-1)//2 = 9
+        # Level 0: 137 → 133 → 64
+        # Level 1: 64 → 60 → 27
+        # Level 2: 27 → 23 → 9
         x = jnp.ones((1, 137, 137, 3))
         pyramid = model(x)
 
@@ -209,11 +449,11 @@ class TestHierarchicalEmbeddingModel:
 
     def test_pyramid_output_single_level(self):
         """Test model with single level."""
-        settings = ModelSettings(embed_dim=16, num_levels=1)
-        model = HierarchicalEmbeddingModel(settings, rngs=nnx.Rngs(jr.PRNGKey(0)))
+        config = HierarchicalModelConfig(embed_dim=16, num_levels=1)
+        model = config.build_model(rngs=nnx.Rngs(jr.PRNGKey(0)))
 
         # Single level: UIB_0 (no downsample) → UIB_1 (downsample)
-        # Input 37×37 → UIB_0: 33×33 → UIB_1: (33-4-1)//2 = 14
+        # Input 37×37 → UIB_0: 37-4=33 → UIB_1: 33-4=29, (29-1)//2 = 14
         x = jnp.ones((1, 37, 37, 3))
         pyramid = model(x)
 
@@ -223,8 +463,8 @@ class TestHierarchicalEmbeddingModel:
 
     def test_batch_processing(self):
         """Test batch processing."""
-        settings = ModelSettings(embed_dim=16, num_levels=3)
-        model = HierarchicalEmbeddingModel(settings, rngs=nnx.Rngs(jr.PRNGKey(0)))
+        config = HierarchicalModelConfig(embed_dim=16, num_levels=3)
+        model = config.build_model(rngs=nnx.Rngs(jr.PRNGKey(0)))
 
         x = jnp.ones((4, 137, 137, 3))
         pyramid = model(x)
@@ -235,35 +475,11 @@ class TestHierarchicalEmbeddingModel:
 
     def test_parameter_count(self):
         """Test parameter counting for UIB-based model."""
-        settings = ModelSettings(embed_dim=16, num_levels=3)
-        model = HierarchicalEmbeddingModel(settings, rngs=nnx.Rngs(jr.PRNGKey(0)))
+        config = HierarchicalModelConfig(embed_dim=16, num_levels=3)
+        model = config.build_model(rngs=nnx.Rngs(jr.PRNGKey(0)))
         param_count = count_parameters(model)
 
-        # Per UIB with 2 DWs (no downsample):
-        #   DW before (16 ch depthwise): 16*9 + 16 = 160
-        #   PW expand (16→32): 16*32 + 32 = 544
-        #   DW after (32 ch depthwise): 32*9 + 32 = 320
-        #   PW compress (32→16): 32*16 + 16 = 528
-        #   GroupNorms (4 total, 4 groups each): 4*16*2 + 4*32*2 + 4*16*2 + 4*16*2 = 128 + 256 + 128 + 128 = 640
-        #   Total per UIB: 160 + 544 + 320 + 528 + 640 = 2192
-        #
-        # Per UIB with downsample (adds DW 3×3 stride=2):
-        #   Downsample DW (16 ch): 16*9 + 16 = 160
-        #   GroupNorm: 16*2 = 32
-        #   Extra: 192
-        #
-        # First UIB of first level (3 ch input):
-        #   DW before (3 ch): 3*9 + 3 = 30
-        #   PW expand (3→32): 3*32 + 32 = 128
-        #   Rest same: 320 + 528 + GN(3+32+16)*2*4 = 640
-        #   Total: 30 + 128 + 320 + 528 + (3*8 + 32*8 + 16*8 + 16*8) = 30+128+320+528+24+256+128+128 = 1542
-        #
-        # Model: 6 UIBs total (3 levels × 2)
-        #   Level 0: UIB_0 (3 ch, no ds) + UIB_1 (16 ch, ds)
-        #   Level 1: UIB_0 (16 ch, no ds) + UIB_1 (16 ch, ds)
-        #   Level 2: UIB_0 (16 ch, no ds) + UIB_1 (16 ch, ds)
-        #
-        # This is complex; just verify it's > 0 and reasonable
+        # Just verify it's > 0 and reasonable
         assert param_count > 0, "Parameter count should be positive"
         assert param_count < 100000, f"Parameter count seems too high: {param_count}"
 
@@ -271,8 +487,8 @@ class TestHierarchicalEmbeddingModel:
         """Test that gradients flow through the full model."""
         from jax import grad
 
-        settings = ModelSettings(embed_dim=16, num_levels=3)
-        model = HierarchicalEmbeddingModel(settings, rngs=nnx.Rngs(jr.PRNGKey(0)))
+        config = HierarchicalModelConfig(embed_dim=16, num_levels=3)
+        model = config.build_model(rngs=nnx.Rngs(jr.PRNGKey(0)))
         x = jnp.ones((1, 137, 137, 3))
 
         def loss_fn(m, inp):
@@ -288,18 +504,20 @@ class TestHierarchicalEmbeddingModel:
         # Check levels have gradients
         assert "levels" in grad_state
         level0 = grad_state["levels"][0]  # type: ignore
-        assert len(level0) == 2, "Each level should have 2 UIBs"
+        assert "uibs" in level0, "Level should have uibs"
+        assert 0 in level0["uibs"], "Level should have at least one UIB"
 
         # Verify gradients exist and are non-zero
-        uib0_grads = level0[0]  # type: ignore
+        uib0_grads = level0["uibs"][0]  # type: ignore
         assert "pw_expand" in uib0_grads
+        assert "kernel" in uib0_grads["pw_expand"]
         assert uib0_grads["pw_expand"]["kernel"] is not None
         assert not jnp.allclose(uib0_grads["pw_expand"]["kernel"], 0.0)
 
     def test_l2_norm_on_level_outputs(self):
         """Test that level outputs are L2-normalized."""
-        settings = ModelSettings(embed_dim=16, num_levels=3)
-        model = HierarchicalEmbeddingModel(settings, rngs=nnx.Rngs(jr.PRNGKey(0)))
+        config = HierarchicalModelConfig(embed_dim=16, num_levels=3)
+        model = config.build_model(rngs=nnx.Rngs(jr.PRNGKey(0)))
 
         x = jnp.ones((1, 137, 137, 3)) * 10.0
         pyramid = model(x)
@@ -308,106 +526,3 @@ class TestHierarchicalEmbeddingModel:
         for i, level in enumerate(pyramid):
             norms = jnp.linalg.norm(level, axis=-1)
             assert jnp.allclose(norms, 1.0, atol=1e-5), f"Level {i} norms: {norms}"
-
-
-class TestUIBResolutionCalculation:
-    """Tests for UIB-based resolution calculation functions."""
-
-    def test_calculate_uib_output_size_no_downsample(self):
-        """Test UIB output size without downsampling."""
-        config = UIBConfig(
-            in_channels=16,
-            out_channels=16,
-            expanded_channels=32,
-            use_dw_before_expand=True,
-            use_dw_after_expand=True,
-            downsample_after=False,
-        )
-        result = calculate_uib_output_size(32, config)
-        # 2× DW 3×3 VALID: -4 pixels
-        assert result == 28, f"Expected 28, got {result}"
-
-    def test_calculate_uib_output_size_with_downsample(self):
-        """Test UIB output size with downsampling."""
-        config = UIBConfig(
-            in_channels=16,
-            out_channels=16,
-            expanded_channels=32,
-            use_dw_before_expand=True,
-            use_dw_after_expand=True,
-            downsample_after=True,
-        )
-        result = calculate_uib_output_size(32, config)
-        # 2× DW: -4 → 28, then downsample: (28-1)//2 = 13
-        assert result == 13, f"Expected 13, got {result}"
-
-    def test_calculate_level_output_size(self):
-        """Test level output size (2 UIBs, second downsamples)."""
-        configs = [
-            UIBConfig(
-                in_channels=16,
-                out_channels=16,
-                expanded_channels=32,
-                use_dw_before_expand=True,
-                use_dw_after_expand=True,
-                downsample_after=False,
-            ),
-            UIBConfig(
-                in_channels=16,
-                out_channels=16,
-                expanded_channels=32,
-                use_dw_before_expand=True,
-                use_dw_after_expand=True,
-                downsample_after=True,
-            ),
-        ]
-        result = calculate_level_output_size(137, configs)
-        # UIB_0: 137 - 4 = 133
-        # UIB_1: (133 - 4 - 1) // 2 = 64
-        assert result == 64, f"Expected 64, got {result}"
-
-    def test_image_size_default_config(self):
-        """Test image_size with default config."""
-        # For 3 levels, 1×1 grid, 16 window: target = 16
-        h, w = image_size(coarsest_grid_size=1, window_size=16, levels=3)
-        assert h == w, "Should be square"
-        assert h > 16, "Input should be larger than target"
-
-    def test_roundtrip_consistency(self):
-        """Test that input/output calculations are consistent."""
-        from barevision.utils.image import (
-            calculate_required_input_size,
-            calculate_coarse_output_size,
-        )
-
-        # Build default configs for 3 levels
-        uib_configs_per_level = []
-        for level_idx in range(3):
-            level_configs = []
-            for uib_idx in range(2):
-                is_first_uib = uib_idx == 0
-                is_first_level = level_idx == 0
-
-                in_channels = 3 if (is_first_level and is_first_uib) else 16
-
-                config = UIBConfig(
-                    in_channels=in_channels,
-                    out_channels=16,
-                    expanded_channels=32,
-                    use_dw_before_expand=True,
-                    use_dw_after_expand=True,
-                    downsample_after=not is_first_uib,
-                )
-                level_configs.append(config)
-            uib_configs_per_level.append(level_configs)
-
-        target = 16
-        required_input = calculate_required_input_size(
-            target, num_levels=3, uib_configs_per_level=uib_configs_per_level
-        )
-
-        output = calculate_coarse_output_size(
-            required_input, num_levels=3, uib_configs_per_level=uib_configs_per_level
-        )
-
-        assert output == target, f"Roundtrip failed: {required_input} -> {output}"

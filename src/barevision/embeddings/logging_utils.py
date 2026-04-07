@@ -13,7 +13,7 @@ from barevision.embeddings.spatial_losses import (
     self_attention_spatial_variance,
     cross_attention_spatial_variance,
 )
-from barevision.utils import image
+from barevision.embeddings.model import HierarchicalEmbeddingModel
 from barevision.utils.grid import (
     WindowGrid,
     generate_normalized_coordinates,
@@ -367,10 +367,9 @@ def print_header(settings: Settings):
     )
     print(f"Window size: {settings.dataset.window_size}×{settings.dataset.window_size}")
     print(f"Embedding dim: {settings.model.embed_dim}")
-    image_size = image.image_size(
+    image_size = settings.model.target_to_input(
         settings.dataset.coarse_grid_size,
         settings.dataset.window_size,
-        settings.dataset.num_levels,
     )
     print(f"Image size: {image_size}")
     print()
