@@ -20,11 +20,9 @@ Embedding pyramid model, training loop, and spatial variance loss.
 
 **checkpointer.py:** Orbax CheckpointManager wrapper for embeddings training. Epoch-based checkpointing with validation-loss-based preservation policy. Exports: `CheckpointManagerWrapper`, `CheckpointSettings`.
 
-**gaussian.py:** Gaussian kernel initializers for depthwise convolutions. Used for mean subtraction layer. Exports: `gaussian_kernel_2d`, `depthwise_gaussian_initializer`.
-
 **logging_utils.py:** Training diagnostics and console logging utilities. Exports: `log_diagnostics`, `ConsoleLogger`.
 
-**model.py:** Hierarchical embedding pyramid: Preprocessor (RGB→hidden_dim), EmbeddingBlock (unified for all levels). Decoupled cascade with symmetric mean subtraction, VALID padding, L2-normalized outputs. Exports: `HierarchicalEmbeddingModel`, `EmbeddingBlock`, `Preprocessor`, `count_parameters`.
+**model.py:** Simplified hierarchical embedding pyramid: 3 identical EmbeddingBlocks (Compact→DW×8→Project→L2). No preprocessor, no mean subtraction, no GroupNorm. VALID padding, stride=2 depthwise downsampling. Exports: `HierarchicalEmbeddingModel`, `EmbeddingBlock`, `count_parameters`.
 
 **settings.py:** Tyro-based CLI configuration. All hyperparameters for model, dataset, training, loss, logging, checkpointing. Exports: `Settings` and component dataclasses.
 
@@ -50,7 +48,7 @@ Shared utilities.
 
 **grid.py:** Window splitting/stitching for spatial operations. Splits embeddings into non-overlapping windows for attention. Exports: `WindowGrid`.
 
-**image.py:** Image I/O and preprocessing utilities.
+**image.py:** Image resolution calculations for embedding pyramid. Computes required input size for target coarse dimension with stride=2 depthwise convolutions. Exports: `calculate_required_input_size`, `calculate_coarse_output_size`, `image_size`.
 
 **logging.py:** TensorBoard logger wrapper. Exports: `TensorboardLogger`.
 

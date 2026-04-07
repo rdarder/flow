@@ -35,8 +35,9 @@ def create_smoke_test_settings() -> Settings:
         ),
         model=ModelSettings(
             embed_dim=8,  # Smaller embedding dim
-            hidden_dim=16,
-            num_groups=2,
+            compact_channels=4,
+            depthwise_multiplier=8,
+            project_groups=2,
             num_levels=2,
         ),
         loss=LossSettings(

@@ -91,27 +91,24 @@ class LoggingSettings:
 class ModelSettings:
     """Model architecture settings for embeddings training.
 
+    Simplified architecture: Compact → Depthwise (stride=2) → Project → L2
+    All blocks are identical, no preprocessor, no mean subtraction.
+
     Attributes:
         embed_dim: Output embedding dimension per level
-        hidden_dim: Hidden feature dimension
-        num_groups: Number of groups for grouped convolutions
+        compact_channels: Channels after PW compact (input compressed before spatial filtering)
+        depthwise_multiplier: Spatial filters per compacted channel (e.g., 8 means 8 different 3x3 filters)
+        project_groups: Number of groups for PW projection (each group is independent 8→4 conv)
         num_levels: Number of pyramid levels
-        use_group_norm: If True, apply GroupNorm after convolutions
-        use_mean_subtraction: If True, subtract local mean from features (contrast normalization)
-        use_l2_norm: If True, L2-normalize output embeddings
-        use_preprocessor: If True, use Preprocessor layer (RGB→hidden_dim). If False, first block takes RGB directly
-        use_mean_conv_for_downsampling: If True, use mean_conv output for downsampling. If False, strided slice of rich_features
+        num_groups: Alias for project_groups (for backward compatibility)
     """
 
     embed_dim: int = 16
-    hidden_dim: int = 32
-    num_groups: int = 4
+    compact_channels: int = 4
+    depthwise_multiplier: int = 8
+    project_groups: int = 4
     num_levels: int = 3
-    use_group_norm: bool = True
-    use_mean_subtraction: bool = True
-    use_l2_norm: bool = True
-    use_preprocessor: bool = True
-    use_mean_conv_for_downsampling: bool = True
+    num_groups: int = 4  # Alias for project_groups
 
     def __post_init__(self):
         check_value(
@@ -119,6 +116,18 @@ class ModelSettings:
         )
         check_value(
             self.embed_dim >= 1, f"embed_dim must be >= 1, got {self.embed_dim}"
+        )
+        check_value(
+            self.compact_channels >= 1,
+            f"compact_channels must be >= 1, got {self.compact_channels}",
+        )
+        check_value(
+            self.depthwise_multiplier >= 1,
+            f"depthwise_multiplier must be >= 1, got {self.depthwise_multiplier}",
+        )
+        check_value(
+            self.project_groups >= 1,
+            f"project_groups must be >= 1, got {self.project_groups}",
         )
 
 

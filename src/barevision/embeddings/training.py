@@ -265,17 +265,19 @@ class EmbeddingsTrainer:
         self.logger.log("")
         self.logger.log(f"Pyramid levels: {self.settings.model.num_levels}")
         self.logger.log(f"Embedding dim: {self.settings.model.embed_dim}")
-        self.logger.log(f"Hidden dim: {self.settings.model.hidden_dim}")
+        self.logger.log(f"Compact channels: {self.settings.model.compact_channels}")
+        self.logger.log(f"Depthwise multiplier: {self.settings.model.depthwise_multiplier}")
+        self.logger.log(f"Project groups: {self.settings.model.project_groups}")
         self.logger.log(
             f"Window size: {self.settings.loss.spatial_variance.window_size}×{self.settings.loss.spatial_variance.window_size}"
         )
         self.logger.log("")
-        self.logger.log("Model configuration:")
-        self.logger.log(f"  - Preprocessor: {self.settings.model.use_preprocessor}")
-        self.logger.log(f"  - GroupNorm: {self.settings.model.use_group_norm}")
-        self.logger.log(f"  - Mean subtraction: {self.settings.model.use_mean_subtraction}")
-        self.logger.log(f"  - Mean conv for downsampling: {self.settings.model.use_mean_conv_for_downsampling}")
-        self.logger.log(f"  - L2 norm: {self.settings.model.use_l2_norm}")
+        self.logger.log("Model: Simplified (Compact → DW×8 → Project → L2)")
+        self.logger.log("  - All blocks identical")
+        self.logger.log("  - No preprocessor")
+        self.logger.log("  - No mean subtraction")
+        self.logger.log("  - No GroupNorm")
+        self.logger.log("  - L2 norm on output (required)")
 
         image_size = image.image_size(
             self.settings.dataset.coarse_grid_size,
