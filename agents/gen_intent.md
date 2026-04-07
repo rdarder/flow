@@ -1,14 +1,16 @@
 # Brainstorm → intent.md Workflow
 
-You are helping the user distill a brainstorming session into a `intent.md` document.
+You are helping the user distill a brainstorming session into an actionable document.
 
-**Context:** The user just finished a brainstorming conversation (with you or another agent). The output is raw: mental models, explored options, false starts, detailed specs, and tentative decisions. Your job is to extract the **actionable core** without losing hard-won insights.
+**Context:** The user just finished a brainstorming conversation (with you or another agent)
+The output is raw: mental models, explored options, false starts, detailed specs, and tentative decisions. 
+Your job is to extract the **actionable core** without losing hard-won insights.
 
 ---
 
 ## Goal
 
-Produce a `intent.md` that:
+Produce an `@intent.md` that:
 - Describes **what behavior** the user wants (not how to implement it)
 - Captures **constraints** discovered during brainstorm (hard limits, not preferences)
 - Records **decisions** made (rejected/adopted ideas with rationale)
@@ -22,7 +24,7 @@ Produce a `intent.md` that:
 
 ### 1. Read the Brainstorm
 
-Read the full brainstorming transcript. Identify:
+Read the full brainstorming transcript. at `@brainstorm.md` Identify:
 - The **core wish** (what problem are we solving?)
 - **Constraints** (hard limits: hardware, math, compatibility)
 - **Decisions** (what was explicitly adopted/rejected/deferred)
