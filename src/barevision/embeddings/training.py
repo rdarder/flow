@@ -13,8 +13,6 @@ from barevision.embeddings.checkpointer import (
 from barevision.dataset.video import create_dataloader
 from barevision.embeddings.model import (
     count_parameters,
-    HierarchicalEmbeddingModel,
-    HierarchicalModelConfig,
     make_default_model_config,
 )
 from barevision.embeddings.spatial_losses import HierarchicalSpatialVarianceLoss
@@ -199,7 +197,9 @@ class EmbeddingsTrainer:
         )
 
         if should_log:
-            self._log_progress(epoch, global_step, step_in_epoch, loss, aux, epoch_start, img1)
+            self._log_progress(
+                epoch, global_step, step_in_epoch, loss, aux, epoch_start, img1
+            )
         if should_visualize:
             self._log_visualizations(img1, img2, aux, metadata[0], global_step)
 
@@ -264,7 +264,7 @@ class EmbeddingsTrainer:
             metadata=metadata,
             step=global_step,
             window_size=self.settings.loss.spatial_variance.window_size,
-            num_levels=self.settings.model.num_levels,
+            num_levels=len(self.model_config.levels),
         )
 
     def _log_header(self):
@@ -280,7 +280,7 @@ class EmbeddingsTrainer:
             f"Window size: {self.settings.loss.spatial_variance.window_size}×{self.settings.loss.spatial_variance.window_size}"
         )
         self.logger.log("")
-        self.logger.log("Model: Universal Inverted Block (UIB)")
+        self.logger.log("Model: Universal Inverted Bottleneck (UIB)")
         self.logger.log("  - 2 UIBs per level")
         self.logger.log("  - Second UIB downsamples")
         self.logger.log("  - DW before/after expand")

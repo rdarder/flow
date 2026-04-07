@@ -97,7 +97,7 @@ class TestLevelConfig:
     def test_output_size_two_uibs(self):
         """Test forward size calculation for level with 2 UIBs."""
         config = LevelConfig(
-            level_idx=0,
+            
             uib_configs=(
                 UIBConfig(
                     in_channels=3,
@@ -125,7 +125,7 @@ class TestLevelConfig:
     def test_required_input_size_two_uibs(self):
         """Test inverse size calculation for level with 2 UIBs."""
         config = LevelConfig(
-            level_idx=0,
+            
             uib_configs=(
                 UIBConfig(
                     in_channels=3,
@@ -153,7 +153,7 @@ class TestLevelConfig:
     def test_roundtrip_consistency(self):
         """Test that forward and inverse are consistent for level."""
         config = LevelConfig(
-            level_idx=0,
+            
             uib_configs=(
                 UIBConfig(
                     in_channels=16,
@@ -378,7 +378,7 @@ class TestLevel:
     def test_level_forward_pass(self):
         """Test Level forward pass with 2 UIBs."""
         config = LevelConfig(
-            level_idx=0,
+            
             uib_configs=(
                 UIBConfig(
                     in_channels=3,
@@ -452,7 +452,7 @@ class TestHierarchicalEmbeddingModel:
         """Test model with single level."""
         # Build custom single-level config
         level_config = LevelConfig(
-            level_idx=0,
+            
             uib_configs=(
                 UIBConfig(
                     in_channels=3,

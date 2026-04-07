@@ -2,7 +2,7 @@
 
 Multi-scale feature pyramid for coarse-to-fine patch matching.
 
-Architecture (MobileNet V4-inspired Universal Inverted Blocks):
+Architecture (MobileNet V4-inspired Universal Inverted Bottleneck blocks):
     Input: (B, H, W, 3) RGB
       ↓
     Level 0:
@@ -23,7 +23,7 @@ Architecture (MobileNet V4-inspired Universal Inverted Blocks):
 Output: List of feature maps [Level_0, Level_1, Level_2]
         Each level has 16 channels, spatial dimensions halve at each level.
 
-Universal Inverted Block (UIB) structure:
+Universal Inverted Bottleneck (UIB) block structure:
     - DW before expand (optional): 3×3 VALID, preserves channels
     - PW expand: 1×1 VALID, expands to 32 channels
     - DW after expand (optional): 3×3 VALID, preserves expanded channels
@@ -45,7 +45,7 @@ from flax import nnx
 
 @dataclass(frozen=True)
 class UIBConfig:
-    """Configuration for a Universal Inverted Block.
+    """Configuration for a Universal Inverted Bottleneck.
 
     Attributes:
         in_channels: Input channel count
@@ -116,11 +116,9 @@ class LevelConfig:
     """Configuration for a pyramid level.
 
     Attributes:
-        level_idx: Level index (0 = finest, increasing = coarser)
         uib_configs: Tuple of UIB configurations in order
     """
 
-    level_idx: int
     uib_configs: Tuple[UIBConfig, ...]
 
     def output_size(self, input_size: int) -> int:
@@ -193,7 +191,9 @@ class HierarchicalModelConfig:
             size = level_config.required_input_size(size)
         return size
 
-    def target_to_input(self, coarsest_grid_size: int, window_size: int) -> Tuple[int, int]:
+    def target_to_input(
+        self, coarsest_grid_size: int, window_size: int
+    ) -> Tuple[int, int]:
         """Calculate required input image size for target coarse grid.
 
         Args:
@@ -220,7 +220,7 @@ class HierarchicalModelConfig:
 
 
 class UniversalInvertedBlock(nnx.Module):
-    """Universal Inverted Block (UIB) inspired by MobileNet V4.
+    """Universal Inverted Bottleneck (UIB) inspired by MobileNet V4.
 
     Flexible block with optional DW convs before/after expansion,
     optional downsampling, and configurable L2 normalization.
@@ -402,10 +402,12 @@ class Level(nnx.Module):
             rngs: NNX RNGs for parameter initialization
         """
         self.config = config
-        self.uibs = nnx.List([
-            UniversalInvertedBlock(uib_config, rngs=rngs)
-            for uib_config in config.uib_configs
-        ])
+        self.uibs = nnx.List(
+            [
+                UniversalInvertedBlock(uib_config, rngs=rngs)
+                for uib_config in config.uib_configs
+            ]
+        )
 
     def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
         """Forward pass through all UIBs in this level.
@@ -448,10 +450,9 @@ class HierarchicalEmbeddingModel(nnx.Module):
         self.config = config
 
         # Build levels from config
-        self.levels = nnx.List([
-            Level(level_config, rngs=rngs)
-            for level_config in config.levels
-        ])
+        self.levels = nnx.List(
+            [Level(level_config, rngs=rngs) for level_config in config.levels]
+        )
 
     def __call__(self, x: jnp.ndarray) -> List[jnp.ndarray]:
         """Forward pass through pyramid.
@@ -511,27 +512,58 @@ def make_default_model_config() -> HierarchicalModelConfig:
     Returns:
         HierarchicalModelConfig for default model
     """
-    levels = []
-    for level_idx in range(3):
-        uib_configs = []
-        for uib_idx in range(2):
-            is_first_uib = uib_idx == 0
-            is_first_level = level_idx == 0
+    # Level 0: RGB (3 ch) → 16 channels
+    level_0 = LevelConfig(
+        uib_configs=(
+            UIBConfig(
+                in_channels=3,
+                out_channels=8,
+                expanded_channels=16,
+                use_dw_before_expand=False,
+                use_dw_after_expand=True,
+                downsample_after=False,
+                use_l2_norm=False,
+            ),
+            UIBConfig(
+                in_channels=8,
+                out_channels=16,
+                expanded_channels=32,
+                use_dw_before_expand=True,
+                use_dw_after_expand=True,
+                downsample_after=True,
+                use_l2_norm=True,
+            ),
+        ),
+    )
 
-            in_channels = 3 if (is_first_level and is_first_uib) else 16
+    # Level 1: 16 channels → 16 channels
+    level_1 = LevelConfig(
+        uib_configs=(
+            UIBConfig(
+                in_channels=16,
+                out_channels=16,
+                expanded_channels=32,
+                use_dw_before_expand=True,
+                use_dw_after_expand=True,
+                downsample_after=True,
+                use_l2_norm=True,
+            ),
+        ),
+    )
 
-            uib_configs.append(
-                UIBConfig(
-                    in_channels=in_channels,
-                    out_channels=16,
-                    expanded_channels=32,
-                    use_dw_before_expand=True,
-                    use_dw_after_expand=True,
-                    downsample_after=not is_first_uib,
-                    use_l2_norm=not is_first_uib,
-                )
-            )
+    # Level 2: 16 channels → 16 channels (final)
+    level_2 = LevelConfig(
+        uib_configs=(
+            UIBConfig(
+                in_channels=16,
+                out_channels=16,
+                expanded_channels=32,
+                use_dw_before_expand=True,
+                use_dw_after_expand=True,
+                downsample_after=True,
+                use_l2_norm=True,
+            ),
+        ),
+    )
 
-        levels.append(LevelConfig(level_idx=level_idx, uib_configs=tuple(uib_configs)))
-
-    return HierarchicalModelConfig(levels=tuple(levels))
+    return HierarchicalModelConfig(levels=(level_0, level_1, level_2))

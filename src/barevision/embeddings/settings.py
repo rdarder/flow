@@ -189,7 +189,7 @@ class Settings:
 
     This is the main entry point for CLI configuration.
     Model configuration is hardcoded in training.py (not CLI-configurable yet).
-    
+
     Attributes:
         dataset: Dataset configuration
         loss: Loss configuration
