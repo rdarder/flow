@@ -48,11 +48,21 @@ class SpatialVarianceLossConfig(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    window_size: int = Field(default=16, ge=1, description="Attention window size in pixels")
-    level_weight_decay: float = Field(default=1.1, ge=0, description="Loss weight decay factor per level")
-    lambda_self: float = Field(default=0.6, ge=0, le=1, description="Self-attention loss weight in [0, 1]")
-    self_temperature: float = Field(default=0.25, gt=0, description="Temperature for self-attention softmax")
-    cross_temperature: float = Field(default=0.25, gt=0, description="Temperature for cross-attention softmax")
+    window_size: int = Field(
+        default=16, ge=1, description="Attention window size in pixels"
+    )
+    level_weight_decay: float = Field(
+        default=1.1, ge=0, description="Loss weight decay factor per level"
+    )
+    lambda_self: float = Field(
+        default=0.6, ge=0, le=1, description="Self-attention loss weight in [0, 1]"
+    )
+    self_temperature: float = Field(
+        default=0.25, gt=0, description="Temperature for self-attention softmax"
+    )
+    cross_temperature: float = Field(
+        default=0.25, gt=0, description="Temperature for cross-attention softmax"
+    )
 
 
 def _compute_attention_and_variance(

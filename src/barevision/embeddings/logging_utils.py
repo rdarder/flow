@@ -52,7 +52,9 @@ def log_attention_statistics(
     grid = WindowGrid(window_size=window_size)
     windows = grid.split(embeddings_cropped)
     num_windows = (H_crop // window_size) * (W_crop // window_size)
-    flat_windows = windows.reshape(B_crop * num_windows, window_size, window_size, D_crop)
+    flat_windows = windows.reshape(
+        B_crop * num_windows, window_size, window_size, D_crop
+    )
 
     # Precompute coordinates
     coords = generate_normalized_coordinates(window_size)
@@ -220,9 +222,7 @@ def log_metrics(logger: TensorboardLogger, loss, aux, step: int):
                 logger.log_scalar(
                     f"Loss/level_{i}/weighted_loss", float(level_loss), step
                 )
-                logger.log_scalar(
-                    f"Loss/level_{i}/weight", float(level_weight), step
-                )
+                logger.log_scalar(f"Loss/level_{i}/weight", float(level_weight), step)
 
 
 def log_diagnostics(
@@ -264,7 +264,12 @@ def log_diagnostics(
         prefix = f"Embeddings/level{i}"
         log_embedding_statistics(logger, embeddings, step, prefix=prefix)
         log_attention_statistics(
-            logger, embeddings, step, window_size, temperature, prefix=f"Attention/level{i}"
+            logger,
+            embeddings,
+            step,
+            window_size,
+            temperature,
+            prefix=f"Attention/level{i}",
         )
 
 
@@ -356,7 +361,7 @@ def print_footer():
 
 def print_header(config):
     """Print training header.
-    
+
     Args:
         config: RootConfig or dict with dataset and training settings
     """

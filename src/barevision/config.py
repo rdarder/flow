@@ -37,7 +37,9 @@ class TrainingConfig(BaseModel):
 
     seed: int = Field(default=42, ge=0, description="Random seed for reproducibility")
     epochs: int = Field(default=10, ge=1, description="Number of training epochs")
-    learning_rate: float = Field(default=1e-3, gt=0, description="Optimizer learning rate")
+    learning_rate: float = Field(
+        default=1e-3, gt=0, description="Optimizer learning rate"
+    )
 
 
 class LoggingConfig(BaseModel):
@@ -51,9 +53,13 @@ class LoggingConfig(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    tensorboard_dir: str = Field(default="runs", min_length=1, description="Root directory for TensorBoard logs")
+    tensorboard_dir: str = Field(
+        default="runs", min_length=1, description="Root directory for TensorBoard logs"
+    )
     every_steps: int = Field(default=200, ge=1, description="Log metrics every N steps")
-    visualizations_every_steps: int = Field(default=1000, ge=1, description="Generate visualizations every N steps")
+    visualizations_every_steps: int = Field(
+        default=1000, ge=1, description="Generate visualizations every N steps"
+    )
 
 
 class ValidationConfig(BaseModel):
@@ -65,7 +71,9 @@ class ValidationConfig(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    every_epochs: int = Field(default=1, ge=0, description="Run validation every N epochs (0 to disable)")
+    every_epochs: int = Field(
+        default=1, ge=0, description="Run validation every N epochs (0 to disable)"
+    )
 
 
 class LossConfig(BaseModel):
@@ -77,7 +85,9 @@ class LossConfig(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    spatial_variance: SpatialVarianceLossConfig = Field(description="Spatial variance loss configuration")
+    spatial_variance: SpatialVarianceLossConfig = Field(
+        description="Spatial variance loss configuration"
+    )
 
 
 class RootConfig(BaseModel):
@@ -99,8 +109,12 @@ class RootConfig(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    name: str = Field(default="experiment", min_length=1, description="Experiment name identifier")
-    model: HierarchicalModelConfig = Field(description="Hierarchical embedding model configuration")
+    name: str = Field(
+        default="experiment", min_length=1, description="Experiment name identifier"
+    )
+    model: HierarchicalModelConfig = Field(
+        description="Hierarchical embedding model configuration"
+    )
     dataset: DatasetConfig = Field(description="Dataset loading configuration")
     loss: LossConfig = Field(description="Loss function configuration")
     training: TrainingConfig = Field(description="Training hyperparameters")

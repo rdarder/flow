@@ -3,7 +3,10 @@
 import jax.numpy as jnp
 from flax import nnx
 
-from barevision.embeddings.gaussian import gaussian_kernel_2d, depthwise_gaussian_initializer
+from barevision.embeddings.gaussian import (
+    gaussian_kernel_2d,
+    depthwise_gaussian_initializer,
+)
 from barevision.embeddings.model import UIBConfig, UniversalInvertedBlock
 
 
@@ -108,4 +111,4 @@ def test_gaussian_init_ignored_when_no_downsample():
     model = UniversalInvertedBlock(config, rngs=rngs)
 
     # Should not have downsample attribute
-    assert not hasattr(model, 'downsample')
+    assert not hasattr(model, "downsample")

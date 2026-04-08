@@ -17,7 +17,7 @@ from barevision.embeddings.model import (
 
 def _make_test_model_config() -> HierarchicalModelConfig:
     """Build a test model config with known structure.
-    
+
     3 levels, 2 UIBs per level, second UIB downsamples.
     This is explicit and doesn't depend on make_default_model_config().
     """
@@ -159,7 +159,9 @@ class TestUIBConfig:
         input_size = 137
         output = config.output_size(input_size)
         recovered = config.required_input_size(output)
-        assert recovered == input_size, f"Roundtrip failed: {input_size} → {output} → {recovered}"
+        assert (
+            recovered == input_size
+        ), f"Roundtrip failed: {input_size} → {output} → {recovered}"
 
 
 class TestLevelConfig:
@@ -168,7 +170,6 @@ class TestLevelConfig:
     def test_output_size_two_uibs(self):
         """Test forward size calculation for level with 2 UIBs."""
         config = LevelConfig(
-            
             uib_configs=(
                 UIBConfig(
                     in_channels=3,
@@ -196,7 +197,6 @@ class TestLevelConfig:
     def test_required_input_size_two_uibs(self):
         """Test inverse size calculation for level with 2 UIBs."""
         config = LevelConfig(
-            
             uib_configs=(
                 UIBConfig(
                     in_channels=3,
@@ -224,7 +224,6 @@ class TestLevelConfig:
     def test_roundtrip_consistency(self):
         """Test that forward and inverse are consistent for level."""
         config = LevelConfig(
-            
             uib_configs=(
                 UIBConfig(
                     in_channels=16,
@@ -247,7 +246,9 @@ class TestLevelConfig:
         input_size = 137
         output = config.output_size(input_size)
         recovered = config.required_input_size(output)
-        assert recovered == input_size, f"Roundtrip failed: {input_size} → {output} → {recovered}"
+        assert (
+            recovered == input_size
+        ), f"Roundtrip failed: {input_size} → {output} → {recovered}"
 
 
 class TestHierarchicalModelConfig:
@@ -269,7 +270,9 @@ class TestHierarchicalModelConfig:
         # Inverse of forward: should recover 137 (or close due to floor division)
         assert result <= 137, f"Expected <= 137, got {result}"
         # Verify it produces the right output
-        assert config.output_size(result) == 9, f"Inverse doesn't produce correct output"
+        assert (
+            config.output_size(result) == 9
+        ), f"Inverse doesn't produce correct output"
 
     def test_target_to_input(self):
         """Test target_to_input method."""
@@ -285,7 +288,9 @@ class TestHierarchicalModelConfig:
         output = config.output_size(input_size)
         recovered = config.required_input_size(output)
         # Due to floor division, recovered may be <= input_size
-        assert config.output_size(recovered) == output, "Recovered doesn't produce same output"
+        assert (
+            config.output_size(recovered) == output
+        ), "Recovered doesn't produce same output"
         assert recovered <= input_size, "Recovered should be <= original"
 
     def test_build_model(self):
@@ -449,7 +454,6 @@ class TestLevel:
     def test_level_forward_pass(self):
         """Test Level forward pass with 2 UIBs."""
         config = LevelConfig(
-            
             uib_configs=(
                 UIBConfig(
                     in_channels=3,
@@ -523,7 +527,6 @@ class TestHierarchicalEmbeddingModel:
         """Test model with single level."""
         # Build custom single-level config
         level_config = LevelConfig(
-            
             uib_configs=(
                 UIBConfig(
                     in_channels=3,

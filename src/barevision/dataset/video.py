@@ -40,13 +40,25 @@ class DatasetConfig(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     batch_size: int = Field(default=8, ge=1, description="Training batch size")
-    coarse_grid_size: int = Field(default=1, ge=1, description="Target coarse-level grid dimension")
-    window_size: int = Field(default=16, ge=1, description="Window size at coarse level")
+    coarse_grid_size: int = Field(
+        default=1, ge=1, description="Target coarse-level grid dimension"
+    )
+    window_size: int = Field(
+        default=16, ge=1, description="Window size at coarse level"
+    )
     num_levels: int = Field(default=3, ge=1, description="Number of pyramid levels")
-    min_frame_distance: int = Field(default=1, ge=1, description="Minimum temporal distance for frame pairs")
-    max_frame_distance: int = Field(default=3, ge=1, description="Maximum temporal distance for frame pairs")
-    max_samples: int = Field(default=-1, description="Maximum samples per epoch (-1 for full dataset)")
-    num_workers: int = Field(default=4, ge=0, description="Number of worker processes for data loading")
+    min_frame_distance: int = Field(
+        default=1, ge=1, description="Minimum temporal distance for frame pairs"
+    )
+    max_frame_distance: int = Field(
+        default=3, ge=1, description="Maximum temporal distance for frame pairs"
+    )
+    max_samples: int = Field(
+        default=-1, description="Maximum samples per epoch (-1 for full dataset)"
+    )
+    num_workers: int = Field(
+        default=4, ge=0, description="Number of worker processes for data loading"
+    )
 
 
 class FramePair(NamedTuple):

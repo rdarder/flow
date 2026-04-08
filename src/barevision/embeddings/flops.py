@@ -329,7 +329,9 @@ def print_flops_report(report: FlopsReport) -> None:
     print("=" * 70)
     print("FLOPs Report - Hierarchical Embedding Model")
     print("=" * 70)
-    print(f"Input size: {report.input_size[0]}×{report.input_size[1]}×{report.input_size[2]}")
+    print(
+        f"Input size: {report.input_size[0]}×{report.input_size[1]}×{report.input_size[2]}"
+    )
     print(f"Total FLOPs: {report.total_flops_g:.3f}G ({report.total_flops_m:.2f}M)")
     print()
 

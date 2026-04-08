@@ -35,10 +35,22 @@ class CheckpointConfig(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    every_epochs: int = Field(default=1, ge=0, description="Save checkpoint every N epochs (0 to disable)")
-    location: str = Field(default="checkpoints", min_length=1, description="Base directory for checkpoints")
-    keep_best_n: int = Field(default=3, ge=1, description="Number of best checkpoints to keep based on validation loss")
-    resume_from: Optional[Path] = Field(default=None, description="Path to checkpoint to resume from")
+    every_epochs: int = Field(
+        default=1, ge=0, description="Save checkpoint every N epochs (0 to disable)"
+    )
+    location: str = Field(
+        default="checkpoints",
+        min_length=1,
+        description="Base directory for checkpoints",
+    )
+    keep_best_n: int = Field(
+        default=3,
+        ge=1,
+        description="Number of best checkpoints to keep based on validation loss",
+    )
+    resume_from: Optional[Path] = Field(
+        default=None, description="Path to checkpoint to resume from"
+    )
 
 
 class CheckpointManagerWrapper:
@@ -94,8 +106,6 @@ class CheckpointManagerWrapper:
         )
         self.logger.log(f"Checkpoint saved at epoch {epoch} (val_loss: {val_loss:.6f})")
 
-
-
     def close(self):
         pass
 
@@ -111,14 +121,10 @@ class CheckpointManagerWrapper:
         if self.config.resume_from is None:
             return
         if not self.config.resume_from.exists():
-            raise FileNotFoundError(
-                f"Checkpoint not found: {self.config.resume_from}"
-            )
+            raise FileNotFoundError(f"Checkpoint not found: {self.config.resume_from}")
         graphdef, tree = nnx.split(model)
         restored = self._manager.restore(step=None, args=StandardRestore(tree))
         nnx.update(model, restored)
-
-
 
 
 class KeepBestLossN(PreservationPolicy):
@@ -157,6 +163,3 @@ class KeepBestLossN(PreservationPolicy):
             # No loss = worst score (will be deleted first)
             return float("inf")
         return ckpt.metrics["val_loss"]
-
-
-

@@ -64,11 +64,21 @@ class UIBConfig(BaseModel):
 
     in_channels: int = Field(ge=1, description="Input channel count")
     out_channels: int = Field(ge=1, description="Output channel count")
-    expanded_channels: int = Field(default=32, ge=1, description="Channel count after expansion")
-    use_dw_before_expand: bool = Field(default=True, description="Add DW conv before expansion")
-    use_dw_after_expand: bool = Field(default=True, description="Add DW conv after expansion")
-    downsample_after: bool = Field(default=False, description="Add 3×3 stride=2 DW conv at end")
-    downsample_gaussian_sigma: float = Field(default=1.0, gt=0, description="Sigma for Gaussian kernel initialization")
+    expanded_channels: int = Field(
+        default=32, ge=1, description="Channel count after expansion"
+    )
+    use_dw_before_expand: bool = Field(
+        default=True, description="Add DW conv before expansion"
+    )
+    use_dw_after_expand: bool = Field(
+        default=True, description="Add DW conv after expansion"
+    )
+    downsample_after: bool = Field(
+        default=False, description="Add 3×3 stride=2 DW conv at end"
+    )
+    downsample_gaussian_sigma: float = Field(
+        default=1.0, gt=0, description="Sigma for Gaussian kernel initialization"
+    )
     use_l2_norm: bool = Field(default=False, description="L2-normalize output")
 
     def output_size(self, input_size: int) -> int:
@@ -126,7 +136,9 @@ class LevelConfig(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    uib_configs: Tuple[UIBConfig, ...] = Field(description="UIB configurations in order")
+    uib_configs: Tuple[UIBConfig, ...] = Field(
+        description="UIB configurations in order"
+    )
 
     def output_size(self, input_size: int) -> int:
         """Calculate output spatial size after all UIBs in this level (forward).
@@ -169,7 +181,9 @@ class HierarchicalModelConfig(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    levels: Tuple[LevelConfig, ...] = Field(description="Level configurations, one per pyramid level")
+    levels: Tuple[LevelConfig, ...] = Field(
+        description="Level configurations, one per pyramid level"
+    )
 
     def output_size(self, input_size: int) -> int:
         """Calculate final coarse output size given input (forward).
@@ -382,7 +396,7 @@ class UniversalInvertedBlock(nnx.Module):
         # Downsample
         if self.config.downsample_after:
             x = self.downsample(x)
-            # x = self.norm_downsample(x)
+            x = self.norm_downsample(x)
             # x = nnx.relu(x)
 
         # L2 normalization
@@ -512,5 +526,3 @@ def count_parameters(model: nnx.Module) -> int:
 
     count_recursive(state)
     return total
-
-

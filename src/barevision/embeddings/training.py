@@ -35,9 +35,7 @@ class EmbeddingsTrainer:
         self.model_config = config.model
         rngs = nnx.Rngs(config.training.seed)
         embeddings_model = self.model_config.build_model(rngs=rngs)
-        self.loss_fn_obj = HierarchicalSpatialVarianceLoss(
-            config.loss.spatial_variance
-        )
+        self.loss_fn_obj = HierarchicalSpatialVarianceLoss(config.loss.spatial_variance)
 
         self.optimizer = nnx.Optimizer(
             embeddings_model,
@@ -293,9 +291,7 @@ class EmbeddingsTrainer:
         self.logger.log(f"Epochs: {self.config.training.epochs}")
         self.logger.log(f"Batch size: {self.config.dataset.batch_size}")
         if self.config.dataset.max_samples > 0:
-            self.logger.log(
-                f"Max samples per epoch: {self.config.dataset.max_samples}"
-            )
+            self.logger.log(f"Max samples per epoch: {self.config.dataset.max_samples}")
         self.logger.log("")
         self.logger.log(f"Loss: Spatial Variance")
         self.logger.log(
@@ -389,11 +385,11 @@ if __name__ == "__main__":
     # CLI: just --config path (default: config.yaml)
     def main(config: Path = Path("config.yaml")):
         """Embeddings training with YAML configuration.
-        
+
         Args:
             config: Path to YAML configuration file (default: config.yaml)
         """
         config_obj = load_config(str(config))
         EmbeddingsTrainer(config_obj)()
-    
+
     tyro.cli(main)()
