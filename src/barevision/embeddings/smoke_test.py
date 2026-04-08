@@ -7,22 +7,58 @@ Run: python -m barevision.embeddings.smoke_test
 """
 
 from barevision.embeddings.training import EmbeddingsTrainer
-from barevision.embeddings.settings import (
-    Settings,
-    DatasetSettings,
-    LossSettings,
-    SpatialVarianceLossSettings,
-    TrainingSettings,
-    LoggingSettings,
-    ValidationSettings,
-)
-from barevision.embeddings.checkpointer import CheckpointSettings
+from barevision.config import RootConfig, HierarchicalModelConfig, LossConfig
+from barevision.embeddings.model import LevelConfig, UIBConfig
+from barevision.dataset.video import DatasetConfig
+from barevision.embeddings.spatial_losses import SpatialVarianceLossConfig
+from barevision.embeddings.checkpointer import CheckpointConfig
+from barevision.config import TrainingConfig, LoggingConfig, ValidationConfig
 
 
-def create_smoke_test_settings() -> Settings:
-    """Minimal settings for quick validation."""
-    return Settings(
-        dataset=DatasetSettings(
+def create_smoke_test_config() -> RootConfig:
+    """Minimal config for quick validation."""
+    return RootConfig(
+        name="smoke_test",
+        model=HierarchicalModelConfig(
+            levels=(
+                LevelConfig(
+                    uib_configs=(
+                        UIBConfig(
+                            in_channels=3,
+                            out_channels=8,
+                            expanded_channels=16,
+                            use_dw_before_expand=True,
+                            use_dw_after_expand=True,
+                            downsample_after=True,
+                            use_l2_norm=False,
+                        ),
+                        UIBConfig(
+                            in_channels=8,
+                            out_channels=16,
+                            expanded_channels=32,
+                            use_dw_before_expand=True,
+                            use_dw_after_expand=True,
+                            downsample_after=False,
+                            use_l2_norm=True,
+                        ),
+                    ),
+                ),
+                LevelConfig(
+                    uib_configs=(
+                        UIBConfig(
+                            in_channels=16,
+                            out_channels=16,
+                            expanded_channels=64,
+                            use_dw_before_expand=True,
+                            use_dw_after_expand=True,
+                            downsample_after=True,
+                            use_l2_norm=True,
+                        ),
+                    ),
+                ),
+            ),
+        ),
+        dataset=DatasetConfig(
             batch_size=1,
             coarse_grid_size=1,
             window_size=16,
@@ -32,8 +68,8 @@ def create_smoke_test_settings() -> Settings:
             max_samples=1,  # Only 1 sample per epoch
             num_workers=0,
         ),
-        loss=LossSettings(
-            spatial_variance=SpatialVarianceLossSettings(
+        loss=LossConfig(
+            spatial_variance=SpatialVarianceLossConfig(
                 window_size=16,
                 level_weight_decay=1.0,
                 lambda_self=0.5,
@@ -41,24 +77,23 @@ def create_smoke_test_settings() -> Settings:
                 cross_temperature=0.3,
             )
         ),
-        training=TrainingSettings(
+        training=TrainingConfig(
             epochs=2,  # Run 2 epochs to test epoch boundaries
             learning_rate=1e-3,
         ),
-        logging=LoggingSettings(
+        logging=LoggingConfig(
             tensorboard_dir="test_runs",
             every_steps=1,  # Log everything every step
             visualizations_every_steps=1,  # Visualize every step
         ),
-        checkpoint=CheckpointSettings(
+        checkpoint=CheckpointConfig(
             every_epochs=2,  # Checkpoint every 2 epochs
             location="test_checkpoints",
             keep_best_n=2,  # Keep best 2 by validation loss
         ),
-        validation=ValidationSettings(
+        validation=ValidationConfig(
             every_epochs=2,  # Validate every 2 epochs
         ),
-        run_name_prefix="smoke_test",
     )
 
 
@@ -74,8 +109,8 @@ if __name__ == "__main__":
     print("  - Validation every 2 epochs")
     print()
 
-    settings = create_smoke_test_settings()
-    trainer = EmbeddingsTrainer(settings)
+    config = create_smoke_test_config()
+    trainer = EmbeddingsTrainer(config)
     trainer()
 
     print()
@@ -85,4 +120,4 @@ if __name__ == "__main__":
     print()
     print("The embeddings training pipeline is working correctly.")
     print("You can now run full training with:")
-    print("  python -m barevision.embeddings.training")
+    print("  python -m barevision.embeddings.training --config config.yaml")

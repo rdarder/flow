@@ -17,9 +17,36 @@ import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
 from PIL import Image
+from pydantic import BaseModel, ConfigDict, Field
 
 from typing import Tuple
 from barevision.utils.path import get_datasets_dir
+
+
+class DatasetConfig(BaseModel):
+    """Dataset configuration for video frame loading.
+
+    Attributes:
+        batch_size: Training batch size
+        coarse_grid_size: Target coarse-level grid dimension (default 1 for 1×1 grid)
+        window_size: Window size at coarse level (default 16)
+        num_levels: Number of pyramid levels (used to calculate required input size)
+        min_frame_distance: Minimum temporal distance for frame pairs (default 1)
+        max_frame_distance: Maximum temporal distance for frame pairs
+        max_samples: Maximum samples per epoch (-1 for full dataset)
+        num_workers: Number of worker processes for data loading (0 = main process only)
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    batch_size: int = Field(default=8, ge=1, description="Training batch size")
+    coarse_grid_size: int = Field(default=1, ge=1, description="Target coarse-level grid dimension")
+    window_size: int = Field(default=16, ge=1, description="Window size at coarse level")
+    num_levels: int = Field(default=3, ge=1, description="Number of pyramid levels")
+    min_frame_distance: int = Field(default=1, ge=1, description="Minimum temporal distance for frame pairs")
+    max_frame_distance: int = Field(default=3, ge=1, description="Maximum temporal distance for frame pairs")
+    max_samples: int = Field(default=-1, description="Maximum samples per epoch (-1 for full dataset)")
+    num_workers: int = Field(default=4, ge=0, description="Number of worker processes for data loading")
 
 
 class FramePair(NamedTuple):

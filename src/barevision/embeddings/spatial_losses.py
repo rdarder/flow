@@ -20,14 +20,39 @@ from typing import List, Tuple
 
 import jax
 import jax.numpy as jnp
+from pydantic import BaseModel, ConfigDict, Field
 
-from barevision.embeddings.settings import SpatialVarianceLossSettings
 from barevision.utils.checks import check_value
 from barevision.utils.grid import (
     crop_to_grid_aligned,
     WindowGrid,
     generate_normalized_coordinates,
 )
+
+
+class SpatialVarianceLossConfig(BaseModel):
+    """Settings for spatial variance loss.
+
+    Attributes:
+        window_size: Attention window size in pixels (must divide feature map dimensions)
+        level_weight_decay: Loss weight decay factor per level (default 1.1)
+                           Coarser levels get higher weight: level_i weight = decay^i.
+                           Set to 1.0 for uniform weighting across levels.
+        lambda_self: Self-attention loss weight in [0, 1] (default 0.6)
+                    loss = lambda_self * self_loss + (1 - lambda_self) * cross_loss
+        self_temperature: Temperature for self-attention softmax (default 0.25)
+                         Lower = sharper attention peaks
+        cross_temperature: Temperature for cross-attention softmax (default 0.25)
+                          Lower = sharper attention peaks
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    window_size: int = Field(default=16, ge=1, description="Attention window size in pixels")
+    level_weight_decay: float = Field(default=1.1, ge=0, description="Loss weight decay factor per level")
+    lambda_self: float = Field(default=0.6, ge=0, le=1, description="Self-attention loss weight in [0, 1]")
+    self_temperature: float = Field(default=0.25, gt=0, description="Temperature for self-attention softmax")
+    cross_temperature: float = Field(default=0.25, gt=0, description="Temperature for cross-attention softmax")
 
 
 def _compute_attention_and_variance(
@@ -308,7 +333,7 @@ def windowed_spatial_variance_losses(
 def compute_hierarchical_spatial_variance_loss(
     pyramid1: List[jnp.ndarray],
     pyramid2: List[jnp.ndarray],
-    settings: SpatialVarianceLossSettings,
+    config: SpatialVarianceLossConfig,
     need_aux: bool = True,
 ) -> Tuple[jnp.ndarray, dict]:
     """Compute compound spatial variance loss across all pyramid levels.
@@ -319,7 +344,7 @@ def compute_hierarchical_spatial_variance_loss(
     Args:
         pyramid1: List of feature maps from frame 1, one per level
         pyramid2: List of feature maps from frame 2, one per level
-        settings: Loss configuration
+        config: Loss configuration
         need_aux: Whether to return auxiliary data
 
     Returns:
@@ -350,33 +375,33 @@ def compute_hierarchical_spatial_variance_loss(
     level_cross_variance = []
 
     for level_idx in range(num_levels):
-        level_weight = settings.level_weight_decay**level_idx
+        level_weight = config.level_weight_decay**level_idx
 
         emb1 = pyramid1[level_idx]
         emb2 = pyramid2[level_idx]
 
         # Crop to grid-aligned dimensions
-        emb1_cropped = crop_to_grid_aligned(emb1, settings.window_size)
-        emb2_cropped = crop_to_grid_aligned(emb2, settings.window_size)
+        emb1_cropped = crop_to_grid_aligned(emb1, config.window_size)
+        emb2_cropped = crop_to_grid_aligned(emb2, config.window_size)
 
         B, H, W, D = emb1_cropped.shape
 
         # Validate we have at least one window
-        num_windows_h = H // settings.window_size
-        num_windows_w = W // settings.window_size
+        num_windows_h = H // config.window_size
+        num_windows_w = W // config.window_size
         if num_windows_h == 0 or num_windows_w == 0:
             raise ValueError(
-                f"Level {level_idx}: Cropped dimensions ({H}x{W}) too small for window_size {settings.window_size}"
+                f"Level {level_idx}: Cropped dimensions ({H}x{W}) too small for window_size {config.window_size}"
             )
 
         # Compute loss at this level
         level_loss, level_aux = windowed_spatial_variance_losses(
             emb1_cropped,
             emb2_cropped,
-            window_size=settings.window_size,
-            lambda_self=settings.lambda_self,
-            self_temperature=settings.self_temperature,
-            cross_temperature=settings.cross_temperature,
+            window_size=config.window_size,
+            lambda_self=config.lambda_self,
+            self_temperature=config.self_temperature,
+            cross_temperature=config.cross_temperature,
             need_aux=need_aux,
         )
 
@@ -428,8 +453,8 @@ class HierarchicalSpatialVarianceLoss:
     variance at all pyramid levels and aggregates with configurable weighting.
     """
 
-    def __init__(self, settings: SpatialVarianceLossSettings):
-        self.settings = settings
+    def __init__(self, config: SpatialVarianceLossConfig):
+        self.config = config
 
     def __call__(
         self,
@@ -453,5 +478,5 @@ class HierarchicalSpatialVarianceLoss:
         )
 
         return compute_hierarchical_spatial_variance_loss(
-            pyramid1, pyramid2, self.settings, need_aux=need_aux
+            pyramid1, pyramid2, self.config, need_aux=need_aux
         )

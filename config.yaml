@@ -1,0 +1,76 @@
+# Barevision Embeddings Training Configuration
+# 
+# This file contains all configuration for embeddings training.
+# Copy and modify for new experiments.
+
+name: default
+
+model:
+  levels:
+    - uib_configs:
+        - in_channels: 3
+          out_channels: 8
+          expanded_channels: 16
+          use_dw_before_expand: true
+          use_dw_after_expand: true
+          downsample_after: true
+          use_l2_norm: false
+        - in_channels: 8
+          out_channels: 16
+          expanded_channels: 32
+          use_dw_before_expand: true
+          use_dw_after_expand: true
+          downsample_after: false
+          use_l2_norm: true
+    - uib_configs:
+        - in_channels: 16
+          out_channels: 16
+          expanded_channels: 64
+          use_dw_before_expand: true
+          use_dw_after_expand: true
+          downsample_after: true
+          use_l2_norm: true
+    - uib_configs:
+        - in_channels: 16
+          out_channels: 16
+          expanded_channels: 64
+          use_dw_before_expand: true
+          use_dw_after_expand: true
+          downsample_after: true
+          use_l2_norm: true
+
+dataset:
+  batch_size: 8
+  coarse_grid_size: 1
+  window_size: 16
+  num_levels: 3
+  min_frame_distance: 1
+  max_frame_distance: 3
+  max_samples: -1
+  num_workers: 4
+
+loss:
+  spatial_variance:
+    window_size: 16
+    level_weight_decay: 1.1
+    lambda_self: 0.6
+    self_temperature: 0.25
+    cross_temperature: 0.25
+
+training:
+  seed: 42
+  epochs: 10
+  learning_rate: 0.001
+
+logging:
+  tensorboard_dir: runs
+  every_steps: 200
+  visualizations_every_steps: 1000
+
+checkpoint:
+  every_epochs: 1
+  location: checkpoints
+  keep_best_n: 3
+
+validation:
+  every_epochs: 1

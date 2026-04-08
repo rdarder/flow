@@ -8,12 +8,10 @@ import time
 import jax.numpy as jnp
 import numpy as np
 
-from barevision.embeddings.settings import Settings
 from barevision.embeddings.spatial_losses import (
     self_attention_spatial_variance,
     cross_attention_spatial_variance,
 )
-from barevision.embeddings.model import HierarchicalEmbeddingModel
 from barevision.utils.grid import (
     WindowGrid,
     generate_normalized_coordinates,
@@ -356,18 +354,23 @@ def print_footer():
     print("=" * 60)
 
 
-def print_header(settings: Settings):
+def print_header(config):
+    """Print training header.
+    
+    Args:
+        config: RootConfig or dict with dataset and training settings
+    """
     print("=" * 60)
     print("OPTICAL FLOW TRAINING")
     print("=" * 60)
     print()
     print(
-        f"Coarse grid: {settings.dataset.coarse_grid_size}×{settings.dataset.coarse_grid_size}"
+        f"Coarse grid: {config.dataset.coarse_grid_size}×{config.dataset.coarse_grid_size}"
     )
-    print(f"Window size: {settings.dataset.window_size}×{settings.dataset.window_size}")
+    print(f"Window size: {config.dataset.window_size}×{config.dataset.window_size}")
     print()
-    print(f"Epochs: {settings.training.epochs}")
-    print(f"Batch size: {settings.dataset.batch_size}")
-    if settings.dataset.max_samples > 0:
-        print(f"Max samples per epoch: {settings.dataset.max_samples}")
+    print(f"Epochs: {config.training.epochs}")
+    print(f"Batch size: {config.dataset.batch_size}")
+    if config.dataset.max_samples > 0:
+        print(f"Max samples per epoch: {config.dataset.max_samples}")
     print()

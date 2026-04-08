@@ -1,59 +1,55 @@
 import datetime
 import time
 from functools import partial
+from pathlib import Path
 
 import jax.numpy as jnp
 import optax
 import tyro
 from flax import nnx
 
-from barevision.embeddings.checkpointer import (
-    CheckpointManagerWrapper,
-)
+from barevision.embeddings.checkpointer import CheckpointManagerWrapper
 from barevision.dataset.video import create_dataloader
-from barevision.embeddings.model import (
-    count_parameters,
-    make_default_model_config,
-)
+from barevision.embeddings.model import count_parameters
 from barevision.embeddings.spatial_losses import HierarchicalSpatialVarianceLoss
 from barevision.embeddings.visualization import log_visualizations
-from barevision.embeddings.settings import Settings
 from barevision.utils.console import ConsoleLogger
 from barevision.utils.logging import TensorboardLogger
 from barevision.embeddings.logging_utils import log_diagnostics, log_metrics
 from barevision.embeddings.model import HierarchicalEmbeddingModel
+from barevision.config import load_config, RootConfig
 
 
 class EmbeddingsTrainer:
-    def __init__(self, settings: Settings):
-        self.settings = settings
-        self.run_name = self._generate_run_name(prefix=settings.run_name_prefix)
+    def __init__(self, config: RootConfig):
+        self.config = config
+        self.run_name = self._generate_run_name(prefix=config.name)
         self.logger = ConsoleLogger()
         self.tensorboard = TensorboardLogger(
-            log_dir=settings.logging.tensorboard_dir,
+            log_dir=config.logging.tensorboard_dir,
             run_name=self.run_name,
             strict=True,
         )
 
-        # Create model from hardcoded config
-        self.model_config = make_default_model_config()
-        rngs = nnx.Rngs(settings.training.seed)
+        # Create model from config
+        self.model_config = config.model
+        rngs = nnx.Rngs(config.training.seed)
         embeddings_model = self.model_config.build_model(rngs=rngs)
         self.loss_fn_obj = HierarchicalSpatialVarianceLoss(
-            settings.loss.spatial_variance
+            config.loss.spatial_variance
         )
 
         self.optimizer = nnx.Optimizer(
             embeddings_model,
             optax.chain(
                 optax.clip_by_global_norm(1.0),
-                optax.adamw(settings.training.learning_rate),
+                optax.adamw(config.training.learning_rate),
             ),
             wrt=nnx.Param,
         )
         self.model = embeddings_model
         self.checkpointer = CheckpointManagerWrapper(
-            settings.checkpoint, self.run_name, self.logger
+            config.checkpoint, self.run_name, self.logger
         )
 
     @staticmethod
@@ -67,18 +63,18 @@ class EmbeddingsTrainer:
 
     def _should_validate(self, epoch: int) -> bool:
         return (
-            self.settings.validation.every_epochs > 0
-            and (epoch % self.settings.validation.every_epochs) == 0
+            self.config.validation.every_epochs > 0
+            and (epoch % self.config.validation.every_epochs) == 0
         )
 
     def _maybe_validate_and_checkpoint(self, epoch: int, global_step: int):
         should_validate = (
-            self.settings.validation.every_epochs > 0
-            and epoch % self.settings.validation.every_epochs == 0
+            self.config.validation.every_epochs > 0
+            and epoch % self.config.validation.every_epochs == 0
         )
         should_checkpoint = (
-            self.settings.checkpoint.every_epochs > 0
-            and epoch % self.settings.checkpoint.every_epochs == 0
+            self.config.checkpoint.every_epochs > 0
+            and epoch % self.config.checkpoint.every_epochs == 0
         )
 
         if should_checkpoint:
@@ -99,7 +95,7 @@ class EmbeddingsTrainer:
         self._report_model_params()
 
         global_step = 0
-        for epoch in range(1, self.settings.training.epochs + 1):
+        for epoch in range(1, self.config.training.epochs + 1):
             global_step = self._train_epoch(epoch, global_step)
             self._maybe_validate_and_checkpoint(epoch, global_step)
 
@@ -110,14 +106,14 @@ class EmbeddingsTrainer:
         self.logger.log("=" * 60)
 
     def _train_epoch(self, epoch: int, global_step: int):
-        epoch_seed = self.settings.training.seed + epoch
+        epoch_seed = self.config.training.seed + epoch
         image_size = self.model_config.target_to_input(
-            self.settings.dataset.coarse_grid_size,
-            self.settings.dataset.window_size,
+            self.config.dataset.coarse_grid_size,
+            self.config.dataset.window_size,
         )
 
         loader = create_dataloader(
-            self.settings.dataset,
+            self.config.dataset,
             image_size=image_size,
             split="train",
             shuffle=True,
@@ -142,15 +138,15 @@ class EmbeddingsTrainer:
 
     def _run_validation(self, step: int) -> float:
         image_size = self.model_config.target_to_input(
-            self.settings.dataset.coarse_grid_size,
-            self.settings.dataset.window_size,
+            self.config.dataset.coarse_grid_size,
+            self.config.dataset.window_size,
         )
         loader = create_dataloader(
-            self.settings.dataset,
+            self.config.dataset,
             image_size=image_size,
             split="val",
             shuffle=False,
-            random_seed=self.settings.training.seed,
+            random_seed=self.config.training.seed,
         )
 
         total_loss = 0.0
@@ -205,12 +201,12 @@ class EmbeddingsTrainer:
 
     def _log_this_step(self, step: int):
         return (
-            step % self.settings.logging.visualizations_every_steps == 0
+            step % self.config.logging.visualizations_every_steps == 0
             or self._should_log_visualizations(step)
         )
 
     def _should_log_visualizations(self, step: int):
-        return step % self.settings.logging.every_steps == 0
+        return step % self.config.logging.every_steps == 0
 
     def _log_progress(
         self,
@@ -231,8 +227,8 @@ class EmbeddingsTrainer:
             self.model,
             img1,
             global_step,
-            self.settings.loss.spatial_variance.window_size,
-            self.settings.loss.spatial_variance.self_temperature,
+            self.config.loss.spatial_variance.window_size,
+            self.config.loss.spatial_variance.self_temperature,
         )
 
         steps_per_sec = step_in_epoch / (time.time() - epoch_start)
@@ -263,7 +259,7 @@ class EmbeddingsTrainer:
             aux_data=aux,
             metadata=metadata,
             step=global_step,
-            window_size=self.settings.loss.spatial_variance.window_size,
+            window_size=self.config.loss.spatial_variance.window_size,
             num_levels=len(self.model_config.levels),
         )
 
@@ -277,7 +273,7 @@ class EmbeddingsTrainer:
         self.logger.log(f"Pyramid levels: {len(self.model_config.levels)}")
         self.logger.log(f"Embedding dim: 16")
         self.logger.log(
-            f"Window size: {self.settings.loss.spatial_variance.window_size}×{self.settings.loss.spatial_variance.window_size}"
+            f"Window size: {self.config.loss.spatial_variance.window_size}×{self.config.loss.spatial_variance.window_size}"
         )
         self.logger.log("")
         self.logger.log("Model: Universal Inverted Bottleneck (UIB)")
@@ -289,30 +285,30 @@ class EmbeddingsTrainer:
         self.logger.log("  - L2 norm on level outputs")
 
         image_size = self.model_config.target_to_input(
-            self.settings.dataset.coarse_grid_size,
-            self.settings.dataset.window_size,
+            self.config.dataset.coarse_grid_size,
+            self.config.dataset.window_size,
         )
         self.logger.log(f"Image size: {image_size}")
         self.logger.log("")
-        self.logger.log(f"Epochs: {self.settings.training.epochs}")
-        self.logger.log(f"Batch size: {self.settings.dataset.batch_size}")
-        if self.settings.dataset.max_samples > 0:
+        self.logger.log(f"Epochs: {self.config.training.epochs}")
+        self.logger.log(f"Batch size: {self.config.dataset.batch_size}")
+        if self.config.dataset.max_samples > 0:
             self.logger.log(
-                f"Max samples per epoch: {self.settings.dataset.max_samples}"
+                f"Max samples per epoch: {self.config.dataset.max_samples}"
             )
         self.logger.log("")
         self.logger.log(f"Loss: Spatial Variance")
         self.logger.log(
-            f"  - Lambda self: {self.settings.loss.spatial_variance.lambda_self}"
+            f"  - Lambda self: {self.config.loss.spatial_variance.lambda_self}"
         )
         self.logger.log(
-            f"  - Self temperature: {self.settings.loss.spatial_variance.self_temperature}"
+            f"  - Self temperature: {self.config.loss.spatial_variance.self_temperature}"
         )
         self.logger.log(
-            f"  - Cross temperature: {self.settings.loss.spatial_variance.cross_temperature}"
+            f"  - Cross temperature: {self.config.loss.spatial_variance.cross_temperature}"
         )
         self.logger.log(
-            f"  - Level weight decay: {self.settings.loss.spatial_variance.level_weight_decay}"
+            f"  - Level weight decay: {self.config.loss.spatial_variance.level_weight_decay}"
         )
         self.logger.log("")
 
@@ -390,5 +386,14 @@ def _validation_step(
 
 
 if __name__ == "__main__":
-    parsed_settings = tyro.cli(Settings)
-    EmbeddingsTrainer(parsed_settings)()
+    # CLI: just --config path (default: config.yaml)
+    def main(config: Path = Path("config.yaml")):
+        """Embeddings training with YAML configuration.
+        
+        Args:
+            config: Path to YAML configuration file (default: config.yaml)
+        """
+        config_obj = load_config(str(config))
+        EmbeddingsTrainer(config_obj)()
+    
+    tyro.cli(main)()

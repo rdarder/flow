@@ -12,7 +12,6 @@ from barevision.embeddings.model import (
     LevelConfig,
     UIBConfig,
     count_parameters,
-    make_default_model_config,
 )
 
 

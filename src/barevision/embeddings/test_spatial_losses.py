@@ -19,9 +19,9 @@ from barevision.embeddings.spatial_losses import (
     windowed_spatial_variance_losses,
     compute_hierarchical_spatial_variance_loss,
     HierarchicalSpatialVarianceLoss,
+    SpatialVarianceLossConfig,
 )
 from barevision.utils.grid import generate_normalized_coordinates
-from barevision.embeddings.settings import SpatialVarianceLossSettings
 
 
 class TestCoordinateGeneration:
@@ -282,7 +282,7 @@ class TestHierarchicalLoss:
             jax.random.normal(jax.random.PRNGKey(3), (B, 16, 16, D)),
         ]
 
-        settings = SpatialVarianceLossSettings(
+        settings = SpatialVarianceLossConfig(
             window_size=16,
             level_weight_decay=1.0,  # Uniform weighting
         )
@@ -309,7 +309,7 @@ class TestHierarchicalLoss:
         ]
 
         # Uniform weighting
-        settings_uniform = SpatialVarianceLossSettings(
+        settings_uniform = SpatialVarianceLossConfig(
             window_size=16,
             level_weight_decay=1.0,
         )
@@ -318,7 +318,7 @@ class TestHierarchicalLoss:
         )
 
         # Coarse levels weighted more
-        settings_weighted = SpatialVarianceLossSettings(
+        settings_weighted = SpatialVarianceLossConfig(
             window_size=16,
             level_weight_decay=2.0,
         )
@@ -332,7 +332,7 @@ class TestHierarchicalLoss:
 
     def test_hierarchical_loss_class_interface(self):
         """HierarchicalSpatialVarianceLoss class should work correctly."""
-        settings = SpatialVarianceLossSettings()
+        settings = SpatialVarianceLossConfig()
         loss_fn = HierarchicalSpatialVarianceLoss(settings)
 
         B, D = 2, 16
@@ -393,7 +393,7 @@ class TestGradientFlow:
 
     def test_gradients_through_hierarchical_loss(self):
         """Gradients should flow through hierarchical loss."""
-        settings = SpatialVarianceLossSettings()
+        settings = SpatialVarianceLossConfig()
         loss_fn_obj = HierarchicalSpatialVarianceLoss(settings)
 
         B, D = 2, 16

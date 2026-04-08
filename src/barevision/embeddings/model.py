@@ -37,17 +37,16 @@ Note: VALID padding throughout. Each conv followed by GroupNorm + ReLU.
       Downsampling convolutions are initialized with Gaussian kernels for spatial averaging.
 """
 
-from dataclasses import dataclass
 from typing import List, Tuple
 
 import jax.numpy as jnp
 from flax import nnx
+from pydantic import BaseModel, ConfigDict, Field
 
 from barevision.embeddings.gaussian import depthwise_gaussian_initializer
 
 
-@dataclass(frozen=True)
-class UIBConfig:
+class UIBConfig(BaseModel):
     """Configuration for a Universal Inverted Bottleneck.
 
     Attributes:
@@ -61,14 +60,16 @@ class UIBConfig:
         use_l2_norm: If True, L2-normalize output
     """
 
-    in_channels: int
-    out_channels: int
-    expanded_channels: int = 32
-    use_dw_before_expand: bool = True
-    use_dw_after_expand: bool = True
-    downsample_after: bool = False
-    downsample_gaussian_sigma: float = 1.0
-    use_l2_norm: bool = False
+    model_config = ConfigDict(frozen=True)
+
+    in_channels: int = Field(ge=1, description="Input channel count")
+    out_channels: int = Field(ge=1, description="Output channel count")
+    expanded_channels: int = Field(default=32, ge=1, description="Channel count after expansion")
+    use_dw_before_expand: bool = Field(default=True, description="Add DW conv before expansion")
+    use_dw_after_expand: bool = Field(default=True, description="Add DW conv after expansion")
+    downsample_after: bool = Field(default=False, description="Add 3×3 stride=2 DW conv at end")
+    downsample_gaussian_sigma: float = Field(default=1.0, gt=0, description="Sigma for Gaussian kernel initialization")
+    use_l2_norm: bool = Field(default=False, description="L2-normalize output")
 
     def output_size(self, input_size: int) -> int:
         """Calculate output spatial size given input size (forward).
@@ -116,15 +117,16 @@ class UIBConfig:
         return size
 
 
-@dataclass(frozen=True)
-class LevelConfig:
+class LevelConfig(BaseModel):
     """Configuration for a pyramid level.
 
     Attributes:
         uib_configs: Tuple of UIB configurations in order
     """
 
-    uib_configs: Tuple[UIBConfig, ...]
+    model_config = ConfigDict(frozen=True)
+
+    uib_configs: Tuple[UIBConfig, ...] = Field(description="UIB configurations in order")
 
     def output_size(self, input_size: int) -> int:
         """Calculate output spatial size after all UIBs in this level (forward).
@@ -155,8 +157,7 @@ class LevelConfig:
         return size
 
 
-@dataclass(frozen=True)
-class HierarchicalModelConfig:
+class HierarchicalModelConfig(BaseModel):
     """Model configuration - just a list of level configs.
 
     This is the complete model configuration. It holds the list of levels
@@ -166,7 +167,9 @@ class HierarchicalModelConfig:
         levels: Tuple of LevelConfig, one per pyramid level
     """
 
-    levels: Tuple[LevelConfig, ...]
+    model_config = ConfigDict(frozen=True)
+
+    levels: Tuple[LevelConfig, ...] = Field(description="Level configurations, one per pyramid level")
 
     def output_size(self, input_size: int) -> int:
         """Calculate final coarse output size given input (forward).
@@ -511,67 +514,3 @@ def count_parameters(model: nnx.Module) -> int:
     return total
 
 
-def make_default_model_config() -> HierarchicalModelConfig:
-    """Build default 3-level model configuration.
-
-    Default: 3 levels, 2 UIBs per level, second UIB downsamples.
-    Embedding dim: 16, expanded channels: 32.
-
-    Returns:
-        HierarchicalModelConfig for default model
-    """
-    # Level 0: RGB (3 ch) → 16 channels
-    level_0 = LevelConfig(
-        uib_configs=(
-            UIBConfig(
-                in_channels=3,
-                out_channels=8,
-                expanded_channels=16,
-                use_dw_before_expand=True,
-                use_dw_after_expand=True,
-                downsample_after=True,
-                use_l2_norm=False,
-            ),
-            UIBConfig(
-                in_channels=8,
-                out_channels=16,
-                expanded_channels=32,
-                use_dw_before_expand=True,
-                use_dw_after_expand=True,
-                downsample_after=False,
-                use_l2_norm=True,
-            ),
-        ),
-    )
-
-    # Level 1: 16 channels → 16 channels
-    level_1 = LevelConfig(
-        uib_configs=(
-            UIBConfig(
-                in_channels=16,
-                out_channels=16,
-                expanded_channels=64,
-                use_dw_before_expand=True,
-                use_dw_after_expand=True,
-                downsample_after=True,
-                use_l2_norm=True,
-            ),
-        ),
-    )
-
-    # Level 2: 16 channels → 16 channels (final)
-    level_2 = LevelConfig(
-        uib_configs=(
-            UIBConfig(
-                in_channels=16,
-                out_channels=16,
-                expanded_channels=64,
-                use_dw_before_expand=True,
-                use_dw_after_expand=True,
-                downsample_after=True,
-                use_l2_norm=True,
-            ),
-        ),
-    )
-
-    return HierarchicalModelConfig(levels=(level_0, level_1, level_2))
