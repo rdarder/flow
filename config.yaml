@@ -27,7 +27,7 @@ model:
           out_channels: 16
           expanded_channels: 32
           use_dw_before_expand: true
-          use_dw_after_expand: true
+          use_dw_after_expand: false
           downsample_after: true
           use_l2_norm: true
     - uib_configs:
@@ -35,7 +35,7 @@ model:
           out_channels: 16
           expanded_channels: 32
           use_dw_before_expand: true
-          use_dw_after_expand: true
+          use_dw_after_expand: false
           downsample_after: true
           use_l2_norm: true
 
@@ -54,8 +54,8 @@ loss:
     window_size: 16
     level_weight_decay: 1.1
     lambda_self: 0.6
-    self_temperature: 4.0
-    cross_temperature: 4.0
+    self_temperature: 0.25
+    cross_temperature: 0.25
 
 training:
   seed: 42

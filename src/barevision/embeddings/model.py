@@ -356,11 +356,11 @@ class UniversalInvertedBlock(nnx.Module):
                 ),
                 rngs=rngs,
             )
-            # self.norm_downsample = nnx.GroupNorm(
-            #     num_groups=max(1, config.out_channels // 4),
-            #     num_features=config.out_channels,
-            #     rngs=rngs,
-            # )
+            self.norm_downsample = nnx.GroupNorm(
+                num_groups=max(1, config.out_channels // 4),
+                num_features=config.out_channels,
+                rngs=rngs,
+            )
 
     def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
         """Forward pass through UIB.
@@ -396,8 +396,6 @@ class UniversalInvertedBlock(nnx.Module):
         # Downsample
         if self.config.downsample_after:
             x = self.downsample(x)
-            x = self.norm_downsample(x)
-            # x = nnx.relu(x)
 
         # L2 normalization
         if self.config.use_l2_norm:

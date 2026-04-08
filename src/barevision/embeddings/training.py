@@ -179,22 +179,16 @@ class EmbeddingsTrainer:
         metadata: list,
         epoch_start: float,
     ):
-        should_log = self._log_this_step(global_step)
-        should_visualize = self._should_log_visualizations(global_step)
 
         loss, aux = _compute_loss_and_grads(
-            self.model,
-            self.loss_fn_obj,
-            self.optimizer,
-            (img1, img2),
-            return_aux=should_log or should_visualize,
+            self.model, self.loss_fn_obj, self.optimizer, (img1, img2), return_aux=True
         )
 
-        if should_log:
+        if self._log_this_step(global_step):
             self._log_progress(
                 epoch, global_step, step_in_epoch, loss, aux, epoch_start, img1
             )
-        if should_visualize:
+        if self._should_log_visualizations(global_step):
             self._log_visualizations(img1, img2, aux, metadata[0], global_step)
 
     def _log_this_step(self, step: int):
