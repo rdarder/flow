@@ -123,7 +123,7 @@ class RootConfig(BaseModel):
     validation: ValidationConfig = Field(description="Validation configuration")
 
 
-def load_config(path: str) -> RootConfig:
+def load_config(path: Path = Path("config.yaml")) -> RootConfig:
     """Load and validate configuration from YAML file.
 
     Args:
@@ -137,11 +137,10 @@ def load_config(path: str) -> RootConfig:
         yaml.YAMLError: If YAML parsing fails
         pydantic.ValidationError: If config validation fails
     """
-    config_path = Path(path)
-    if not config_path.exists():
-        raise FileNotFoundError(f"Config file not found: {config_path}")
+    if not path.exists():
+        raise FileNotFoundError(f"Config file not found: {path}")
 
-    with open(config_path, "r") as f:
+    with open(path, "r") as f:
         data = yaml.safe_load(f)
 
     return RootConfig(**data)

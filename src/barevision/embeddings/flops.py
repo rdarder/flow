@@ -7,6 +7,9 @@ Useful for architecture exploration and optimization.
 from dataclasses import dataclass
 from typing import List, Tuple
 
+import tyro
+
+from barevision.config import load_config, RootConfig
 from barevision.embeddings.model import (
     HierarchicalModelConfig,
     LevelConfig,
@@ -298,8 +301,6 @@ def compute_flops(
 
     Args:
         config: Model configuration
-        input_h: Input height
-        input_w: Input width
         input_c: Input channels (default 3 for RGB)
 
     Returns:
@@ -401,9 +402,11 @@ def print_flops_report(report: FlopsReport) -> None:
 
 
 if __name__ == "__main__":
-    from barevision.embeddings.model import make_default_model_config
+    config: RootConfig = tyro.cli(load_config)
+    w, h = config.model.target_to_input(
+        config.dataset.coarse_grid_size,
+        config.dataset.window_size,
+    )
 
-    # Default model with 167×167 input
-    config = make_default_model_config()
-    report = compute_flops(config, input_h=167, input_w=167)
+    report = compute_flops(config.model, w, h)
     print_flops_report(report)

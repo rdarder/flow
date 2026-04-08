@@ -13,7 +13,7 @@ model:
           expanded_channels: 16
           use_dw_before_expand: true
           use_dw_after_expand: true
-          downsample_after: true
+          downsample_after: false
           use_l2_norm: false
         - in_channels: 8
           out_channels: 16
@@ -25,7 +25,7 @@ model:
     - uib_configs:
         - in_channels: 16
           out_channels: 16
-          expanded_channels: 64
+          expanded_channels: 32
           use_dw_before_expand: true
           use_dw_after_expand: true
           downsample_after: true
@@ -33,7 +33,7 @@ model:
     - uib_configs:
         - in_channels: 16
           out_channels: 16
-          expanded_channels: 64
+          expanded_channels: 32
           use_dw_before_expand: true
           use_dw_after_expand: true
           downsample_after: true
@@ -54,8 +54,8 @@ loss:
     window_size: 16
     level_weight_decay: 1.1
     lambda_self: 0.6
-    self_temperature: 0.25
-    cross_temperature: 0.25
+    self_temperature: 4.0
+    cross_temperature: 4.0
 
 training:
   seed: 42
@@ -64,8 +64,8 @@ training:
 
 logging:
   tensorboard_dir: runs
-  every_steps: 200
-  visualizations_every_steps: 1000
+  every_steps: 100
+  visualizations_every_steps: 100
 
 checkpoint:
   every_epochs: 1

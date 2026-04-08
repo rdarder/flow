@@ -382,14 +382,5 @@ def _validation_step(
 
 
 if __name__ == "__main__":
-    # CLI: just --config path (default: config.yaml)
-    def main(config: Path = Path("config.yaml")):
-        """Embeddings training with YAML configuration.
-
-        Args:
-            config: Path to YAML configuration file (default: config.yaml)
-        """
-        config_obj = load_config(str(config))
-        EmbeddingsTrainer(config_obj)()
-
-    tyro.cli(main)()
+    config = tyro.cli(load_config)
+    EmbeddingsTrainer(config)()
