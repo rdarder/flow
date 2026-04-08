@@ -334,14 +334,16 @@ class UniversalInvertedBlock(nnx.Module):
                 strides=(2, 2),
                 padding="VALID",
                 feature_group_count=config.out_channels,  # Depthwise
-                kernel_init=depthwise_gaussian_initializer(config.downsample_gaussian_sigma),
+                kernel_init=depthwise_gaussian_initializer(
+                    config.downsample_gaussian_sigma
+                ),
                 rngs=rngs,
             )
-            self.norm_downsample = nnx.GroupNorm(
-                num_groups=max(1, config.out_channels // 4),
-                num_features=config.out_channels,
-                rngs=rngs,
-            )
+            # self.norm_downsample = nnx.GroupNorm(
+            #     num_groups=max(1, config.out_channels // 4),
+            #     num_features=config.out_channels,
+            #     rngs=rngs,
+            # )
 
     def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
         """Forward pass through UIB.
@@ -372,15 +374,15 @@ class UniversalInvertedBlock(nnx.Module):
         # PW Compress
         x = self.pw_compress(x)
         x = self.norm_compress(x)
-        x = nnx.relu(x)
+        # x = nnx.relu(x)
 
         # Downsample
         if self.config.downsample_after:
             x = self.downsample(x)
-            x = self.norm_downsample(x)
-            x = nnx.relu(x)
+            # x = self.norm_downsample(x)
+            # x = nnx.relu(x)
 
-        # L2 normalization (optional)
+        # L2 normalization
         if self.config.use_l2_norm:
             norm = jnp.linalg.norm(x, axis=-1, keepdims=True)
             x = x / (norm + 1e-8)
@@ -525,9 +527,9 @@ def make_default_model_config() -> HierarchicalModelConfig:
                 in_channels=3,
                 out_channels=8,
                 expanded_channels=16,
-                use_dw_before_expand=False,
+                use_dw_before_expand=True,
                 use_dw_after_expand=True,
-                downsample_after=False,
+                downsample_after=True,
                 use_l2_norm=False,
             ),
             UIBConfig(
@@ -536,7 +538,7 @@ def make_default_model_config() -> HierarchicalModelConfig:
                 expanded_channels=32,
                 use_dw_before_expand=True,
                 use_dw_after_expand=True,
-                downsample_after=True,
+                downsample_after=False,
                 use_l2_norm=True,
             ),
         ),
@@ -548,7 +550,7 @@ def make_default_model_config() -> HierarchicalModelConfig:
             UIBConfig(
                 in_channels=16,
                 out_channels=16,
-                expanded_channels=32,
+                expanded_channels=64,
                 use_dw_before_expand=True,
                 use_dw_after_expand=True,
                 downsample_after=True,
@@ -563,7 +565,7 @@ def make_default_model_config() -> HierarchicalModelConfig:
             UIBConfig(
                 in_channels=16,
                 out_channels=16,
-                expanded_channels=32,
+                expanded_channels=64,
                 use_dw_before_expand=True,
                 use_dw_after_expand=True,
                 downsample_after=True,
