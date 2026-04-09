@@ -2,11 +2,13 @@
 
 Provides setup function for persistent JAX compilation cache.
 """
-
 import os
 import pathlib
 
 import jax
+
+def setup_jax_verbosity():
+    jax.config.update("jax_logging_level", "ERROR")
 
 
 def setup_jax_compilation_cache(project_name: str = "barevision") -> None:
@@ -36,3 +38,4 @@ def setup_jax_compilation_cache(project_name: str = "barevision") -> None:
 
     # Enable persistent cache (optional but recommended)
     jax.config.update("jax_persistent_cache_min_entry_size_bytes", 1024)  # 1KB minimum
+    jax.config.update("jax_persistent_cache_enable_xla_caches", "xla_gpu_per_fusion_autotune_cache_dir")

@@ -111,6 +111,7 @@ class EmbeddingsTrainer:
         )
 
         loader = create_dataloader(
+            self.logger,
             self.config.dataset,
             image_size=image_size,
             split="train",

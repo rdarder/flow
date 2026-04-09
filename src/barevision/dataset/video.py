@@ -22,6 +22,7 @@ import numpy as np
 from PIL import Image
 from pydantic import BaseModel, ConfigDict, Field
 
+from barevision.utils.console import ConsoleLogger
 from barevision.utils.path import get_datasets_dir
 
 
@@ -88,6 +89,7 @@ class VideoFrameDataset:
 
     def __init__(
         self,
+        logger: ConsoleLogger,
         data_root: Optional[str] = None,
         split: str = "train",
         min_frame_distance: int = 1,
@@ -113,7 +115,7 @@ class VideoFrameDataset:
             self.data_root = str(get_datasets_dir())
         else:
             self.data_root = data_root
-
+        self.logger = logger
         self.split = split
         self.min_frame_distance = min_frame_distance
         self.max_frame_distance = max_frame_distance
@@ -221,8 +223,8 @@ class VideoFrameDataset:
         pair = self.frame_pairs[idx]
 
         # Load and preprocess images
-        img1 = self._load_image(pair.img1_path)
-        img2 = self._load_image(pair.img2_path)
+        img1 = self.load_image(pair.img1_path)
+        img2 = self.load_image(pair.img2_path)
 
         metadata = {
             "video_name": pair.video_name,
@@ -233,7 +235,7 @@ class VideoFrameDataset:
 
         return img1, img2, metadata
 
-    def _load_image(self, path: str) -> np.ndarray:
+    def load_image(self, path: str) -> np.ndarray:
         """Load and preprocess a single image.
 
         Args:
@@ -260,12 +262,15 @@ class VideoFrameDataset:
 
 
 class PreloadedFrameDataset:
+
     def __init__(
         self,
+        logger: ConsoleLogger,
         video_dataset: VideoFrameDataset,
         indices: list[int],
         frame_cache_max_mb: int = 500,
     ):
+        self.logger = logger
         self.video_dataset = video_dataset
         self.indices = indices
         self.frame_pairs = [video_dataset.frame_pairs[i] for i in indices]
@@ -283,13 +288,14 @@ class PreloadedFrameDataset:
         # Memory Check
         H, W = video_dataset.img_size
         total_mb = (len(self.unique_frames) * H * W * 3 * 4) / (1024 * 1024)
-        if frame_cache_max_mb >= 0 and total_mb > frame_cache_max_mb:
+        if 0 <= frame_cache_max_mb < total_mb:
             raise MemoryError(
                 f"Required {total_mb:.1f}MB > limit {frame_cache_max_mb}MB"
             )
-        print(f"Pre-loading {len(self.unique_frames)} frames ({total_mb:.1f}MB)...")
-        self.frames = self._preload_frames()
-        print(f"Pre-loaded {len(self.unique_frames)} frames in {total_mb:.1f}MB")
+
+        msg = f"Pre-loading {len(self.unique_frames)} frames ({total_mb:.1f}MB)..."
+        with self.logger.task(msg):
+            self.frames = self._preload_frames()
 
     def _preload_frames(self) -> jax.Array:
         # Cache video file lists to avoid O(N^2) directory scans
@@ -308,7 +314,7 @@ class PreloadedFrameDataset:
 
         # Parallelize decoding and resizing
         with ThreadPoolExecutor() as executor:
-            frames_list = list(executor.map(self.video_dataset._load_image, task_paths))
+            frames_list = list(executor.map(self.video_dataset.load_image, task_paths))
 
         frames_np = np.stack(frames_list)
         return jax.device_put(frames_np, jax.devices("cpu")[0])
@@ -364,6 +370,7 @@ def _shuffle_indices(
 
 
 def create_dataloader(
+    logger: ConsoleLogger,
     dataset_settings,
     image_size: Tuple[int, int],
     split: str,
@@ -376,6 +383,7 @@ def create_dataloader(
     JPEG decoding happens once upfront, then batches are sliced from memory.
 
     Args:
+        logger:
         dataset_settings: DatasetSettings object with batch_size, img_size, max_samples
         image_size: Target image size (height, width) - calculated by caller
         split: 'train' or 'val'
@@ -386,6 +394,7 @@ def create_dataloader(
         Tuple of (img1_batch, img2_batch, metadata_batch)
     """
     dataset = VideoFrameDataset(
+        logger=logger,
         split=split,
         min_frame_distance=dataset_settings.min_frame_distance,
         max_frame_distance=dataset_settings.max_frame_distance,
@@ -404,6 +413,7 @@ def create_dataloader(
 
     # Pre-load frames into memory
     preloaded_dataset = PreloadedFrameDataset(
+        logger,
         dataset,
         indices,
         frame_cache_max_mb=dataset_settings.frame_cache_max_mb,

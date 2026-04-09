@@ -5,12 +5,21 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from barevision.dataset.video import VideoFrameDataset, PreloadedFrameDataset, create_dataloader
+from barevision.dataset.video import (
+    VideoFrameDataset,
+    PreloadedFrameDataset,
+    create_dataloader,
+)
+from barevision.utils.console import ConsoleLogger
 from barevision.utils.path import set_datasets_dir_override, clear_datasets_dir_override
-
 
 # Test fixtures directory
 FIXTURES_DIR = Path(__file__).parent / "test_fixtures" / "frames"
+
+
+@pytest.fixture()
+def logger():
+    return ConsoleLogger()
 
 
 @pytest.fixture(autouse=True)
@@ -24,16 +33,18 @@ def use_test_fixtures():
 class TestVideoFrameDataset:
     """Tests for VideoFrameDataset loading and pairing."""
 
-    def test_dataset_creation(self):
+    def test_dataset_creation(self, logger):
         """Test that train and val datasets can be created."""
         # Uses auto-detected datasets directory
         train_dataset = VideoFrameDataset(
+            logger,
             split="train",
             max_frame_distance=2,
             img_size=(64, 64),
         )
 
         val_dataset = VideoFrameDataset(
+            logger,
             split="val",
             max_frame_distance=2,
             img_size=(64, 64),
@@ -45,11 +56,15 @@ class TestVideoFrameDataset:
             val_dataset
         ), "Training set should be larger than validation"
 
-    def test_train_val_split(self):
+    def test_train_val_split(self, logger):
         """Test that train/val split has no overlap and uses 85/15 ratio."""
-        train_dataset = VideoFrameDataset(split="train", max_frame_distance=2, seed=42)
+        train_dataset = VideoFrameDataset(
+            logger, split="train", max_frame_distance=2, seed=42
+        )
 
-        val_dataset = VideoFrameDataset(split="val", max_frame_distance=2, seed=42)
+        val_dataset = VideoFrameDataset(
+            logger, split="val", max_frame_distance=2, seed=42
+        )
 
         train_videos = set(train_dataset.videos)
         val_videos = set(val_dataset.videos)
@@ -61,9 +76,10 @@ class TestVideoFrameDataset:
         assert len(train_videos) == 1, "Training should have 1 video (85% of 2)"
         assert len(val_videos) == 1, "Validation should have 1 video (15% of 2)"
 
-    def test_frame_pair_loading(self):
+    def test_frame_pair_loading(self, logger):
         """Test loading a single frame pair."""
         dataset = VideoFrameDataset(
+            logger,
             split="train",
             max_frame_distance=5,
             img_size=(190, 190),
@@ -94,9 +110,10 @@ class TestVideoFrameDataset:
         assert metadata["distance"] <= 5
         assert metadata["frame_tk"] == metadata["frame_t"] + metadata["distance"]
 
-    def test_frame_distances(self):
+    def test_frame_distances(self, logger):
         """Test that frame pairs span distances 1 through max_distance."""
         dataset = VideoFrameDataset(
+            logger,
             split="train",
             max_frame_distance=2,
             img_size=(64, 64),
@@ -114,10 +131,11 @@ class TestVideoFrameDataset:
             distances == expected_distances
         ), f"Expected distances {expected_distances}, got {distances}"
 
-    def test_custom_max_distance(self):
+    def test_custom_max_distance(self, logger):
         """Test with different max_frame_distance values."""
         for max_dist in [2, 3, 10]:
             dataset = VideoFrameDataset(
+                logger,
                 split="train",
                 max_frame_distance=max_dist,
                 img_size=(190, 190),
@@ -134,10 +152,11 @@ class TestVideoFrameDataset:
                 max(distances) <= max_dist
             ), f"Max distance {max(distances)} exceeds limit {max_dist}"
 
-    def test_custom_image_size(self):
+    def test_custom_image_size(self, logger):
         """Test with different image sizes."""
         for img_size in [(128, 128), (256, 256), (190, 256)]:
             dataset = VideoFrameDataset(
+                logger,
                 split="train",
                 max_frame_distance=5,
                 img_size=img_size,
@@ -153,21 +172,29 @@ class TestVideoFrameDataset:
                 img2.shape == expected_shape
             ), f"Expected {expected_shape}, got {img2.shape}"
 
-    def test_seed_reproducibility(self):
+    def test_seed_reproducibility(self, logger):
         """Test that same seed produces same split."""
-        dataset1 = VideoFrameDataset(split="train", max_frame_distance=5, seed=42)
-        dataset2 = VideoFrameDataset(split="train", max_frame_distance=5, seed=42)
+
+        dataset1 = VideoFrameDataset(
+            logger, split="train", max_frame_distance=5, seed=42
+        )
+        dataset2 = VideoFrameDataset(
+            logger, split="train", max_frame_distance=5, seed=42
+        )
 
         assert dataset1.videos == dataset2.videos, "Same seed should produce same split"
 
         # Different seed should produce different split (most likely)
-        dataset3 = VideoFrameDataset(split="train", max_frame_distance=5, seed=123)
+        dataset3 = VideoFrameDataset(
+            logger, split="train", max_frame_distance=5, seed=123
+        )
         # Videos might be same by chance but unlikely
         assert dataset1.videos != dataset3.videos or dataset1.seed != dataset3.seed
 
-    def test_frame_ordering(self):
+    def test_frame_ordering(self, logger):
         """Test that frames are loaded in correct temporal order."""
         dataset = VideoFrameDataset(
+            logger,
             split="train",
             max_frame_distance=1,  # Only adjacent frames
             img_size=(64, 64),
@@ -176,7 +203,7 @@ class TestVideoFrameDataset:
         # Use the first video in the split (could be video_a or video_b)
         assert len(dataset.videos) > 0, "Should have at least one video"
         video_name = dataset.videos[0]
-        
+
         video_pairs = [p for p in dataset.frame_pairs if p.video_name == video_name]
         assert len(video_pairs) > 0, f"Should have {video_name} pairs"
 
@@ -193,31 +220,37 @@ class TestVideoFrameDataset:
 class TestPreloadedFrameDataset:
     """Tests for PreloadedFrameDataset."""
 
-    def test_preload_creation(self):
+    def test_preload_creation(self, logger):
         """Test that PreloadedFrameDataset can be created."""
         dataset = VideoFrameDataset(
+            logger,
             split="train",
             max_frame_distance=2,
             img_size=(64, 64),
         )
         indices = list(range(len(dataset)))
 
-        preloaded = PreloadedFrameDataset(dataset, indices, frame_cache_max_mb=100)
+        preloaded = PreloadedFrameDataset(
+            logger, dataset, indices, frame_cache_max_mb=100
+        )
 
         assert len(preloaded) > 0
         assert len(preloaded.unique_frames) > 0
         assert preloaded.frames is not None
 
-    def test_preload_frame_access(self):
+    def test_preload_frame_access(self, logger):
         """Test loading frames from pre-loaded dataset."""
         dataset = VideoFrameDataset(
+            logger,
             split="train",
             max_frame_distance=2,
             img_size=(64, 64),
         )
         indices = list(range(len(dataset)))
 
-        preloaded = PreloadedFrameDataset(dataset, indices, frame_cache_max_mb=100)
+        preloaded = PreloadedFrameDataset(
+            logger, dataset, indices, frame_cache_max_mb=100
+        )
 
         img1, img2, metadata = preloaded[0]
 
@@ -234,9 +267,10 @@ class TestPreloadedFrameDataset:
         assert "frame_t" in metadata
         assert "frame_tk" in metadata
 
-    def test_preload_memory_limit(self):
+    def test_preload_memory_limit(self, logger):
         """Test that memory limit is enforced."""
         dataset = VideoFrameDataset(
+            logger,
             split="train",
             max_frame_distance=2,
             img_size=(64, 64),
@@ -247,11 +281,12 @@ class TestPreloadedFrameDataset:
         # 5 frames × 64×64×3×4 bytes = 0.2MB
         # Set limit to 0.1MB to trigger error
         with pytest.raises(MemoryError):
-            PreloadedFrameDataset(dataset, indices, frame_cache_max_mb=0)
+            PreloadedFrameDataset(logger, dataset, indices, frame_cache_max_mb=0)
 
-    def test_preload_unlimited_memory(self):
+    def test_preload_unlimited_memory(self, logger):
         """Test that -1 disables memory limit."""
         dataset = VideoFrameDataset(
+            logger,
             split="train",
             max_frame_distance=2,
             img_size=(64, 64),
@@ -259,19 +294,24 @@ class TestPreloadedFrameDataset:
         indices = list(range(len(dataset)))
 
         # Should not raise
-        preloaded = PreloadedFrameDataset(dataset, indices, frame_cache_max_mb=-1)
+        preloaded = PreloadedFrameDataset(
+            logger, dataset, indices, frame_cache_max_mb=-1
+        )
         assert preloaded.frames is not None
 
-    def test_preload_frame_reuse(self):
+    def test_preload_frame_reuse(self, logger):
         """Test that same frame is reused for multiple pairs."""
         dataset = VideoFrameDataset(
+            logger,
             split="train",
             max_frame_distance=2,
             img_size=(64, 64),
         )
         indices = list(range(len(dataset)))
 
-        preloaded = PreloadedFrameDataset(dataset, indices, frame_cache_max_mb=100)
+        preloaded = PreloadedFrameDataset(
+            logger, dataset, indices, frame_cache_max_mb=100
+        )
 
         # Find pairs that share a frame
         frame_t_counts = {}
@@ -292,7 +332,7 @@ class TestPreloadedFrameDataset:
 class TestCreateDataloader:
     """Tests for create_dataloader with pre-loading."""
 
-    def test_dataloader_yields_batches(self):
+    def test_dataloader_yields_batches(self, logger):
         """Test that dataloader yields batches correctly."""
         from barevision.dataset.video import DatasetConfig
 
@@ -303,6 +343,7 @@ class TestCreateDataloader:
         )
 
         loader = create_dataloader(
+            logger,
             config,
             image_size=(64, 64),
             split="train",
@@ -318,7 +359,7 @@ class TestCreateDataloader:
         assert img1_batch.shape[1:] == (64, 64, 3)
         assert len(metadata_batch) == 2
 
-    def test_dataloader_respects_max_samples(self):
+    def test_dataloader_respects_max_samples(self, logger):
         """Test that max_samples limits the number of samples."""
         from barevision.dataset.video import DatasetConfig
 
@@ -330,6 +371,7 @@ class TestCreateDataloader:
         )
 
         loader = create_dataloader(
+            logger,
             config,
             image_size=(64, 64),
             split="train",
