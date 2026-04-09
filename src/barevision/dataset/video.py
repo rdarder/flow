@@ -11,7 +11,9 @@ Train/val split:
 
 import os
 import random
-from typing import Iterator, List, NamedTuple, Optional, Tuple
+from concurrent.futures import ThreadPoolExecutor
+from typing import Iterator, List, NamedTuple, Optional
+from typing import Tuple
 
 import jax
 import jax.numpy as jnp
@@ -20,7 +22,6 @@ import numpy as np
 from PIL import Image
 from pydantic import BaseModel, ConfigDict, Field
 
-from typing import Tuple
 from barevision.utils.path import get_datasets_dir
 
 
@@ -58,7 +59,8 @@ class DatasetConfig(BaseModel):
         default=-1, description="Maximum samples per epoch (-1 for full dataset)"
     )
     frame_cache_max_mb: int = Field(
-        default=500, description="Maximum memory for frame cache in MB (-1 for unlimited)"
+        default=500,
+        description="Maximum memory for frame cache in MB (-1 for unlimited)",
     )
 
 
@@ -258,103 +260,64 @@ class VideoFrameDataset:
 
 
 class PreloadedFrameDataset:
-    """Dataset with all frames pre-loaded into memory as a JAX array.
-
-    Pre-loads unique frames needed for training into a single JAX array,
-    eliminating per-step JPEG decoding overhead.
-    """
-
     def __init__(
         self,
         video_dataset: VideoFrameDataset,
-        indices: List[int],
+        indices: list[int],
         frame_cache_max_mb: int = 500,
     ):
-        """Pre-load frames needed for the given indices.
-
-        Args:
-            video_dataset: Base VideoFrameDataset with frame_pairs index
-            indices: List of frame pair indices to use (after shuffling/sampling)
-            frame_cache_max_mb: Maximum memory for frame cache in MB (-1 for unlimited)
-        """
         self.video_dataset = video_dataset
         self.indices = indices
         self.frame_pairs = [video_dataset.frame_pairs[i] for i in indices]
 
-        # Extract unique frames needed
-        unique_frames = set()
+        unique_frames_set = set()
         for pair in self.frame_pairs:
-            unique_frames.add((pair.video_name, pair.frame_t_idx))
-            unique_frames.add((pair.video_name, pair.frame_tk_idx))
+            unique_frames_set.add((pair.video_name, pair.frame_t_idx))
+            unique_frames_set.add((pair.video_name, pair.frame_tk_idx))
 
-        self.unique_frames = list(unique_frames)
+        self.unique_frames = list(unique_frames_set)
         self.frame_lookup = {
-            (video_name, frame_idx): idx
-            for idx, (video_name, frame_idx) in enumerate(self.unique_frames)
+            (v, idx): i for i, (v, idx) in enumerate(self.unique_frames)
         }
 
-        # Calculate memory requirement
+        # Memory Check
         H, W = video_dataset.img_size
-        bytes_per_frame = H * W * 3 * 4  # float32
-        total_bytes = len(self.unique_frames) * bytes_per_frame
-        total_mb = total_bytes / (1024 * 1024)
-
-        # Check memory limit
+        total_mb = (len(self.unique_frames) * H * W * 3 * 4) / (1024 * 1024)
         if frame_cache_max_mb >= 0 and total_mb > frame_cache_max_mb:
             raise MemoryError(
-                f"Pre-loading {len(self.unique_frames)} frames requires {total_mb:.1f}MB, "
-                f"but frame_cache_max_mb={frame_cache_max_mb}. "
-                f"Set to -1 for unlimited or increase limit."
+                f"Required {total_mb:.1f}MB > limit {frame_cache_max_mb}MB"
             )
-
-        # Pre-load all frames
         print(f"Pre-loading {len(self.unique_frames)} frames ({total_mb:.1f}MB)...")
         self.frames = self._preload_frames()
         print(f"Pre-loaded {len(self.unique_frames)} frames in {total_mb:.1f}MB")
 
     def _preload_frames(self) -> jax.Array:
-        """Load all unique frames into a JAX array.
-
-        Returns:
-            (num_frames, H, W, 3) float32 JAX array
-        """
-        # Load frames as numpy first, then convert to JAX
-        frames_list = []
-        for video_name, frame_idx in self.unique_frames:
-            # Find the frame pair that contains this frame
-            # (we need to get the path from the original dataset)
-            video_path = os.path.join(self.video_dataset.data_root, video_name)
-            frame_files = sorted(
-                [f for f in os.listdir(video_path) if f.endswith((".jpg", ".png"))]
+        # Cache video file lists to avoid O(N^2) directory scans
+        video_files_cache = {}
+        for video_name in set(v for v, _ in self.unique_frames):
+            v_path = os.path.join(self.video_dataset.data_root, video_name)
+            video_files_cache[video_name] = sorted(
+                [f for f in os.listdir(v_path) if f.endswith((".jpg", ".png"))]
             )
-            frame_path = os.path.join(video_path, frame_files[frame_idx])
 
-            img = self.video_dataset._load_image(frame_path)
-            frames_list.append(img)
+        # Build flat list of paths for parallel mapper
+        task_paths = [
+            os.path.join(self.video_dataset.data_root, v, video_files_cache[v][idx])
+            for v, idx in self.unique_frames
+        ]
 
-        # Stack into single array and convert to JAX
+        # Parallelize decoding and resizing
+        with ThreadPoolExecutor() as executor:
+            frames_list = list(executor.map(self.video_dataset._load_image, task_paths))
+
         frames_np = np.stack(frames_list)
         return jax.device_put(frames_np, jax.devices("cpu")[0])
 
     def __len__(self) -> int:
-        """Return number of frame pairs."""
         return len(self.frame_pairs)
 
-    def __getitem__(self, idx: int) -> Tuple[jax.Array, jax.Array, dict]:
-        """Load a frame pair from pre-loaded data.
-
-        Args:
-            idx: Index into the dataset
-
-        Returns:
-            Tuple of (img1, img2, metadata) where:
-                - img1: (H, W, 3) float32 JAX array in [0, 1]
-                - img2: (H, W, 3) float32 JAX array in [0, 1]
-                - metadata: dict with video_name, frame indices, distance
-        """
+    def __getitem__(self, idx: int):
         pair = self.frame_pairs[idx]
-
-        # Get frames from pre-loaded array
         img1 = self.frames[self.frame_lookup[(pair.video_name, pair.frame_t_idx)]]
         img2 = self.frames[self.frame_lookup[(pair.video_name, pair.frame_tk_idx)]]
 
@@ -364,7 +327,6 @@ class PreloadedFrameDataset:
             "frame_tk": pair.frame_tk_idx,
             "distance": pair.distance,
         }
-
         return img1, img2, metadata
 
 
