@@ -13,6 +13,7 @@ import os
 import random
 from typing import Iterator, List, NamedTuple, Optional, Tuple
 
+import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
@@ -34,7 +35,7 @@ class DatasetConfig(BaseModel):
         min_frame_distance: Minimum temporal distance for frame pairs (default 1)
         max_frame_distance: Maximum temporal distance for frame pairs
         max_samples: Maximum samples per epoch (-1 for full dataset)
-        num_workers: Number of worker processes for data loading (0 = main process only)
+        frame_cache_max_mb: Maximum memory for frame cache in MB (-1 for unlimited)
     """
 
     model_config = ConfigDict(frozen=True)
@@ -56,8 +57,8 @@ class DatasetConfig(BaseModel):
     max_samples: int = Field(
         default=-1, description="Maximum samples per epoch (-1 for full dataset)"
     )
-    num_workers: int = Field(
-        default=4, ge=0, description="Number of worker processes for data loading"
+    frame_cache_max_mb: int = Field(
+        default=500, description="Maximum memory for frame cache in MB (-1 for unlimited)"
     )
 
 
@@ -256,6 +257,117 @@ class VideoFrameDataset:
         return img_array
 
 
+class PreloadedFrameDataset:
+    """Dataset with all frames pre-loaded into memory as a JAX array.
+
+    Pre-loads unique frames needed for training into a single JAX array,
+    eliminating per-step JPEG decoding overhead.
+    """
+
+    def __init__(
+        self,
+        video_dataset: VideoFrameDataset,
+        indices: List[int],
+        frame_cache_max_mb: int = 500,
+    ):
+        """Pre-load frames needed for the given indices.
+
+        Args:
+            video_dataset: Base VideoFrameDataset with frame_pairs index
+            indices: List of frame pair indices to use (after shuffling/sampling)
+            frame_cache_max_mb: Maximum memory for frame cache in MB (-1 for unlimited)
+        """
+        self.video_dataset = video_dataset
+        self.indices = indices
+        self.frame_pairs = [video_dataset.frame_pairs[i] for i in indices]
+
+        # Extract unique frames needed
+        unique_frames = set()
+        for pair in self.frame_pairs:
+            unique_frames.add((pair.video_name, pair.frame_t_idx))
+            unique_frames.add((pair.video_name, pair.frame_tk_idx))
+
+        self.unique_frames = list(unique_frames)
+        self.frame_lookup = {
+            (video_name, frame_idx): idx
+            for idx, (video_name, frame_idx) in enumerate(self.unique_frames)
+        }
+
+        # Calculate memory requirement
+        H, W = video_dataset.img_size
+        bytes_per_frame = H * W * 3 * 4  # float32
+        total_bytes = len(self.unique_frames) * bytes_per_frame
+        total_mb = total_bytes / (1024 * 1024)
+
+        # Check memory limit
+        if frame_cache_max_mb >= 0 and total_mb > frame_cache_max_mb:
+            raise MemoryError(
+                f"Pre-loading {len(self.unique_frames)} frames requires {total_mb:.1f}MB, "
+                f"but frame_cache_max_mb={frame_cache_max_mb}. "
+                f"Set to -1 for unlimited or increase limit."
+            )
+
+        # Pre-load all frames
+        print(f"Pre-loading {len(self.unique_frames)} frames ({total_mb:.1f}MB)...")
+        self.frames = self._preload_frames()
+        print(f"Pre-loaded {len(self.unique_frames)} frames in {total_mb:.1f}MB")
+
+    def _preload_frames(self) -> jax.Array:
+        """Load all unique frames into a JAX array.
+
+        Returns:
+            (num_frames, H, W, 3) float32 JAX array
+        """
+        # Load frames as numpy first, then convert to JAX
+        frames_list = []
+        for video_name, frame_idx in self.unique_frames:
+            # Find the frame pair that contains this frame
+            # (we need to get the path from the original dataset)
+            video_path = os.path.join(self.video_dataset.data_root, video_name)
+            frame_files = sorted(
+                [f for f in os.listdir(video_path) if f.endswith((".jpg", ".png"))]
+            )
+            frame_path = os.path.join(video_path, frame_files[frame_idx])
+
+            img = self.video_dataset._load_image(frame_path)
+            frames_list.append(img)
+
+        # Stack into single array and convert to JAX
+        frames_np = np.stack(frames_list)
+        return jax.device_put(frames_np, jax.devices("cpu")[0])
+
+    def __len__(self) -> int:
+        """Return number of frame pairs."""
+        return len(self.frame_pairs)
+
+    def __getitem__(self, idx: int) -> Tuple[jax.Array, jax.Array, dict]:
+        """Load a frame pair from pre-loaded data.
+
+        Args:
+            idx: Index into the dataset
+
+        Returns:
+            Tuple of (img1, img2, metadata) where:
+                - img1: (H, W, 3) float32 JAX array in [0, 1]
+                - img2: (H, W, 3) float32 JAX array in [0, 1]
+                - metadata: dict with video_name, frame indices, distance
+        """
+        pair = self.frame_pairs[idx]
+
+        # Get frames from pre-loaded array
+        img1 = self.frames[self.frame_lookup[(pair.video_name, pair.frame_t_idx)]]
+        img2 = self.frames[self.frame_lookup[(pair.video_name, pair.frame_tk_idx)]]
+
+        metadata = {
+            "video_name": pair.video_name,
+            "frame_t": pair.frame_t_idx,
+            "frame_tk": pair.frame_tk_idx,
+            "distance": pair.distance,
+        }
+
+        return img1, img2, metadata
+
+
 def _shuffle_indices(
     indices: list[int],
     shuffle: bool,
@@ -298,6 +410,9 @@ def create_dataloader(
 ) -> Iterator[tuple[jnp.ndarray, jnp.ndarray, list[dict]]]:
     """Yield batches of frame pairs.
 
+    Pre-loads all unique frames into memory for fast batch generation.
+    JPEG decoding happens once upfront, then batches are sliced from memory.
+
     Args:
         dataset_settings: DatasetSettings object with batch_size, img_size, max_samples
         image_size: Target image size (height, width) - calculated by caller
@@ -325,20 +440,29 @@ def create_dataloader(
         list(range(len(dataset))), shuffle, max_samples, random_seed
     )
 
-    # Yield batches
-    for i in range(0, len(indices), dataset_settings.batch_size):
-        batch_indices = indices[i : i + dataset_settings.batch_size]
-        if len(batch_indices) < dataset_settings.batch_size:
-            continue
+    # Pre-load frames into memory
+    preloaded_dataset = PreloadedFrameDataset(
+        dataset,
+        indices,
+        frame_cache_max_mb=dataset_settings.frame_cache_max_mb,
+    )
 
+    # Yield batches from pre-loaded data
+    for i in range(0, len(preloaded_dataset), dataset_settings.batch_size):
         batch_imgs1 = []
         batch_imgs2 = []
         batch_metadata = []
 
-        for idx in batch_indices:
-            img1, img2, metadata = dataset[idx]
+        for j in range(dataset_settings.batch_size):
+            idx = i + j
+            if idx >= len(preloaded_dataset):
+                break
+            img1, img2, metadata = preloaded_dataset[idx]
             batch_imgs1.append(img1)
             batch_imgs2.append(img2)
             batch_metadata.append(metadata)
+
+        if len(batch_imgs1) < dataset_settings.batch_size:
+            continue
 
         yield jnp.stack(batch_imgs1), jnp.stack(batch_imgs2), batch_metadata

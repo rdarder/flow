@@ -18,7 +18,11 @@ Core package. Embeddings training pipeline for hierarchical optical flow.
 
 Data loading for video frames.
 
-**video.py:** Loads video frames and generates sparse frame pairs (t, t+k) for self-supervised training. Handles 85/15 train/val split by video with configurable seed. `create_dataloader()` accepts `image_size` parameter (calculated by caller). Config: `DatasetConfig` (Pydantic, frozen). Exports: `VideoFrameDataset`, `FramePair`, `create_dataloader`, `DatasetConfig`.
+**video.py:** Loads video frames and generates sparse frame pairs (t, t+k) for self-supervised training. Handles 85/15 train/val split by video with configurable seed. Pre-loads all unique frames into memory as JAX arrays to eliminate per-step JPEG decoding overhead. `create_dataloader()` accepts `image_size` parameter (calculated by caller). Config: `DatasetConfig` (Pydantic, frozen, includes `frame_cache_max_mb`). Exports: `VideoFrameDataset`, `FramePair`, `PreloadedFrameDataset`, `create_dataloader`, `DatasetConfig`.
+
+**test_fixtures/:** Small synthetic dataset for testing (2 videos, 9 frames total).
+
+**test_fixtures/generate_fixtures.py:** Script to generate synthetic test frames.
 
 ## src/barevision/embeddings
 
@@ -54,6 +58,6 @@ Shared utilities.
 
 **logging.py:** TensorBoard logger wrapper. Exports: `TensorboardLogger`.
 
-**path.py:** Path resolution for project directories (datasets, checkpoints, etc.).
+**path.py:** Path resolution for project directories (datasets, checkpoints, etc.). Includes `set_datasets_dir_override()` for test isolation.
 
 ---

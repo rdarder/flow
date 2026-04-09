@@ -7,6 +7,9 @@ current working directory.
 from pathlib import Path
 from typing import Optional
 
+# Global override for datasets directory (used in tests)
+_datasets_dir_override: Optional[Path] = None
+
 
 def find_project_root(start_from: Optional[Path] = None) -> Path:
     """Find the project root by looking for pyproject.toml.
@@ -50,6 +53,14 @@ def get_datasets_dir() -> Path:
     Raises:
         RuntimeError: If datasets directory not found
     """
+    # Check for override (used in tests)
+    if _datasets_dir_override is not None:
+        if not _datasets_dir_override.exists():
+            raise RuntimeError(
+                f"Override datasets directory not found: {_datasets_dir_override}"
+            )
+        return _datasets_dir_override
+
     project_root = find_project_root()
     datasets_dir = project_root / "datasets" / "frames"
 
@@ -60,6 +71,22 @@ def get_datasets_dir() -> Path:
         )
 
     return datasets_dir
+
+
+def set_datasets_dir_override(path: Optional[Path]) -> None:
+    """Override the datasets directory (for testing).
+
+    Args:
+        path: Path to use as datasets directory, or None to clear override
+    """
+    global _datasets_dir_override
+    _datasets_dir_override = path
+
+
+def clear_datasets_dir_override() -> None:
+    """Clear the datasets directory override."""
+    global _datasets_dir_override
+    _datasets_dir_override = None
 
 
 def get_checkpoints_dir() -> Path:

@@ -66,7 +66,7 @@ def create_smoke_test_config() -> RootConfig:
             min_frame_distance=1,
             max_frame_distance=5,
             max_samples=1,  # Only 1 sample per epoch
-            num_workers=0,
+            frame_cache_max_mb=100,  # Small limit for smoke test
         ),
         loss=LossConfig(
             spatial_variance=SpatialVarianceLossConfig(
