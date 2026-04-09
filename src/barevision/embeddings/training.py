@@ -9,7 +9,7 @@ from flax import nnx
 from rich import print as rich_print
 
 from barevision.embeddings.checkpointer import CheckpointManagerWrapper
-from barevision.dataset.video import create_dataloader
+from barevision.dataset.video import DatasetConfig, PreparedDataset
 from barevision.embeddings.flops import print_flops_report, compute_flops
 from barevision.embeddings.model import count_parameters
 from barevision.embeddings.spatial_losses import HierarchicalSpatialVarianceLoss
@@ -53,6 +53,22 @@ class EmbeddingsTrainer:
         self.image_size = self.model_config.target_to_input(
             self.config.dataset.coarse_grid_size,
             self.config.dataset.window_size,
+        )
+
+        # Prepare datasets once (pre-loads frames into memory)
+        self.train_dataset = PreparedDataset(
+            logger=self.logger,
+            dataset_config=config.dataset,
+            split="train",
+            image_size=self.image_size,
+            base_seed=config.training.seed,
+        )
+        self.val_dataset = PreparedDataset(
+            logger=self.logger,
+            dataset_config=config.dataset,
+            split="val",
+            image_size=self.image_size,
+            base_seed=config.training.seed,
         )
 
     @staticmethod
@@ -109,16 +125,7 @@ class EmbeddingsTrainer:
         self.logger.log("=" * 60)
 
     def _train_epoch(self, epoch: int, global_step: int):
-        epoch_seed = self.config.training.seed + epoch
-
-        loader = create_dataloader(
-            self.logger,
-            self.config.dataset,
-            image_size=self.image_size,
-            split="train",
-            shuffle=True,
-            random_seed=epoch_seed,
-        )
+        loader = self.train_dataset.get_epoch_iterator(epoch, shuffle=True)
         epoch_start = time.time()
 
         for batch_idx, (img1, img2, metadata) in enumerate(loader):
@@ -137,13 +144,7 @@ class EmbeddingsTrainer:
         return global_step
 
     def _run_validation(self, step: int) -> float:
-        loader = create_dataloader(
-            self.config.dataset,
-            image_size=self.image_size,
-            split="val",
-            shuffle=False,
-            random_seed=self.config.training.seed,
-        )
+        loader = self.val_dataset.get_epoch_iterator(epoch=0, shuffle=False)
 
         total_loss = 0.0
         num_batches = 0

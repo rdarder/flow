@@ -11,6 +11,7 @@ src/barevision.egg-info/
 tmp/
 test_checkpoints/
 datasets/frames/
+datasets/frames.orig/
 datasets/videos/
 test_runs/
 notebooks/

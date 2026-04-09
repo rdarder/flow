@@ -336,6 +336,137 @@ class PreloadedFrameDataset:
         return img1, img2, metadata
 
 
+class PreparedDataset:
+    """Dataset with pre-loaded frames, ready for multi-epoch training.
+
+    This class holds pre-loaded frames in memory for the lifetime of training.
+    It provides epoch-specific iterators that shuffle indices without re-loading data.
+
+    Usage:
+        prepared = PreparedDataset(logger, config, split="train", image_size=(190, 190))
+        for epoch in range(epochs):
+            loader = prepared.get_epoch_iterator(epoch, shuffle=True, batch_size=8)
+            for batch in loader:
+                # train...
+    """
+
+    def __init__(
+        self,
+        logger: ConsoleLogger,
+        dataset_config: DatasetConfig,
+        split: str,
+        image_size: Tuple[int, int],
+        base_seed: int = 42,
+    ):
+        """Initialize prepared dataset with pre-loaded frames.
+
+        Args:
+            logger: Console logger
+            dataset_config: Dataset configuration
+            split: 'train' or 'val'
+            image_size: Target image size (height, width)
+            base_seed: Base random seed for shuffling
+        """
+        self.logger = logger
+        self.dataset_config = dataset_config
+        self.split = split
+        self.base_seed = base_seed
+        self.batch_size = dataset_config.batch_size
+
+        # Build video dataset (frame pairs index)
+        self.video_dataset = VideoFrameDataset(
+            logger=logger,
+            split=split,
+            min_frame_distance=dataset_config.min_frame_distance,
+            max_frame_distance=dataset_config.max_frame_distance,
+            img_size=image_size,
+            seed=base_seed,
+        )
+
+        # Determine which indices to use (sampling or full dataset)
+        max_samples = (
+            dataset_config.max_samples if dataset_config.max_samples > 0 else None
+        )
+        indices = list(range(len(self.video_dataset)))
+        if max_samples is not None:
+            indices = indices[:max_samples]
+
+        # Pre-load frames into memory (one-time cost)
+        self.preloaded = PreloadedFrameDataset(
+            logger,
+            self.video_dataset,
+            indices,
+            frame_cache_max_mb=dataset_config.frame_cache_max_mb,
+        )
+
+    def get_epoch_iterator(
+        self,
+        epoch: int,
+        shuffle: bool = True,
+        batch_size: Optional[int] = None,
+    ) -> Iterator[tuple[jnp.ndarray, jnp.ndarray, list[dict]]]:
+        """Return a fresh iterator for the given epoch.
+
+        Args:
+            epoch: Epoch number (used for shuffle seed)
+            shuffle: Whether to shuffle indices
+            batch_size: Batch size (defaults to config batch_size)
+
+        Returns:
+            Iterator yielding (img1_batch, img2_batch, metadata_list)
+        """
+        if batch_size is None:
+            batch_size = self.batch_size
+
+        epoch_seed = self.base_seed + epoch if shuffle else self.base_seed
+        indices = _shuffle_indices(
+            list(range(len(self.preloaded))),
+            shuffle=shuffle,
+            max_frames=None,
+            random_seed=epoch_seed,
+        )
+        return _BatchIterator(self.preloaded, indices, batch_size)
+
+
+class _BatchIterator:
+    """Iterator that yields batches from a pre-loaded dataset with given indices."""
+
+    def __init__(
+        self,
+        preloaded_dataset: PreloadedFrameDataset,
+        indices: list[int],
+        batch_size: int,
+    ):
+        self.preloaded = preloaded_dataset
+        self.indices = indices
+        self.batch_size = batch_size
+        self.pos = 0
+
+    def __iter__(self):
+        return self
+
+    def __next__(self) -> tuple[jnp.ndarray, jnp.ndarray, list[dict]]:
+        if self.pos >= len(self.indices):
+            raise StopIteration
+
+        batch_imgs1 = []
+        batch_imgs2 = []
+        batch_metadata = []
+
+        while len(batch_imgs1) < self.batch_size and self.pos < len(self.indices):
+            idx = self.indices[self.pos]
+            img1, img2, metadata = self.preloaded[idx]
+            batch_imgs1.append(img1)
+            batch_imgs2.append(img2)
+            batch_metadata.append(metadata)
+            self.pos += 1
+
+        if len(batch_imgs1) < self.batch_size:
+            raise StopIteration
+
+        return jnp.stack(batch_imgs1), jnp.stack(batch_imgs2), batch_metadata
+
+
 def _shuffle_indices(
     indices: list[int],
     shuffle: bool,
@@ -382,6 +513,10 @@ def create_dataloader(
     Pre-loads all unique frames into memory for fast batch generation.
     JPEG decoding happens once upfront, then batches are sliced from memory.
 
+    Note: This function creates a new PreparedDataset on each call.
+    For multi-epoch training, use PreparedDataset directly and call
+    get_epoch_iterator() for each epoch to avoid re-loading frames.
+
     Args:
         logger:
         dataset_settings: DatasetSettings object with batch_size, img_size, max_samples
@@ -393,48 +528,29 @@ def create_dataloader(
     Yields:
         Tuple of (img1_batch, img2_batch, metadata_batch)
     """
-    dataset = VideoFrameDataset(
+    # Convert dataset_settings to DatasetConfig if needed
+    if isinstance(dataset_settings, DatasetConfig):
+        config = dataset_settings
+    else:
+        # Backwards compatibility: assume it has the required attributes
+        config = DatasetConfig(
+            batch_size=dataset_settings.batch_size,
+            coarse_grid_size=getattr(dataset_settings, "coarse_grid_size", 1),
+            window_size=getattr(dataset_settings, "window_size", 16),
+            num_levels=getattr(dataset_settings, "num_levels", 3),
+            min_frame_distance=dataset_settings.min_frame_distance,
+            max_frame_distance=dataset_settings.max_frame_distance,
+            max_samples=dataset_settings.max_samples,
+            frame_cache_max_mb=dataset_settings.frame_cache_max_mb,
+        )
+
+    prepared = PreparedDataset(
         logger=logger,
+        dataset_config=config,
         split=split,
-        min_frame_distance=dataset_settings.min_frame_distance,
-        max_frame_distance=dataset_settings.max_frame_distance,
-        img_size=image_size,
-        seed=random_seed,
+        image_size=image_size,
+        base_seed=random_seed or 42,
     )
 
-    max_samples = (
-        dataset_settings.max_samples if dataset_settings.max_samples > 0 else None
-    )
-
-    # Shuffle and/or sample indices
-    indices = _shuffle_indices(
-        list(range(len(dataset))), shuffle, max_samples, random_seed
-    )
-
-    # Pre-load frames into memory
-    preloaded_dataset = PreloadedFrameDataset(
-        logger,
-        dataset,
-        indices,
-        frame_cache_max_mb=dataset_settings.frame_cache_max_mb,
-    )
-
-    # Yield batches from pre-loaded data
-    for i in range(0, len(preloaded_dataset), dataset_settings.batch_size):
-        batch_imgs1 = []
-        batch_imgs2 = []
-        batch_metadata = []
-
-        for j in range(dataset_settings.batch_size):
-            idx = i + j
-            if idx >= len(preloaded_dataset):
-                break
-            img1, img2, metadata = preloaded_dataset[idx]
-            batch_imgs1.append(img1)
-            batch_imgs2.append(img2)
-            batch_metadata.append(metadata)
-
-        if len(batch_imgs1) < dataset_settings.batch_size:
-            continue
-
-        yield jnp.stack(batch_imgs1), jnp.stack(batch_imgs2), batch_metadata
+    # For backwards compatibility, return a single epoch iterator
+    return prepared.get_epoch_iterator(epoch=0, shuffle=shuffle)

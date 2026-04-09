@@ -13,7 +13,9 @@ from PIL import Image
 FIXTURES_DIR = Path(__file__).parent / "frames"
 
 
-def generate_solid_color_image(color: tuple[int, int, int], size: int = 64) -> np.ndarray:
+def generate_solid_color_image(
+    color: tuple[int, int, int], size: int = 64
+) -> np.ndarray:
     """Generate a solid color RGB image.
 
     Args:
@@ -28,7 +30,9 @@ def generate_solid_color_image(color: tuple[int, int, int], size: int = 64) -> n
     return img
 
 
-def generate_gradient_image(color1: tuple[int, int, int], color2: tuple[int, int, int], size: int = 64) -> np.ndarray:
+def generate_gradient_image(
+    color1: tuple[int, int, int], color2: tuple[int, int, int], size: int = 64
+) -> np.ndarray:
     """Generate a horizontal gradient image.
 
     Args:
@@ -55,9 +59,9 @@ def main():
     video_a_dir.mkdir(exist_ok=True)
 
     colors_a = [
-        (255, 0, 0),    # Red
-        (0, 255, 0),    # Green
-        (0, 0, 255),    # Blue
+        (255, 0, 0),  # Red
+        (0, 255, 0),  # Green
+        (0, 0, 255),  # Blue
         (255, 255, 0),  # Yellow
     ]
 
@@ -72,11 +76,11 @@ def main():
     video_b_dir.mkdir(exist_ok=True)
 
     gradients_b = [
-        ((255, 0, 0), (0, 0, 0)),      # Red to black
-        ((0, 255, 0), (0, 0, 0)),      # Green to black
-        ((0, 0, 255), (0, 0, 0)),      # Blue to black
-        ((255, 255, 0), (0, 0, 0)),    # Yellow to black
-        ((255, 0, 255), (0, 0, 0)),    # Magenta to black
+        ((255, 0, 0), (0, 0, 0)),  # Red to black
+        ((0, 255, 0), (0, 0, 0)),  # Green to black
+        ((0, 0, 255), (0, 0, 0)),  # Blue to black
+        ((255, 255, 0), (0, 0, 0)),  # Yellow to black
+        ((255, 0, 255), (0, 0, 0)),  # Magenta to black
     ]
 
     for i, (c1, c2) in enumerate(gradients_b):
