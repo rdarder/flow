@@ -122,13 +122,12 @@ class TestSelfAttentionVariance:
         windows = jax.random.normal(jax.random.PRNGKey(0), (B, H, W, D))
 
         coords = generate_normalized_coordinates(H)
-        loss, aux = self_attention_spatial_variance(
+        loss, weights = self_attention_spatial_variance(
             windows, temperature=0.3, coords=coords
         )
 
         assert loss.shape == (B, H, W)
-        assert aux["attention_weights"].shape == (B, H * W, H * W)
-        assert aux["variance_map"].shape == (B, H, W)
+        assert weights.shape == (B, H * W, H * W)
 
     def test_self_variance_decreases_with_sharper_attention(self):
         """Variance should decrease as attention becomes sharper."""
@@ -167,13 +166,12 @@ class TestCrossAttentionVariance:
         windows2 = jax.random.normal(jax.random.PRNGKey(1), (B, H, W, D))
 
         coords = generate_normalized_coordinates(H)
-        loss, aux = cross_attention_spatial_variance(
+        loss, weights = cross_attention_spatial_variance(
             windows1, windows2, temperature=0.3, coords=coords
         )
 
         assert loss.shape == (B, H, W)
-        assert aux["attention_weights"].shape == (B, H * W, H * W)
-        assert aux["variance_map"].shape == (B, H, W)
+        assert weights.shape == (B, H * W, H * W)
 
     def test_cross_variance_with_identical_embeddings(self):
         """Identical embeddings should produce concentrated cross-attention."""
@@ -184,7 +182,7 @@ class TestCrossAttentionVariance:
         windows = jax.random.normal(jax.random.PRNGKey(0), (B, H, W, D))
 
         coords = generate_normalized_coordinates(window_size)
-        loss, aux = cross_attention_spatial_variance(
+        loss, _ = cross_attention_spatial_variance(
             windows, windows, temperature=0.3, coords=coords
         )
 
@@ -201,13 +199,15 @@ class TestWindowedLoss:
         emb1 = jax.random.normal(jax.random.PRNGKey(0), (B, H, W, D))
         emb2 = jax.random.normal(jax.random.PRNGKey(1), (B, H, W, D))
 
+        config = SpatialVarianceLossConfig()
+        coords = generate_normalized_coordinates(config.window_size)
+
         loss, aux = windowed_spatial_variance_losses(
             emb1,
             emb2,
-            window_size=16,
-            lambda_self=0.5,
-            self_temperature=0.3,
-            cross_temperature=0.3,
+            config=config,
+            coords=coords,
+            need_aux=True,
         )
 
         assert jnp.isscalar(loss) or loss.shape == ()
@@ -223,39 +223,33 @@ class TestWindowedLoss:
         emb2 = jax.random.normal(jax.random.PRNGKey(1), (B, H, W, D))
 
         with pytest.raises(ValueError, match="not divisible"):
-            windowed_spatial_variance_losses(
-                emb1,
-                emb2,
-                window_size=16,
-                lambda_self=0.5,
-                self_temperature=0.3,
-                cross_temperature=0.3,
-            )
+            config = SpatialVarianceLossConfig()
+            coords = generate_normalized_coordinates(config.window_size)
+
+            windowed_spatial_variance_losses(emb1, emb2, config=config, coords=coords)
 
     def test_lambda_self_weighting(self):
         """Lambda_self should weight self vs cross loss contribution."""
         B, H, W, D = 2, 16, 16, 16
         emb1 = jax.random.normal(jax.random.PRNGKey(0), (B, H, W, D))
         emb2 = jax.random.normal(jax.random.PRNGKey(1), (B, H, W, D))
+        config = SpatialVarianceLossConfig(
+            window_size=16, lambda_self=1.0, self_temperature=0.3, cross_temperature=0.3
+        )
+        coords = generate_normalized_coordinates(config.window_size)
 
         # Test with lambda_self=1.0 (only self loss)
         loss_self_only, aux_self_only = windowed_spatial_variance_losses(
-            emb1,
-            emb2,
-            window_size=16,
-            lambda_self=1.0,
-            self_temperature=0.3,
-            cross_temperature=0.3,
+            emb1, emb2, config=config, coords=coords
+        )
+
+        config2 = SpatialVarianceLossConfig(
+            window_size=16, lambda_self=0.0, self_temperature=0.3, cross_temperature=0.3
         )
 
         # Test with lambda_self=0.0 (only cross loss)
         loss_cross_only, aux_cross_only = windowed_spatial_variance_losses(
-            emb1,
-            emb2,
-            window_size=16,
-            lambda_self=0.0,
-            self_temperature=0.3,
-            cross_temperature=0.3,
+            emb1, emb2, config=config2, coords=coords
         )
 
         # Self-only loss should equal self_loss component

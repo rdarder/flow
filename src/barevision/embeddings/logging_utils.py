@@ -60,10 +60,10 @@ def log_attention_statistics(
     coords = generate_normalized_coordinates(window_size)
 
     # Compute spatial variances (both return tuple of (loss, aux))
-    self_variance, self_aux = self_attention_spatial_variance(
+    self_variance, _ = self_attention_spatial_variance(
         flat_windows, temperature=temperature, coords=coords
     )
-    cross_variance, cross_aux = cross_attention_spatial_variance(
+    cross_variance, _ = cross_attention_spatial_variance(
         flat_windows, flat_windows, temperature=temperature, coords=coords
     )
 
