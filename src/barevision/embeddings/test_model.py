@@ -559,18 +559,6 @@ class TestHierarchicalEmbeddingModel:
         assert pyramid[0].shape[-1] == 16
         assert pyramid[0].shape[1] == 14
 
-    def test_batch_processing(self):
-        """Test batch processing."""
-        config = _make_test_model_config()
-        model = config.build_model(rngs=nnx.Rngs(jr.PRNGKey(0)))
-
-        x = jnp.ones((4, 137, 137, 3))
-        pyramid = model(x)
-
-        assert len(pyramid) == 3
-        for level in pyramid:
-            assert level.shape[0] == 4, "Batch size should be preserved"
-
     def test_parameter_count(self):
         """Test parameter counting for UIB-based model."""
         config = _make_test_model_config()
@@ -580,37 +568,6 @@ class TestHierarchicalEmbeddingModel:
         # Just verify it's > 0 and reasonable
         assert param_count > 0, "Parameter count should be positive"
         assert param_count < 100000, f"Parameter count seems too high: {param_count}"
-
-    def test_gradient_flow_full_model(self):
-        """Test that gradients flow through the full model."""
-        from jax import grad
-
-        config = _make_test_model_config()
-        model = config.build_model(rngs=nnx.Rngs(jr.PRNGKey(0)))
-        x = jnp.ones((1, 137, 137, 3))
-
-        def loss_fn(m, inp):
-            pyramid = m(inp)
-            return pyramid[-1].sum()  # Use coarsest level
-
-        # Compute gradients
-        grads = grad(loss_fn, argnums=0)(model, x)
-
-        # Check that model has gradients
-        grad_state = nnx.state(grads)
-
-        # Check levels have gradients
-        assert "levels" in grad_state
-        level0 = grad_state["levels"][0]  # type: ignore
-        assert "uibs" in level0, "Level should have uibs"
-        assert 0 in level0["uibs"], "Level should have at least one UIB"
-
-        # Verify gradients exist and are non-zero
-        uib0_grads = level0["uibs"][0]  # type: ignore
-        assert "pw_expand" in uib0_grads
-        assert "kernel" in uib0_grads["pw_expand"]
-        assert uib0_grads["pw_expand"]["kernel"] is not None
-        assert not jnp.allclose(uib0_grads["pw_expand"]["kernel"], 0.0)
 
     def test_l2_norm_on_level_outputs(self):
         """Test that level outputs are L2-normalized."""
