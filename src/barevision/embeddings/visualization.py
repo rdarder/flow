@@ -1,11 +1,10 @@
 """Visualization utilities for embedding model.
 
-Generates figures for embedding statistics, attention maps, and variance heatmaps.
+Generates figures for embedding statistics and attention maps.
 All functions return RGB numpy arrays suitable for TensorBoard logging.
 
 Organization:
 - Figure creation functions (create_*_figure): Return RGB arrays
-- Variance heatmap visualization (_variance_map_to_heatmap)
 - Data extraction helpers (_extract_window_data_for_viz, etc.)
 - Training orchestration (log_visualizations): Logs to TensorBoard
 """
@@ -329,49 +328,6 @@ def create_attention_maps_figure(
     return _figure_to_array(fig)
 
 
-def _variance_map_to_heatmap(variance_map: np.ndarray) -> np.ndarray:
-    """Convert variance map to heatmap visualization.
-
-    Args:
-        variance_map: (H, W) spatial variance values
-
-    Returns:
-        (H, W, 3) RGB heatmap
-    """
-    # Normalize to [0, 1] for visualization
-    var_min = variance_map.min()
-    var_max = variance_map.max()
-
-    if var_max - var_min > 1e-6:
-        normalized = (variance_map - var_min) / (var_max - var_min)
-    else:
-        normalized = np.zeros_like(variance_map)
-
-    # Use viridis colormap (matplotlib)
-    import matplotlib
-
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-
-    fig, ax = plt.subplots(1, 1, figsize=(6, 6))
-    # origin="upper" matches array indexing (row 0 at top), consistent with image display
-    im = ax.imshow(normalized, cmap="viridis", vmin=0, vmax=1, origin="upper")
-    ax.set_title("Spatial Variance (lower = more concentrated)", fontsize=12)
-    ax.axis("off")
-    plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-    plt.tight_layout()
-
-    # Convert to RGB array
-    fig.canvas.draw()
-    width, height = fig.canvas.get_width_height()
-    buf = fig.canvas.buffer_rgba()
-    buffer = np.frombuffer(buf, dtype=np.uint8)
-    image_array = buffer.reshape(height, width, 4)[:, :, :3]
-    plt.close(fig)
-
-    return image_array
-
-
 def log_visualizations(
     logger,
     img1: jnp.ndarray,
@@ -493,17 +449,6 @@ def log_visualizations(
             distance=metadata.get("distance", 0),
         )
         logger.log_figure(f"Level{level_idx}/Attention_Maps", fig_attn, step)
-
-        # 3. Log variance maps (as heatmaps)
-        self_var_maps = aux_data["level_self_variance_maps"][level_idx]
-        cross_var_maps = aux_data["level_cross_variance_maps"][level_idx]
-
-        # Visualize variance maps as heatmaps
-        self_var_viz = _variance_map_to_heatmap(self_var_maps[0])  # First batch item
-        cross_var_viz = _variance_map_to_heatmap(cross_var_maps[0])
-
-        logger.log_image(f"Level{level_idx}/self_variance_map", self_var_viz, step)
-        logger.log_image(f"Level{level_idx}/cross_variance_map", cross_var_viz, step)
 
     # Clean up
     gc.collect()
