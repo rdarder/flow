@@ -38,9 +38,8 @@ model:
           use_dw_after_expand: false
           downsample_after: true
           use_l2_norm: true
-
 dataset:
-  batch_size: 8
+  batch_size: 2
   coarse_grid_size: 1
   window_size: 16
   num_levels: 3

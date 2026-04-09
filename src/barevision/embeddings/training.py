@@ -1,15 +1,16 @@
 import datetime
 import time
 from functools import partial
-from pathlib import Path
 
 import jax.numpy as jnp
 import optax
 import tyro
 from flax import nnx
+from rich import print as rich_print
 
 from barevision.embeddings.checkpointer import CheckpointManagerWrapper
 from barevision.dataset.video import create_dataloader
+from barevision.embeddings.flops import print_flops_report, compute_flops
 from barevision.embeddings.model import count_parameters
 from barevision.embeddings.spatial_losses import HierarchicalSpatialVarianceLoss
 from barevision.embeddings.visualization import log_visualizations
@@ -48,6 +49,10 @@ class EmbeddingsTrainer:
         self.model = embeddings_model
         self.checkpointer = CheckpointManagerWrapper(
             config.checkpoint, self.run_name, self.logger
+        )
+        self.image_size = self.model_config.target_to_input(
+            self.config.dataset.coarse_grid_size,
+            self.config.dataset.window_size,
         )
 
     @staticmethod
@@ -105,15 +110,11 @@ class EmbeddingsTrainer:
 
     def _train_epoch(self, epoch: int, global_step: int):
         epoch_seed = self.config.training.seed + epoch
-        image_size = self.model_config.target_to_input(
-            self.config.dataset.coarse_grid_size,
-            self.config.dataset.window_size,
-        )
 
         loader = create_dataloader(
             self.logger,
             self.config.dataset,
-            image_size=image_size,
+            image_size=self.image_size,
             split="train",
             shuffle=True,
             random_seed=epoch_seed,
@@ -136,13 +137,9 @@ class EmbeddingsTrainer:
         return global_step
 
     def _run_validation(self, step: int) -> float:
-        image_size = self.model_config.target_to_input(
-            self.config.dataset.coarse_grid_size,
-            self.config.dataset.window_size,
-        )
         loader = create_dataloader(
             self.config.dataset,
-            image_size=image_size,
+            image_size=self.image_size,
             split="val",
             shuffle=False,
             random_seed=self.config.training.seed,
@@ -258,50 +255,9 @@ class EmbeddingsTrainer:
 
     def _log_header(self):
         """Log training configuration header."""
-
-        self.logger.log("=" * 60)
-        self.logger.log("EMBEDDINGS TRAINING (Spatial Variance Loss)")
-        self.logger.log("=" * 60)
-        self.logger.log("")
-        self.logger.log(f"Pyramid levels: {len(self.model_config.levels)}")
-        self.logger.log(f"Embedding dim: 16")
-        self.logger.log(
-            f"Window size: {self.config.loss.spatial_variance.window_size}×{self.config.loss.spatial_variance.window_size}"
-        )
-        self.logger.log("")
-        self.logger.log("Model: Universal Inverted Bottleneck (UIB)")
-        self.logger.log("  - 2 UIBs per level")
-        self.logger.log("  - Second UIB downsamples")
-        self.logger.log("  - DW before/after expand")
-        self.logger.log("  - PW expand/compress")
-        self.logger.log("  - GroupNorm + ReLU after each conv")
-        self.logger.log("  - L2 norm on level outputs")
-
-        image_size = self.model_config.target_to_input(
-            self.config.dataset.coarse_grid_size,
-            self.config.dataset.window_size,
-        )
-        self.logger.log(f"Image size: {image_size}")
-        self.logger.log("")
-        self.logger.log(f"Epochs: {self.config.training.epochs}")
-        self.logger.log(f"Batch size: {self.config.dataset.batch_size}")
-        if self.config.dataset.max_samples > 0:
-            self.logger.log(f"Max samples per epoch: {self.config.dataset.max_samples}")
-        self.logger.log("")
-        self.logger.log(f"Loss: Spatial Variance")
-        self.logger.log(
-            f"  - Lambda self: {self.config.loss.spatial_variance.lambda_self}"
-        )
-        self.logger.log(
-            f"  - Self temperature: {self.config.loss.spatial_variance.self_temperature}"
-        )
-        self.logger.log(
-            f"  - Cross temperature: {self.config.loss.spatial_variance.cross_temperature}"
-        )
-        self.logger.log(
-            f"  - Level weight decay: {self.config.loss.spatial_variance.level_weight_decay}"
-        )
-        self.logger.log("")
+        self.logger.log(f"training: {self.run_name}")
+        rich_print(self.config.model_dump())
+        print_flops_report(compute_flops(config.model, *self.image_size))
 
 
 def loss_fn(model, img_pair, loss_fn_obj, need_aux: bool):
