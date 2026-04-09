@@ -4,6 +4,10 @@ Maps source files to their responsibilities. Updated on change.
 
 ---
 
+## Project Root
+
+**config.yaml:** YAML configuration for embeddings training. Defines model architecture (UIB pyramid), dataset settings, loss hyperparameters, training schedule, logging, checkpointing, and validation. Loaded via `barevision.config.load_config()` which validates against Pydantic models.
+
 ## src/barevision
 
 Core package. Embeddings training pipeline for hierarchical optical flow.
