@@ -228,36 +228,24 @@ def log_metrics(logger: TensorboardLogger, loss, aux, step: int):
 def log_diagnostics(
     logger: TensorboardLogger,
     model,
-    img1,
+    optimizer,
+    pyramid,
     step: int,
     window_size: int = 16,
     temperature: float = 0.25,
 ):
     """Log gradient statistics, embeddings, and attention statistics.
 
-    Works with both:
-    - Joint model (has model.embedding_model attribute)
-    - Standalone embeddings model (model IS the embedding model)
-
-    For hierarchical models, logs all pyramid levels.
-
     Args:
         logger: TensorBoard logger
-        model: NNX model
-        img1: Input frame for diagnostics
+        model: NNX model (for gradient statistics)
+        optimizer: NNX optimizer (for gradient statistics)
+        pyramid: List of embedding tensors from forward pass (one per level)
         step: Global step
         window_size: Attention window size
         temperature: Softmax temperature (should match training setting)
     """
-    log_gradient_statistics(logger, None, model, step)
-
-    # Get embeddings - handle both joint and standalone models
-    if hasattr(model, "embedding_model"):
-        # Joint model
-        pyramid = model.embedding_model(img1)
-    else:
-        # Standalone embeddings model
-        pyramid = model(img1)
+    log_gradient_statistics(logger, optimizer, model, step)
 
     # Log statistics for all pyramid levels
     for i, embeddings in enumerate(pyramid):

@@ -213,10 +213,13 @@ class EmbeddingsTrainer:
         log_metrics(self.tensorboard, loss, aux, global_step)
 
         # Log diagnostics for all pyramid levels
+        # Use cached pyramid from training forward pass (no redundant computation)
+        pyramid = aux["pyramids"][0]
         log_diagnostics(
             self.tensorboard,
             self.model,
-            img1,
+            self.optimizer,
+            pyramid,
             global_step,
             self.config.loss.spatial_variance.window_size,
             self.config.loss.spatial_variance.self_temperature,
@@ -258,7 +261,7 @@ class EmbeddingsTrainer:
         """Log training configuration header."""
         self.logger.log(f"training: {self.run_name}")
         rich_print(self.config.model_dump())
-        print_flops_report(compute_flops(config.model, *self.image_size))
+        print_flops_report(compute_flops(self.config.model, *self.image_size))
 
 
 def loss_fn(model, img_pair, loss_fn_obj, need_aux: bool):
