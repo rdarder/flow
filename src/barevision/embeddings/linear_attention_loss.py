@@ -77,12 +77,34 @@ def _compute_linear_attention_flow(
     k_coords_self = jnp.einsum("bnd,nk->bdk", q_flat, coords)
     k_coords_cross = jnp.einsum("bnd,nk->bdk", k_flat, coords)
 
-    # Per-query center of mass: (Bnw, N, 2)
-    self_com = jnp.einsum("bnd,bdk->bnk", q_flat, k_coords_self)
-    cross_com = jnp.einsum("bnd,bdk->bnk", q_flat, k_coords_cross)
+    # Per-query center of mass (unnormalized): (Bnw, N, 2)
+    self_com_unnorm = jnp.einsum("bnd,bdk->bnk", q_flat, k_coords_self)
+    cross_com_unnorm = jnp.einsum("bnd,bdk->bnk", q_flat, k_coords_cross)
+
+    # Normalize by sum of weights to get true weighted average
+    # Weight sum per position: (Bnw, N)
+    weight_sum_self = q_flat.sum(axis=2)
+    weight_sum_cross = k_flat.sum(axis=2)
+    
+    # Normalized COM: (Bnw, N, 2)
+    self_com = self_com_unnorm / (weight_sum_self[..., None] + 1e-8)
+    cross_com = cross_com_unnorm / (weight_sum_cross[..., None] + 1e-8)
 
     # Flow: (Bnw, N, 2)
+    # Now in normalized coordinates: 1.0 ≈ full window span
     flow = cross_com - self_com
+
+    # Diagnostics for monitoring
+    flow_stats = {
+        "self_com_min": self_com.min(),
+        "self_com_max": self_com.max(),
+        "cross_com_min": cross_com.min(),
+        "cross_com_max": cross_com.max(),
+        "flow_min": flow.min(),
+        "flow_max": flow.max(),
+        "weight_sum_self_mean": weight_sum_self.mean(),
+        "weight_sum_cross_mean": weight_sum_cross.mean(),
+    }
 
     # Confidence: negative variance of per-dimension flow contributions
     # Per-dimension flow: (Bnw, N, D, 2)
@@ -98,7 +120,7 @@ def _compute_linear_attention_flow(
     flow = flow.reshape(Bnw, H_w, W_w, 2)
     confidence = confidence.reshape(Bnw, H_w, W_w)
 
-    return flow, confidence
+    return flow, confidence, flow_stats
 
 
 def _warp_embeddings(
@@ -156,33 +178,36 @@ def _compute_warped_reconstruction_loss(
     Args:
         windows1: Frame 1 embeddings (B*num_windows, H_w, W_w, D)
         windows2: Frame 2 embeddings (B*num_windows, H_w, W_w, D)
-        flow: Predicted flow (B*num_windows, H_w, W_w, 2)
+        flow: Predicted flow in normalized coordinates (B*num_windows, H_w, W_w, 2)
+            where 1.0 ≈ full window span
         window_size: Window size
 
     Returns:
         Scalar MSE loss
     """
-    warped = _warp_embeddings(windows2, flow, window_size)
+    # Convert flow from normalized to pixel coordinates
+    flow_pixels = flow * window_size
+    warped = _warp_embeddings(windows2, flow_pixels, window_size)
     mse = jnp.mean((windows1 - warped) ** 2)
     return mse
 
 
-def _compute_embedding_diversity_loss(
+def _compute_embedding_variance(
     windows: jnp.ndarray, scope: str = "per_window"
 ) -> jnp.ndarray:
-    """Compute embedding diversity loss.
+    """Compute embedding variance across spatial positions.
 
-    Encourages embeddings to vary across spatial positions.
-    Prevents "all positions output same embedding" collapse.
+    Measures how much embeddings vary across space.
+    Higher = more diverse embeddings.
 
     Args:
         windows: Embeddings (B*num_windows, H_w, W_w, D)
         scope: 'per_window' or 'global'
-            - per_window: diversity computed independently per window
-            - global: diversity computed across all positions
+            - per_window: variance computed independently per window
+            - global: variance computed across all positions
 
     Returns:
-        Scalar loss (negative variance - maximize variance = minimize loss)
+        Scalar variance (average across dimensions)
     """
     if scope == "global":
         # Flatten all spatial positions
@@ -193,8 +218,7 @@ def _compute_embedding_diversity_loss(
         variance = jnp.var(windows, axis=(1, 2)).mean(axis=1)
         variance = variance.mean()
 
-    # Loss is negative variance (maximize variance = minimize loss)
-    return -variance
+    return variance
 
 
 def _compute_linear_attention_flow_loss(
@@ -228,7 +252,7 @@ def _compute_linear_attention_flow_loss(
     coords = generate_normalized_coordinates(window_size)
 
     # Compute flow
-    flow, confidence = _compute_linear_attention_flow(fw1, fw2, coords, window_size)
+    flow, confidence, flow_stats = _compute_linear_attention_flow(fw1, fw2, coords, window_size)
 
     # Warped reconstruction loss
     loss_reconstruction = _compute_warped_reconstruction_loss(
@@ -236,11 +260,17 @@ def _compute_linear_attention_flow_loss(
     )
 
     # Embedding diversity loss (on both frames)
-    loss_diversity_1 = _compute_embedding_diversity_loss(fw1, config.diversity_scope)
-    loss_diversity_2 = _compute_embedding_diversity_loss(fw2, config.diversity_scope)
-    loss_diversity = (loss_diversity_1 + loss_diversity_2) / 2
+    # Variance is computed, then converted to normalized loss: 0 = perfect, 1 = collapse
+    variance_1 = _compute_embedding_variance(fw1, config.diversity_scope)
+    variance_2 = _compute_embedding_variance(fw2, config.diversity_scope)
+    variance_avg = (variance_1 + variance_2) / 2
+    
+    # Normalized diversity loss: 1 - (variance / max_variance)
+    # max_variance = 0.25 for L2-normalized embeddings in [0, 1]
+    max_variance = 0.25
+    loss_diversity = 1.0 - (variance_avg / max_variance)
 
-    # Total loss
+    # Total loss (all components are now positive, 0 = perfect)
     total_loss = (
         config.lambda_reconstruction * loss_reconstruction
         + config.lambda_diversity * loss_diversity
@@ -249,8 +279,10 @@ def _compute_linear_attention_flow_loss(
     aux = {
         "reconstruction_loss": loss_reconstruction,
         "diversity_loss": loss_diversity,
+        "diversity_variance": variance_avg,
         "flow": flow,
         "confidence": confidence,
+        "flow_stats": flow_stats,
     }
 
     return total_loss, aux

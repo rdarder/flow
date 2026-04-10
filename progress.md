@@ -1,58 +1,80 @@
-# Progress: Training Throughput Optimization
+# Progress: Linear Attention Embeddings
 
 ## Current State
 
-### Variance Map Visualizations: Removed
+The embeddings training system now uses **linear attention** for self-supervised optical flow learning, replacing the previous softmax-based spatial variance loss.
 
-Variance map heatmap visualizations have been removed from TensorBoard logging:
+### Session: 2026-04-10 — Normalized Linear Attention and Bounded Losses
 
-1. **What was removed**:
-   - `_variance_map_to_heatmap()` function
-   - Variance map logging calls in `log_visualizations()`
+Transitioned from raw linear attention to **normalized weight averaging** with interpretable, bounded loss values. All loss components are now positive numbers where 0 represents the theoretical optimum.
 
-2. **What was kept**:
-   - Variance maps are still computed and stored in `aux` data (for debugging, potential future use)
-   - All other visualizations (frame grid, attention maps) remain unchanged
+#### Behavior Changes
 
-3. **Rationale**:
-   - Variance map visualizations were broken/incorrect
-   - Not essential for monitoring training health
-   - Attention variance scalar statistics (histograms, mean/std) still logged via `log_diagnostics()`
+- **COM is now a true weighted average** — Attention weights are normalized by their sum, ensuring center-of-mass stays within coordinate bounds [0, 1] instead of potentially exceeding them
+- **Flow has interpretable scale** — `flow = 1.0` now means "full window span" (16 pixels for 16×16 window), making flow magnitudes interpretable during training
+- **Diversity loss is bounded** — Changed from unbounded negative variance to normalized loss: `1 - (variance / 0.25)`, where 0 = maximum diversity, 1 = complete collapse
+- **All losses positive, 0 = perfect** — Total loss is now a meaningful sum where lower is always better (previously could go negative)
+- **Embeddings use ReLU activation** — Embedding generator outputs are now ReLU'd before L2 normalization, restricting to positive orthant (required for weight normalization to be meaningful)
 
-### Data Loading: Pre-loaded Frame Cache
+#### Diagnostic Additions
 
-Training uses **in-memory pre-loaded frames** to eliminate per-step JPEG decoding overhead:
+- **Flow range monitoring** — Logs self_com min/max, cross_com min/max, flow min/max to verify COM stays in expected [0, 1] range
+- **Weight sum monitoring** — Logs average activation sum per position to detect embedding collapse (near-zero weights)
+- **Diversity score** — Reports variance as percentage of theoretical maximum (0.25) for quick assessment
 
-1. **Pre-loading phase**: At dataloader creation, all unique frames needed for the epoch are:
-   - Decoded from JPEG once
-   - Resized to target dimensions
-   - Stored as a single JAX array on CPU
+#### Implementation Details
 
-2. **Batch generation**: Frames are sliced from the pre-loaded array (instant, no decoding)
+- Weight normalization: `COM = (Q @ K_coords) / Q.sum(axis=-1)`
+- Flow rescaling: `flow_pixels = flow_normalized * window_size` before warping
+- Max theoretical variance: 0.25 for L2-normalized embeddings in positive orthant
+- New aux field `diversity_variance` preserves raw variance for reference
 
-3. **Memory limit**: Configurable via `frame_cache_max_mb` (default 500MB, -1 for unlimited)
-   - Fails fast if dataset exceeds limit with clear error message
-   - Typical usage: 9k frames at 81×81 fits in ~700MB
+### Linear Attention Mechanism
 
-4. **Performance**: 
-   - First epoch: ~57 samples/sec (includes pre-loading overhead)
-   - Subsequent epochs: ~90-95 samples/sec
-   - **~15x improvement** over original PIL-based loading (~6 samples/sec)
+Each 16×16 window computes flow via center-of-mass decoding:
+- **Pre-compute per window:** `K_coords = K.T @ coords` maps each embedding dimension to a spatial position
+- **Per-query decoding:** `COM = Q @ K_coords` finds where the query embedding points (O(D) not O(N²))
+- **Flow estimate:** `flow = cross_frame_COM - self_frame_COM`
 
-5. **Trade-offs**:
-   - Pre-loading happens every epoch (acceptable overhead: ~1-2 seconds)
-   - No disk persistence (simpler, no cache invalidation)
-   - Works for both CPU and GPU training (JAX arrays on CPU, auto-transferred when needed)
+This reduces attention computation from ~3.9M FLOPs per window (softmax) to ~57K FLOPs (linear) — a 70× speedup.
 
-### Configuration
+### Training Signal
 
-```yaml
-dataset:
-  frame_cache_max_mb: 500  # Memory limit for pre-loaded frames (-1 for unlimited)
-```
+**Warped reconstruction loss** is the core self-supervised signal:
+1. Predict flow from linear attention
+2. Warp frame2 embeddings by predicted flow using bilinear interpolation
+3. Compare warped frame2 to frame1 (MSE)
 
-### Testing
+The model learns embeddings that are temporally stable — the same spatial position in frame1 and frame2 should have similar embeddings after warping.
 
-- Test fixtures: Small synthetic dataset (2 videos, 9 frames total) in `src/barevision/dataset/test_fixtures/`
-- Tests verify: pre-loading, memory limits, frame reuse, batch generation
-- Dataset directory override: `set_datasets_dir_override()` for test isolation
+**Embedding diversity loss** prevents collapse by encouraging embeddings to vary across spatial positions (maximizes spatial variance).
+
+### Architecture
+
+- **Input:** 81×81 RGB frames (configured for 1×1 coarse grid with 16×16 windows)
+- **Pyramid:** 3 levels (73×73, 35×35, 16×16) with MobileNet V4-inspired UIB blocks
+- **Output:** 16-dim L2-normalized embeddings per pixel
+- **Flow:** 2D vector per pixel, computed independently per window
+
+### Training Configuration
+
+- **Loss weights:** λ_reconstruction=1.0, λ_diversity=0.1
+- **Level weighting:** Uniform (decay=1.0) across pyramid levels
+- **Diversity scope:** Per-window (matches attention structure)
+
+### Known Behaviors
+
+- Flow is clipped implicitly by the linear attention mechanism (dimensions encode spatial information, not arbitrary offsets)
+- Coarsest level (16×16) produces exactly one window — minimal but functional
+- Early training produces high-variance flow; reconstruction loss drives convergence
+
+### Deviations from Original Plan
+
+- **Flow concordance loss deferred:** The original intent included a third loss term encouraging dimensions to agree on flow direction. Removed to keep scope minimal — can be added once base training is stable.
+- **No MLP refinement:** Raw flow (cross_com - self_com) is used directly. MLP refinement deferred.
+
+---
+
+## Next Session Considerations
+
+The gap between this progress and `intent.md` determines what's next. Current intent includes flow estimation module (separate from embeddings loss) and potential ablations (feature maps, diversity scope, loss weights).

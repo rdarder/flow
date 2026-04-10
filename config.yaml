@@ -21,6 +21,7 @@ model:
           use_dw_before_expand: true
           use_dw_after_expand: true
           downsample_after: false
+          relu_output: true
           use_l2_norm: true
     - uib_configs:
         - in_channels: 16
@@ -29,6 +30,7 @@ model:
           use_dw_before_expand: true
           use_dw_after_expand: false
           downsample_after: true
+          relu_output: true
           use_l2_norm: true
     - uib_configs:
         - in_channels: 16
@@ -37,6 +39,7 @@ model:
           use_dw_before_expand: true
           use_dw_after_expand: false
           downsample_after: true
+          relu_output: true
           use_l2_norm: true
 dataset:
   batch_size: 2

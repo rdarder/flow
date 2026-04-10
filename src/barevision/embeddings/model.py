@@ -79,6 +79,10 @@ class UIBConfig(BaseModel):
     downsample_gaussian_sigma: float = Field(
         default=1.0, gt=0, description="Sigma for Gaussian kernel initialization"
     )
+    relu_output: bool = Field(
+        default=False,
+        description="relu() before before output and before optional normalization",
+    )
     use_l2_norm: bool = Field(default=False, description="L2-normalize output")
 
     def output_size(self, input_size: int) -> int:
@@ -396,6 +400,9 @@ class UniversalInvertedBlock(nnx.Module):
         # Downsample
         if self.config.downsample_after:
             x = self.downsample(x)
+
+        if self.config.relu_output:
+            x = nnx.relu(x)
 
         # L2 normalization
         if self.config.use_l2_norm:

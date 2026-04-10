@@ -177,7 +177,10 @@ def log_metrics(logger: TensorboardLogger, loss, aux, step: int):
         logger.log_scalar(
             "Loss/reconstruction", float(aux["reconstruction_loss"]), step
         )
-        logger.log_scalar("Loss/diversity", float(aux["diversity_loss"]), step)
+        div_loss = float(aux["diversity_loss"])  # Already normalized: 0=perfect, 1=collapse
+        div_variance = float(aux.get("diversity_variance", 0.0))  # Raw variance
+        logger.log_scalar("Loss/diversity", div_loss, step)
+        logger.log_scalar("Loss/diversity_variance", div_variance, step)
 
         # Log per-level breakdown if available
         if "level_losses" in aux and "level_weights" in aux:
@@ -209,6 +212,22 @@ def log_diagnostics(
         aux: Auxiliary data from loss (contains flow, confidence per level)
     """
     log_gradient_statistics(logger, optimizer, model, step)
+
+    # Log flow_stats diagnostics if available (from linear attention)
+    if "flow_stats" in aux:
+        stats = aux["flow_stats"]
+        logger.log_scalar("Flow/self_com_min", float(stats["self_com_min"]), step)
+        logger.log_scalar("Flow/self_com_max", float(stats["self_com_max"]), step)
+        logger.log_scalar("Flow/cross_com_min", float(stats["cross_com_min"]), step)
+        logger.log_scalar("Flow/cross_com_max", float(stats["cross_com_max"]), step)
+        logger.log_scalar("Flow/flow_min", float(stats["flow_min"]), step)
+        logger.log_scalar("Flow/flow_max", float(stats["flow_max"]), step)
+        logger.log_scalar(
+            "Flow/weight_sum_self_mean", float(stats["weight_sum_self_mean"]), step
+        )
+        logger.log_scalar(
+            "Flow/weight_sum_cross_mean", float(stats["weight_sum_cross_mean"]), step
+        )
 
     # Log statistics for all pyramid levels
     for i, embeddings in enumerate(pyramid):
@@ -242,8 +261,10 @@ def format_progress_line(
     # Linear attention flow loss structure
     if aux and "reconstruction_loss" in aux:
         recon = float(aux["reconstruction_loss"])
-        div = float(aux["diversity_loss"])
-        parts.append(f"Recon: {recon:.4f} | Diversity: {div:.4f}")
+        div = float(aux["diversity_loss"])  # Normalized: 0=perfect, 1=collapse
+        div_var = float(aux.get("diversity_variance", 0.0))  # Raw variance
+        weighted = recon + div  # Unweighted sum for reference
+        parts.append(f"Recon: {recon:.4f} | Div: {div:.4f} | Var: {div_var:.4f}")
 
     parts.append(f"{steps_per_sec:.1f} steps/sec")
 
