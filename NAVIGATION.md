@@ -26,19 +26,19 @@ Data loading for video frames.
 
 ## src/barevision/embeddings
 
-Embedding pyramid model, training loop, and spatial variance loss.
+Embedding pyramid model, training loop, and linear attention flow loss.
 
 **checkpointer.py:** Orbax CheckpointManager wrapper for embeddings training. Epoch-based checkpointing with validation-loss-based preservation policy. Exports: `CheckpointManagerWrapper`, `CheckpointConfig`.
 
-**logging_utils.py:** Training diagnostics and console logging utilities. Exports: `log_diagnostics`, `log_metrics`, `log_progress`.
+**linear_attention_loss.py:** Linear attention flow loss for self-supervised training. Replaces softmax attention with O(D) linear attention mechanism. Computes flow via center-of-mass decoding, warped reconstruction loss, and embedding diversity loss. Config: `LinearAttentionFlowLossConfig` (Pydantic, frozen). Exports: `HierarchicalLinearAttentionFlowLoss`, `LinearAttentionFlowLossConfig`, `compute_hierarchical_linear_attention_loss`.
+
+**logging_utils.py:** Training diagnostics and console logging utilities. Logs flow statistics, embedding statistics, and gradient statistics. Exports: `log_diagnostics`, `log_metrics`, `log_progress`, `log_flow_statistics`.
 
 **model.py:** Hierarchical embedding pyramid with MobileNet V4-inspired Universal Inverted Blocks (UIB). Configuration: `UIBConfig` → `LevelConfig` → `HierarchicalModelConfig` (tuple of levels). Config classes use Pydantic with frozen=True for JAX/JIT compatibility. Model config owns size methods and can build model via `build_model()`. Model classes (`UniversalInvertedBlock`, `Level`, `HierarchicalEmbeddingModel`) have no size methods. Each level has configurable UIBs. GroupNorm + ReLU after each conv, L2 norm on level outputs. Exports: `HierarchicalEmbeddingModel`, `HierarchicalModelConfig`, `Level`, `LevelConfig`, `UniversalInvertedBlock`, `UIBConfig`, `count_parameters`.
 
-**spatial_losses.py:** Spatial variance loss for attention concentration. Computes variance of attention-weighted positions per query. Supports self and cross-attention with temperature scaling. Config: `SpatialVarianceLossConfig` (Pydantic, frozen). Exports: `HierarchicalSpatialVarianceLoss`, `SpatialVarianceLossConfig`, `compute_hierarchical_spatial_variance_loss`.
-
 **training.py:** EmbeddingsTrainer - main training loop with TensorBoard logging, validation, checkpointing. Loads model from YAML config via `barevision.config.load_config()`. Exports: `EmbeddingsTrainer`, `TrainingConfig`, `LoggingConfig`, `ValidationConfig`.
 
-**visualization.py:** Diagnostic visualizations for attention maps, embeddings, and training metrics. TensorBoard figure generation.
+**visualization.py:** Diagnostic visualizations for per-dimension activation patterns and frame grid overlays. TensorBoard figure generation.
 
 ## src/barevision/flow
 

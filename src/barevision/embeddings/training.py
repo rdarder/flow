@@ -12,7 +12,10 @@ from barevision.embeddings.checkpointer import CheckpointManagerWrapper
 from barevision.dataset.video import DatasetConfig, PreparedDataset
 from barevision.embeddings.flops import print_flops_report, compute_flops
 from barevision.embeddings.model import count_parameters
-from barevision.embeddings.spatial_losses import HierarchicalSpatialVarianceLoss
+from barevision.embeddings.linear_attention_loss import (
+    HierarchicalLinearAttentionFlowLoss,
+    LinearAttentionFlowLossConfig,
+)
 from barevision.embeddings.visualization import log_visualizations
 from barevision.utils.console import ConsoleLogger
 from barevision.utils.logging import TensorboardLogger
@@ -36,7 +39,7 @@ class EmbeddingsTrainer:
         self.model_config = config.model
         rngs = nnx.Rngs(config.training.seed)
         embeddings_model = self.model_config.build_model(rngs=rngs)
-        self.loss_fn_obj = HierarchicalSpatialVarianceLoss(config.loss.spatial_variance)
+        self.loss_fn_obj = HierarchicalLinearAttentionFlowLoss(config.loss.linear_attention_flow)
 
         self.optimizer = nnx.Optimizer(
             embeddings_model,
@@ -185,7 +188,7 @@ class EmbeddingsTrainer:
 
         if self._log_this_step(global_step):
             self._log_progress(
-                epoch, global_step, step_in_epoch, loss, aux, epoch_start, img1
+                epoch, global_step, step_in_epoch, loss, aux, epoch_start
             )
         if self._should_log_visualizations(global_step):
             self._log_visualizations(img1, img2, aux, metadata[0], global_step)
@@ -207,7 +210,6 @@ class EmbeddingsTrainer:
         loss: float,
         aux: dict,
         epoch_start: float,
-        img1: jnp.ndarray,
     ):
         # Log loss metrics (total + per-level breakdown)
         log_metrics(self.tensorboard, loss, aux, global_step)
@@ -221,16 +223,12 @@ class EmbeddingsTrainer:
             self.optimizer,
             pyramid,
             global_step,
-            self.config.loss.spatial_variance.window_size,
-            self.config.loss.spatial_variance.self_temperature,
+            aux,
         )
 
         steps_per_sec = step_in_epoch / (time.time() - epoch_start)
-        self_var = float(aux["self_loss"])
-        cross_var = float(aux["cross_loss"])
         self.logger.log(
-            f"Epoch {epoch} | Step {global_step} | Loss: {float(loss):.4f} "
-            f"(self: {self_var:.2f} | cross: {cross_var:.2f}) | "
+            f"Epoch {epoch} | Step {global_step} | Loss: {float(loss):.4f} | "
             f"{steps_per_sec:.1f} steps/sec"
         )
 
@@ -253,7 +251,7 @@ class EmbeddingsTrainer:
             aux_data=aux,
             metadata=metadata,
             step=global_step,
-            window_size=self.config.loss.spatial_variance.window_size,
+            window_size=self.config.loss.linear_attention_flow.window_size,
             num_levels=len(self.model_config.levels),
         )
 
@@ -290,7 +288,7 @@ def loss_fn(model, img_pair, loss_fn_obj, need_aux: bool):
 @partial(nnx.jit, static_argnames=("loss_fn_obj", "return_aux"))
 def _compute_loss_and_grads(
     model: HierarchicalEmbeddingModel,
-    loss_fn_obj: HierarchicalSpatialVarianceLoss,
+    loss_fn_obj: HierarchicalLinearAttentionFlowLoss,
     optimizer: nnx.Optimizer,
     img_pair: tuple[jnp.ndarray, jnp.ndarray],
     return_aux: bool,
@@ -319,7 +317,7 @@ def _compute_loss_and_grads(
 @partial(nnx.jit, static_argnames="loss_fn_obj")
 def _validation_step(
     model: HierarchicalEmbeddingModel,
-    loss_fn_obj: HierarchicalSpatialVarianceLoss,
+    loss_fn_obj: HierarchicalLinearAttentionFlowLoss,
     img_pair: tuple[jnp.ndarray, jnp.ndarray],
 ):
     """Validation step without gradient computation.

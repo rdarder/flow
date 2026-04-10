@@ -6,7 +6,7 @@ subsections, and the load_config() function for loading from YAML files.
 Config classes are defined in their respective business modules:
 - model.py: UIBConfig, LevelConfig, HierarchicalModelConfig
 - dataset/video.py: DatasetConfig
-- embeddings/spatial_losses.py: SpatialVarianceLossConfig, LossConfig
+- embeddings/linear_attention_loss.py: LinearAttentionFlowLossConfig, LossConfig
 - embeddings/checkpointer.py: CheckpointConfig
 
 Training-related configs (TrainingConfig, LoggingConfig, ValidationConfig)
@@ -20,7 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from barevision.embeddings.model import HierarchicalModelConfig
 from barevision.dataset.video import DatasetConfig
-from barevision.embeddings.spatial_losses import SpatialVarianceLossConfig
+from barevision.embeddings.linear_attention_loss import LinearAttentionFlowLossConfig
 from barevision.embeddings.checkpointer import CheckpointConfig
 
 
@@ -80,13 +80,13 @@ class LossConfig(BaseModel):
     """Loss configuration wrapper.
 
     Attributes:
-        spatial_variance: Spatial variance loss configuration
+        linear_attention_flow: Linear attention flow loss configuration
     """
 
     model_config = ConfigDict(frozen=True)
 
-    spatial_variance: SpatialVarianceLossConfig = Field(
-        description="Spatial variance loss configuration"
+    linear_attention_flow: LinearAttentionFlowLossConfig = Field(
+        description="Linear attention flow loss configuration"
     )
 
 

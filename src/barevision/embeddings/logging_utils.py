@@ -8,84 +8,47 @@ import time
 import jax.numpy as jnp
 import numpy as np
 
-from barevision.embeddings.spatial_losses import (
-    self_attention_spatial_variance,
-    cross_attention_spatial_variance,
-)
-from barevision.utils.grid import (
-    WindowGrid,
-    generate_normalized_coordinates,
-    crop_to_grid_aligned,
-)
 from barevision.utils.logging import TensorboardLogger
 
 
-def log_attention_statistics(
+def log_flow_statistics(
     logger: TensorboardLogger,
-    embeddings: jnp.ndarray,
+    flow: jnp.ndarray,
+    confidence: jnp.ndarray,
     step: int,
-    window_size: int = 16,
-    temperature: float = 0.25,
-    prefix: str = "Attention",
+    prefix: str = "Flow",
 ):
-    """Log attention spatial variance distributions for diagnostic monitoring.
+    """Log flow and confidence statistics for diagnostic monitoring.
 
     Tracks:
-    - Self-attention spatial variance: training minimizes this (encourage concentrated attention)
-    - Cross-attention spatial variance: training minimizes this (encourage confident matching)
+    - Flow magnitude distribution
+    - Confidence distribution (negative variance)
 
     Args:
-        logger: JaxLogger instance
-        embeddings: (B, H, W, D) embeddings from a single frame
+        logger: TensorBoard logger instance
+        flow: (B, H, W, 2) flow vectors
+        confidence: (B, H, W) confidence scores
         step: Global step
-        window_size: Attention window size
-        temperature: Softmax temperature (should match training setting)
         prefix: Tag prefix for organization
     """
-    B, H, W, D = embeddings.shape
+    flow_array = np.array(flow)
+    confidence_array = np.array(confidence)
 
-    # Crop to grid-aligned dimensions (same as loss calculation)
-    embeddings_cropped = crop_to_grid_aligned(embeddings, window_size)
-    B_crop, H_crop, W_crop, D_crop = embeddings_cropped.shape
+    # Flow magnitude
+    flow_magnitude = np.linalg.norm(flow_array, axis=-1)
+    logger.log_histogram(f"{prefix}/magnitude", flow_magnitude.flatten(), step)
+    logger.log_scalar(f"{prefix}/magnitude_mean", float(np.mean(flow_magnitude)), step)
+    logger.log_scalar(f"{prefix}/magnitude_std", float(np.std(flow_magnitude)), step)
+    logger.log_scalar(f"{prefix}/magnitude_max", float(np.max(flow_magnitude)), step)
 
-    # Split into windows
-    grid = WindowGrid(window_size=window_size)
-    windows = grid.split(embeddings_cropped)
-    num_windows = (H_crop // window_size) * (W_crop // window_size)
-    flat_windows = windows.reshape(
-        B_crop * num_windows, window_size, window_size, D_crop
-    )
+    # Flow components
+    logger.log_histogram(f"{prefix}/dx", flow_array[..., 0].flatten(), step)
+    logger.log_histogram(f"{prefix}/dy", flow_array[..., 1].flatten(), step)
 
-    # Precompute coordinates
-    coords = generate_normalized_coordinates(window_size)
-
-    # Compute spatial variances (both return tuple of (loss, aux))
-    self_variance, _ = self_attention_spatial_variance(
-        flat_windows, temperature=temperature, coords=coords
-    )
-    cross_variance, _ = cross_attention_spatial_variance(
-        flat_windows, flat_windows, temperature=temperature, coords=coords
-    )
-
-    # Log histograms
-    logger.log_histogram(
-        f"{prefix}/self_variance", np.array(self_variance.flatten()), step
-    )
-    logger.log_histogram(
-        f"{prefix}/cross_variance", np.array(cross_variance.flatten()), step
-    )
-
-    # Log summary statistics
-    logger.log_scalar(
-        f"{prefix}/self_variance_mean", float(np.mean(self_variance)), step
-    )
-    logger.log_scalar(f"{prefix}/self_variance_std", float(np.std(self_variance)), step)
-    logger.log_scalar(
-        f"{prefix}/cross_variance_mean", float(np.mean(cross_variance)), step
-    )
-    logger.log_scalar(
-        f"{prefix}/cross_variance_std", float(np.std(cross_variance)), step
-    )
+    # Confidence (negative variance, so more negative = less confident)
+    logger.log_histogram(f"{prefix}/confidence", confidence_array.flatten(), step)
+    logger.log_scalar(f"{prefix}/confidence_mean", float(np.mean(confidence_array)), step)
+    logger.log_scalar(f"{prefix}/confidence_std", float(np.std(confidence_array)), step)
 
 
 def log_embedding_statistics(
@@ -202,17 +165,19 @@ def log_gradient_statistics(
 def log_metrics(logger: TensorboardLogger, loss, aux, step: int):
     """Log loss metrics to TensorBoard.
 
-    For spatial variance loss, logs:
+    For linear attention flow loss, logs:
     - Total loss
-    - Self and cross loss components
+    - Reconstruction and diversity loss components
     - Per-level breakdown (if available in aux)
     """
     logger.log_scalar("Loss/total", float(loss), step)
 
-    # Spatial variance loss structure
-    if "self_loss" in aux:
-        logger.log_scalar("Loss/spatial_variance/self", float(aux["self_loss"]), step)
-        logger.log_scalar("Loss/spatial_variance/cross", float(aux["cross_loss"]), step)
+    # Linear attention flow loss structure
+    if "reconstruction_loss" in aux:
+        logger.log_scalar(
+            "Loss/reconstruction", float(aux["reconstruction_loss"]), step
+        )
+        logger.log_scalar("Loss/diversity", float(aux["diversity_loss"]), step)
 
         # Log per-level breakdown if available
         if "level_losses" in aux and "level_weights" in aux:
@@ -231,10 +196,9 @@ def log_diagnostics(
     optimizer,
     pyramid,
     step: int,
-    window_size: int = 16,
-    temperature: float = 0.25,
+    aux: dict,
 ):
-    """Log gradient statistics, embeddings, and attention statistics.
+    """Log gradient statistics, embeddings, and flow statistics.
 
     Args:
         logger: TensorBoard logger
@@ -242,8 +206,7 @@ def log_diagnostics(
         optimizer: NNX optimizer (for gradient statistics)
         pyramid: List of embedding tensors from forward pass (one per level)
         step: Global step
-        window_size: Attention window size
-        temperature: Softmax temperature (should match training setting)
+        aux: Auxiliary data from loss (contains flow, confidence per level)
     """
     log_gradient_statistics(logger, optimizer, model, step)
 
@@ -251,14 +214,17 @@ def log_diagnostics(
     for i, embeddings in enumerate(pyramid):
         prefix = f"Embeddings/level{i}"
         log_embedding_statistics(logger, embeddings, step, prefix=prefix)
-        log_attention_statistics(
-            logger,
-            embeddings,
-            step,
-            window_size,
-            temperature,
-            prefix=f"Attention/level{i}",
-        )
+        
+        # Log flow statistics if available
+        if "flow" in aux and i < len(aux["flow"]):
+            flow_stats_prefix = f"Flow/level{i}"
+            log_flow_statistics(
+                logger,
+                aux["flow"][i],
+                aux["confidence"][i],
+                step,
+                prefix=flow_stats_prefix,
+            )
 
 
 def format_progress_line(
@@ -266,39 +232,18 @@ def format_progress_line(
 ) -> str:
     """Format training progress line for console output.
 
-    Works with spatial variance loss structure.
+    Works with linear attention flow loss structure.
     """
     steps_per_sec = (step + 1) / elapsed
 
     # Start with basic info
     parts = [f"Epoch {epoch} | Step {step} | Loss: {loss:.4f}"]
 
-    # Add loss breakdown if available (spatial variance loss structure)
-    if aux and "self_loss" in aux:
-        self_var = float(aux["self_loss"])
-        cross_var = float(aux["cross_loss"])
-        parts.append(
-            f"Spatial Var: {self_var + cross_var:.4f} "
-            f"(self: {self_var:.2f} | cross: {cross_var:.2f})"
-        )
-
-    # Fallback to old entropy structure for backward compatibility
-    elif aux and "entropy" in aux:
-        self_entropy = float(aux["entropy"]["self_loss"])
-        cross_entropy = float(aux["entropy"]["cross_loss"])
-        total_entropy = float(aux["entropy"]["loss"])
-        if "reconstruction" in aux:
-            reconstruction = float(aux["reconstruction"]["loss"])
-            parts.append(
-                f"Entropy: {total_entropy:.4f} "
-                f"(self: {self_entropy:.2f} | cross: {cross_entropy:.2f}) "
-                f"| Recon: {reconstruction:.4f}"
-            )
-        else:
-            parts.append(
-                f"Entropy: {total_entropy:.4f} "
-                f"(self: {self_entropy:.2f} | cross: {cross_entropy:.2f})"
-            )
+    # Linear attention flow loss structure
+    if aux and "reconstruction_loss" in aux:
+        recon = float(aux["reconstruction_loss"])
+        div = float(aux["diversity_loss"])
+        parts.append(f"Recon: {recon:.4f} | Diversity: {div:.4f}")
 
     parts.append(f"{steps_per_sec:.1f} steps/sec")
 
@@ -308,13 +253,13 @@ def format_progress_line(
 def log_progress(
     logger: TensorboardLogger,
     model,
-    img1,
+    optimizer,
+    pyramid,
     epoch: int,
     step: int,
     loss,
     aux,
     epoch_start: float,
-    window_size: int = 16,
 ):
     """Log all standard training diagnostics and print progress.
 
@@ -326,16 +271,16 @@ def log_progress(
     Args:
         logger: JaxLogger instance
         model: NNX model
-        img1: Input frame for diagnostics
+        optimizer: NNX optimizer
+        pyramid: List of embedding tensors from forward pass
         epoch: Current epoch number
         step: Current step within epoch
         loss: Combined loss value
-        aux: auxiliary loss information (like self/cross attention loss components.
+        aux: Auxiliary loss information
         epoch_start: Time when epoch started (for speed calculation)
-        window_size: Attention window size
     """
     log_metrics(logger, loss, aux, step)
-    log_diagnostics(logger, model, img1, step, window_size)
+    log_diagnostics(logger, model, optimizer, pyramid, step, aux)
     print(
         format_progress_line(epoch, step, float(loss), time.time() - epoch_start, aux)
     )

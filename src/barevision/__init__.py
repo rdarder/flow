@@ -7,7 +7,7 @@ and other perception tasks targeting NPU-constrained hardware.
 # Configure JAX compilation cache (must be done before any JAX operations)
 from barevision.utils.jax_setup import setup_jax_compilation_cache, setup_jax_verbosity
 
-setup_jax_verbosity()
+# setup_jax_verbosity() disable while we debug jax core dump issues
 setup_jax_compilation_cache()
 
 __version__ = "0.1.0"

@@ -1,211 +1,292 @@
-# Brainstorm: Training Throughput Optimization
+# Brainstorm: Linear Attention for Flow Estimation
+
+**Date:** 2026-04-10  
+**Participants:** rdarder, AI assistant  
+**Context:** Re-focusing on flow estimation after simplifying embeddings model
+
+---
 
 ## The Wish
 
-Faster training iterations for the embeddings model. Currently getting ~0.7 batches/sec (~6 samples/sec) on CPU. Want to understand what's limiting throughput before adding more training stages.
+Build an efficient flow estimation system that:
+- Works with our hierarchical embeddings (16-dim vectors per pixel)
+- Uses self/cross attention within non-overlapping windows (16×16)
+- Produces one flow vector per pixel (dense estimation)
+- Fits within ~128M FLOPs budget for 64 windows (8×8 grid of 16×16 windows)
+- Can be trained self-supervised (no ground-truth flow required)
 
-## Initial Hypothesis (Rejected)
-
-**Hypothesis:** Gradient flow through the hierarchical pyramid is causing slow training.
-
-**Reasoning:** Each level's output feeds the next level, and all levels contribute to the loss. This means early levels receive gradients from multiple loss terms (L0, L1→L0, L2→L1→L0). Thought this might:
-- Create conflicting gradient signals
-- Make the optimizer's job harder
-- Require more memory for autodiff (storing derivatives per-operation)
-
-**What we learned:** This was the wrong mental model.
-
-**Why rejected:** 
-- JAX stores activations, not "derivatives per operation"
-- Backward pass cost is proportional to forward pass FLOPs, not parameter count
-- Profiling showed backward pass is only 88% overhead over forward pass (normal)
-- Model + loss + backward = ~22ms, which is fine
-
-**Key insight:** We were solving the wrong problem. Gradient flow affects *convergence* (how many steps to converge), not *throughput* (steps per second).
+**Core insight:** Softmax is a nonlinearity that prevents factorization and forces O(N²) computation. Can we break away from softmax and work in the low-rank (D-dimensional) space instead?
 
 ---
 
 ## Core Tension
 
-**Throughput vs. Observability**
+**The problem with softmax attention:**
 
-We want:
-1. Fast training iterations (high samples/sec)
-2. Rich diagnostics (embedding stats, attention maps, gradient norms)
+For a 16×16 window (256 positions, D=16):
 
-These conflict because diagnostics require extra computation that doesn't contribute to learning.
+| Operation | FLOPs per window | FLOPs for 64 windows |
+|-----------|------------------|----------------------|
+| Self-attention logits (Q@K.T) | 1.05M | 67M |
+| Self-attention softmax | 0.52M | 33M |
+| Cross-attention logits | 1.05M | 67M |
+| Cross-attention softmax | 0.52M | 33M |
+| **Total (attention only)** | **~3.1M** | **~200M** |
 
----
+This exceeds our 128M budget *before* extracting any features or estimating flow.
 
-## Profiling Results
-
-### Measurement Approach
-
-1. Profiled data loading separately: `create_dataloader()` iteration timing
-2. Profiled model computation: forward-only vs forward+backward
-3. Added timing instrumentation to training loop
-4. Compared with diagnostics enabled vs disabled
-
-### Numbers
-
-| Component | Isolated | In Training | Notes |
-|-----------|----------|-------------|-------|
-| Data loading | 72ms/batch | 754ms/batch | Disk I/O contention |
-| Model (F+B) | 22ms/batch | 12-2100ms/batch | Wild variance |
-| **Total expected** | 94ms/batch | — | ~85 samples/sec theoretical |
-| **Actual** | — | 1428ms/batch | ~0.7 batches/sec actual |
-
-**Gap:** 15x slower than profiling suggested.
-
-### Root Cause Discovery
-
-The wild variance in compute time (12ms to 18,000ms) pointed to intermittent blocking. Traced to `log_diagnostics()` in `logging_utils.py`:
-
-**What log_diagnostics does every logged step:**
-1. `log_gradient_statistics()` — traverses optimizer state
-2. **3 extra forward passes** — one per pyramid level for embedding stats
-3. **6 attention variance computations** — self + cross attention for each level
-
-**Why this is expensive:**
-- Forward passes are NOT jit'd in diagnostics
-- Attention variance is O(N²) per window (256×256 attention matrix per 16×16 window)
-- Runs every 10 steps by default
-
-### Comparison
-
-| Configuration | Compute (avg) | Data (avg) | Total/batch | Samples/sec |
-|---------------|---------------|------------|-------------|-------------|
-| Diagnostics every 10 steps (default) | 2103ms | 718ms | 2821ms | **2.8** |
-| Diagnostics every 100 steps | 231ms | 754ms | 985ms | **8.1** |
-| No diagnostics (training only) | 22ms | 72ms | 94ms | **85** (theoretical) |
-
-**Diagnostics cause 9x slowdown. Data loading causes 10x slowdown.**
-
----
-
-## Constraints Discovered
-
-1. **Attention variance is O(N²)** — window_size=16 means 256×256 attention matrices per window. Computing this 6 times per logged step is expensive.
-
-2. **Diagnostic forward passes are un-jitted** — Training forward pass is jit'd (~12ms), but diagnostic passes run unoptimized.
-
-3. **JPEG decoding is slow** — 754ms/batch reading 8 images from disk. PIL Image.open() + resize + numpy conversion adds up.
-
-4. **CPU core contention** — num_workers=4 for data loading competes with JAX CPU parallelism. Didn't help when set to 0, suggesting deeper I/O bottleneck.
+**The key observation:** The logit matrix L = Q @ K.T is (256, 256) but has **rank at most D=16**. We're materializing 65K values that live in a 16-dimensional subspace.
 
 ---
 
 ## Explored Options
 
-| Idea | Status | Why |
-|------|--------|-----|
-| Stop gradients between levels | ❌ Rejected | Wrong problem — gradient flow isn't the bottleneck |
-| Reduce diagnostic frequency | ✅ Adopted | every_steps: 10 → 100 gives 3x speedup |
-| Remove attention stats from diagnostics | ⚠️ Deferred | Keeps embedding stats, removes O(N²) attention computation |
-| Cache diagnostic embeddings | ⚠️ Deferred | Reuse training forward pass instead of 3 extra passes |
-| JIT diagnostic computations | ⚠️ Deferred | Would require refactoring log_diagnostics |
-| Pre-process dataset to TFRecord/numpy | ⚠️ Deferred | Avoid per-step JPEG decoding |
-| Use num_workers=0 | ❌ Rejected | No improvement — disk I/O is the limit, not multiprocessing |
+### Option 1: Sparse/Localized Attention
+**Idea:** Only compute attention in a local neighborhood (e.g., 5×5 around each position).  
+**Status:** ❌ Discarded for now  
+**Why:** Large motions would be missed. Hierarchical model should handle motion range, but we want a solution that works at a single level first.
+
+### Option 2: Argmax + Logit Statistics
+**Idea:** Skip softmax, use argmax of logits + simple statistics (peak value, logit variance).  
+**Status:** ⚠️ Explored but concerns raised  
+**Why:** Argmax is brittle. Self-attention peak is always at self position (logit=1 for normalized embeddings), so it doesn't give useful information.
+
+### Option 3: Linear Attention (Adopted)
+**Idea:** Use the low-rank structure directly. Pre-compute K statistics, then decode per-query in O(D) instead of O(N).  
+**Status:** ✅ Adopted for prototyping  
+**Why:** 100× speedup, natural confidence metrics, aligns with how embeddings are trained.
 
 ---
 
-## Mental Models
+## Linear Attention: The Mechanism
 
-**Before:** "Gradient flow through the pyramid is inefficient"
+### What It Is
 
-**After:** "Diagnostics are doing real work that doesn't contribute to learning"
+Instead of asking "which K vectors match me?" (softmax attention), linear attention asks "where do K vectors like me tend to be?"
 
-The training step itself is fast (~22ms). The slowdown comes from:
-1. **Observability tax** — logging that runs extra computation
-2. **Data pipeline** — synchronous disk I/O blocking training
+**Pre-compute once per window:**
+```python
+K_coords = K.T @ coords  # (D, 2) - for each embedding dimension, where in space does it fire?
+```
+
+**Per query (O(D) not O(N)):**
+```python
+com = Q @ K_coords  # (2,) - center of mass
+```
+
+### Geometric Intuition
+
+- **Softmax attention:** Instance-based matching. "Find my twins in this crowd, average their positions."
+- **Linear attention:** Dimension-based decoding. "Which embedding dimensions define me? Where do those dimensions tend to live?"
+
+**The bet:** The model can learn a linear map (K_coords) from embedding space to spatial space. Dimensions don't have fixed spatial meanings (no positional encoding). Instead, K_coords is a learned "dictionary": each dimension d has an associated spatial signature (where in space that dimension tends to fire). The query Q activates a combination of dimensions, and K_coords decodes that combination back to position. There's no requirement that dimension 0 = left side — just that the dictionary is consistent within each window.
+
+### Detailed FLOP Analysis
+
+**Setup:** 16×16 window (N=256 positions), D=16 embedding dimensions, coords=(256, 2)
+
+#### Softmax Attention (Per Window)
+
+| Operation | Calculation | FLOPs |
+|-----------|-------------|-------|
+| **Self-attention** | | |
+| Logits (Q @ K.T) | 256 × 256 × 16 (matmul) | 1.31M |
+| Softmax per row | 256 rows × 256 positions × ~8 ops (exp, sum, div) | 0.52M |
+| COM (weights @ coords) | 256 × 256 × 2 (matmul) | 0.13M |
+| Self-attention subtotal | | **1.96M** |
+| **Cross-attention** | | |
+| Logits (Q @ K.T) | 256 × 256 × 16 | 1.31M |
+| Softmax per row | 256 × 256 × ~8 | 0.52M |
+| COM (weights @ coords) | 256 × 256 × 2 | 0.13M |
+| Cross-attention subtotal | | **1.96M** |
+| **Per window total** | | **~3.9M** |
+| **64 windows** | | **~250M** |
+
+*Note: FLOP count for matmul is 2×M×N×K for M×N @ N×K, but we count multiply-add as 1 FLOP for simplicity.*
+
+#### Linear Attention (Per Window)
+
+| Operation | Calculation | FLOPs |
+|-----------|-------------|-------|
+| **Pre-compute (once per window)** | | |
+| K_coords_self = Q.T @ coords | 16 × 256 × 2 | 8K |
+| K_coords_cross = K.T @ coords | 16 × 256 × 2 | 8K |
+| Pre-compute subtotal | | **16K** |
+| **Per-query (×256 queries)** | | |
+| self_com = Q @ K_coords_self | 256 × (16 × 2) | 8K |
+| cross_com = Q @ K_coords_cross | 256 × (16 × 2) | 8K |
+| flow = cross - self | 256 × 2 | 1K |
+| Per-query subtotal | | **17K** |
+| **Flow concordance (confidence)** | | |
+| flow_per_dim = cross_pos_per_dim - self_pos_per_dim | 256 × 16 × 2 (elementwise) | 8K |
+| flow_variance = var(flow_per_dim, axis=0) | 256 × 16 × ~4 ops | 16K |
+| Concordance subtotal | | **24K** |
+| **Per window total** | | **~57K** |
+| **64 windows** | | **~3.6M** |
+
+#### Speedup Summary
+
+| Metric | Softmax | Linear | Ratio |
+|--------|---------|--------|-------|
+| Per window | 3.9M | 57K | 68× |
+| 64 windows | 250M | 3.6M | 69× |
+| + MLP refinement (optional) | - | +9M | Still 25× |
+
+**With MLP refinement:** Add a small MLP (15→32→2) per pixel for flow refinement: ~550 FLOPs/pixel × 256 pixels × 64 windows ≈ 9M FLOPs. Total: ~12.6M, still 20× faster than softmax baseline.
+
+### Flow Estimation
+
+```python
+# Self-attention COM (where do I point in frame 1?)
+self_com = Q @ (Q.T @ coords)
+
+# Cross-attention COM (where do I point in frame 2?)
+cross_com = Q @ (K.T @ coords)
+
+# Raw flow estimate
+flow = cross_com - self_com  # (2,) per pixel
+```
+
+**Confidence metric:** Flow concordance (variance across dimensions)
+```python
+# Per-dimension flow contribution
+flow_per_dim = cross_pos_per_dim - self_pos_per_dim  # (D, 2)
+
+# Variance = disagreement between dimensions
+confidence = -flow_per_dim.var(axis=0).mean()
+```
+
+Low variance = all dimensions agree on flow = confident match.  
+High variance = dimensions disagree = ambiguous match.
+
+---
+
+## Loss Function Discussion
+
+### What We Want
+
+Self-supervised signal that:
+1. Encourages embeddings to be temporally stable (same position in frame 1 and 2 should have similar embeddings)
+2. Prevents collapse (constant embeddings, zero flow)
+3. Doesn't impose unnecessary structure (self-attention doesn't need to be centered)
+
+### Explored Losses
+
+| Loss | What It Does | Status |
+|------|--------------|--------|
+| **Self-attention position reconstruction** | Encourage self-COM to match actual position | ❌ Discarded - imposes structure we don't need |
+| **Warped reconstruction** | Warp cross-embeddings by predicted flow, compare to self-embeddings | ✅ Adopted - core self-supervised signal |
+| **Embedding diversity** | Encourage embeddings to vary across positions | ✅ Adopted - prevents constant collapse |
+| **Flow concordance** | Encourage dimensions to agree on flow direction/magnitude | ✅ Adopted - confidence metric + auxiliary loss |
+
+### Final Loss Components
+
+```python
+total_loss = (
+    λ₁ * warped_reconstruction_loss +    # Core signal: frame1 ≈ warp(frame2, flow)
+    λ₂ * embedding_diversity_loss +       # Prevent collapse: embeddings should vary
+    λ₃ * flow_concordance_loss            # Encourage coherent dimensions
+)
+```
+
+**Warped reconstruction:** Uses GatherND (available at training time) to warp cross-frame embeddings by predicted flow. Compares warped embeddings to original self-embeddings.
+
+**Embedding diversity:** Maximizes variance of embeddings across spatial positions. Prevents "all positions output same embedding" collapse.
+
+**Flow concordance:** Minimizes variance of per-dimension flow contributions. Encourages all dimensions to "flow together."
+
+---
+
+## Collapse Modes and Prevention
+
+| Collapse Mode | Description | Prevention |
+|---------------|-------------|------------|
+| **Constant embedding** | All positions output same embedding | Embedding diversity loss |
+| **Zero flow** | Model always predicts no motion | Dataset diversity (varied motions in training data) |
+| **Frame-specific** | Frame 1 = c₁, Frame 2 = c₂ (different constants) | Warped reconstruction loss |
+| **Random noise** | Each position has random embedding | Flow concordance + warped reconstruction |
+
+**Key insight:** Warped reconstruction alone doesn't prevent constant embedding collapse (if all embeddings are constant, warping does nothing). Need explicit diversity pressure.
+
+---
+
+## Unknowns / Open Questions
+
+| Question | Status |
+|----------|--------|
+| **Feature map for linear attention** | Using identity (φ(Q) = Q) for now. Alternatives: ReLU, exp() for sharper responses. |
+| **MLP for flow refinement** | First implementation: raw flow (cross - self). Long-term: small MLP taking per-dimension flow contributions as input. |
+| **Loss weights (λ₁, λ₂, λ₃)** | TBD through experimentation. Expect λ₁ (reconstruction) to dominate. |
+| **Gradient stopping on target** | JEPA literature suggests stop_grad on warped cross-embeddings. Not yet decided. |
+| **Momentum encoder** | JEPA technique for stability. Not adopted yet — keep as reference. |
+| **Embedding dimension (D=16)** | Linear attention dimensions may be less expressive than softmax attention (each dimension must encode spatial information, not just support matching). Current D=16 might be a bottleneck. Inverted bottleneck architecture compresses to D=16 — consider keeping expanded dimensions (D=32 or higher)? Trade-off: higher D increases linear attention cost proportionally (O(D) per query). **Topic for future exploration.** |
 
 ---
 
 ## False Starts
 
-1. **Gradient memory hypothesis** — Assumed JAX stores derivatives per-operation. Actually stores activations. Backward pass cost is proportional to forward FLOPs.
+### Softmax-Free Logit Statistics
+**Initial idea:** Compute statistics (mean, variance, argmax) from raw logits without softmax.  
+**Why it didn't work:** Argmax is brittle. Self-attention diagonal is always 1 (normalized embeddings), so peak location is trivial. Logit variance requires full matrix anyway.
 
-2. **Model complexity** — 30M FLOPs, 5k parameters should be fast. It is! The model isn't the problem.
+### Pre-computed Softmax Moments
+**Initial idea:** Pre-compute K statistics to approximate softmax-weighted COM without full matrix.  
+**Why it failed:** Partition function Z = Σⱼ exp(Qᵢ·Kⱼ/T) is nonlinear — can't factorize. Requires all N dot products per query anyway.
 
-3. **Multiprocessing for data** — Tried num_workers=0 vs 4. No difference because disk I/O is the bottleneck, not CPU for decoding.
-
----
-
-## Unknowns / Experiments
-
-1. **What's the minimum useful diagnostic set?** — Embedding histograms alone? Skip attention variance entirely?
-
-2. **Would TFRecord/numpy preprocessing help?** — Expect 5-10x data loading speedup, but need to test.
-
-3. **How often do we actually need diagnostics?** — Every 100 steps? Every epoch? Could we log less during early training?
-
-4. **GPU vs CPU profile** — On GPU, data loading would be even more dominant (faster compute, same disk speed).
+**Pivot:** Abandon softmax entirely. Linear attention gives us O(D) per query with natural confidence metrics.
 
 ---
 
-## Detailed Spec: The Bottleneck
+## Detailed Spec (First Prototype)
 
-**File:** `src/barevision/embeddings/logging_utils.py`
+### Architecture
+- **Input:** Two frames, each with embeddings (B, H, W, D=16)
+- **Windowing:** Non-overlapping 16×16 windows
+- **Per window:**
+  - Pre-compute: K_coords_self = Q.T @ coords, K_coords_cross = K.T @ coords
+  - Per query: self_com = Q @ K_coords_self, cross_com = Q @ K_coords_cross
+  - Flow: cross_com - self_com
+  - Confidence: -var(flow_per_dim)
 
-**Function:** `log_diagnostics()`
+### Training
+- **Warped reconstruction:** Use GatherND to sample cross-embeddings at (pos + flow), compare to self-embeddings
+- **Embedding diversity:** Maximize spatial variance of embeddings
+- **Flow concordance:** Minimize variance of per-dimension flow
 
-**Called:** Every `logging.every_steps` steps (default: 10)
-
-**Operations per call:**
-```
-1. log_gradient_statistics() — traverses model state
-2. model(img1) — forward pass, level 0
-3. model(img1) — forward pass, level 1  
-4. model(img1) — forward pass, level 2
-5. self_attention_variance() — level 0, O(N²)
-6. cross_attention_variance() — level 0, O(N²)
-7. self_attention_variance() — level 1, O(N²)
-8. cross_attention_variance() — level 1, O(N²)
-9. self_attention_variance() — level 2, O(N²)
-10. cross_attention_variance() — level 2, O(N²)
-```
-
-**None of these are jit'd.** Each forward pass is ~12ms jit'd, probably 50-100ms un-jitted. Each attention variance is ~100-500ms for typical feature map sizes.
-
-**Total per diagnostic call:** Estimated 1500-3000ms
+### Inference
+- Same as training, but no warped reconstruction (no GatherND at inference)
+- Output: flow (H, W, 2) + confidence (H, W)
 
 ---
 
-## Implementation Notes (for later)
+## JEPA Connection (Reference, Not Adopted)
 
-**Quick wins (config changes only):**
-- `logging.every_steps: 100` — 3x speedup
-- `logging.visualizations_every_steps: 1000` — reduce visualization overhead
+Our approach is structurally similar to V-JEPA (video JEPA):
+- Two views (frame 1, frame 2)
+- Encoder produces latent representations
+- Predictor estimates transformation (flow)
+- Self-supervised via reconstruction
 
-**Medium effort (code changes):**
-- Cache embeddings from training forward pass for diagnostics
-- Remove attention variance from `log_diagnostics()` or make it less frequent
-- Add `need_attention_stats: bool` flag to control O(N²) computation
+**JEPA techniques discussed but not adopted:**
+- Gradient stopping on target
+- Momentum encoder (target network)
+- Masked prediction (subset of positions)
+- Prediction head MLP
 
-**Higher effort:**
-- Pre-process dataset to binary format (TFRecord, numpy, LMDB)
-- JIT the diagnostic computations (may require refactoring)
-- Async data loading with prefetching
+Keep these in mind if we hit training instability or collapse. Not implementing yet — stay minimal.
 
 ---
 
-## Session Notes
+## Next Steps (To Be Decided)
 
-**Date:** 2026-04-08
+1. **Embeddings-first:** Change embeddings loss to linear-attention-based, keep rest of infra. Train embeddings in isolation.
+2. **Flow estimation:** Once embeddings are stable, add flow estimation on top.
+3. **Compare approaches:** Linear attention vs. softmax attention vs. other baselines.
 
-**Initial question:** "Why is training slow? Is it gradient flow through the hierarchical pyramid?"
+---
 
-**Answer:** No. Gradient flow is fine. The slowdown is from diagnostic logging (9x) and data loading (10x).
+## Notes for Implementation
 
-**Key profiling commands:**
-```bash
-# Profile data loading
-python profile_data_loading.py
-
-# Profile training with timing
-python -m barevision.embeddings.training --path /tmp/quick_test.yaml
-```
-
-**Files modified for profiling (to be reverted):**
-- `src/barevision/embeddings/training.py` — added timing instrumentation
-- `profile_data_loading.py` — standalone data loading profiler
+- **GatherND is available at training time** — the inference constraint (no GatherND) only applies to deployment.
+- **Hierarchical model unchanged** — this brainstorm focused on single-level flow estimation.
+- **Config system already in place** — can add linear attention options alongside existing softmax attention config.

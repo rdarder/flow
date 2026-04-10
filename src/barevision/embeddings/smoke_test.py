@@ -1,4 +1,4 @@
-"""Smoke test for embeddings training with spatial variance loss.
+"""Smoke test for embeddings training with linear attention flow loss.
 
 This script sets up a minimal but working training setup that does
 logging and visualization with epoch limits to run through most branches.
@@ -10,7 +10,7 @@ from barevision.embeddings.training import EmbeddingsTrainer
 from barevision.config import RootConfig, HierarchicalModelConfig, LossConfig
 from barevision.embeddings.model import LevelConfig, UIBConfig
 from barevision.dataset.video import DatasetConfig
-from barevision.embeddings.spatial_losses import SpatialVarianceLossConfig
+from barevision.embeddings.linear_attention_loss import LinearAttentionFlowLossConfig
 from barevision.embeddings.checkpointer import CheckpointConfig
 from barevision.config import TrainingConfig, LoggingConfig, ValidationConfig
 
@@ -69,12 +69,12 @@ def create_smoke_test_config() -> RootConfig:
             frame_cache_max_mb=100,  # Small limit for smoke test
         ),
         loss=LossConfig(
-            spatial_variance=SpatialVarianceLossConfig(
+            linear_attention_flow=LinearAttentionFlowLossConfig(
                 window_size=16,
                 level_weight_decay=1.0,
-                lambda_self=0.5,
-                self_temperature=0.3,
-                cross_temperature=0.3,
+                lambda_reconstruction=1.0,
+                lambda_diversity=0.1,
+                diversity_scope="per_window",
             )
         ),
         training=TrainingConfig(

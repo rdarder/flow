@@ -49,12 +49,12 @@ dataset:
   frame_cache_max_mb: 1000
 
 loss:
-  spatial_variance:
+  linear_attention_flow:
     window_size: 16
-    level_weight_decay: 1.1
-    lambda_self: 0.6
-    self_temperature: 0.25
-    cross_temperature: 0.25
+    level_weight_decay: 1.0
+    lambda_reconstruction: 1.0
+    lambda_diversity: 1.0
+    diversity_scope: per_window  # 'per_window' or 'global'
 
 training:
   seed: 42
@@ -63,8 +63,8 @@ training:
 
 logging:
   tensorboard_dir: runs
-  every_steps: 100
-  visualizations_every_steps: 100
+  every_steps: 10
+  visualizations_every_steps: 1000  # Disable for now
 
 checkpoint:
   every_epochs: 1
