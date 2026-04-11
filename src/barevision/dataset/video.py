@@ -208,32 +208,32 @@ class VideoFrameDataset:
         """Return number of frame pairs."""
         return len(self.frame_pairs)
 
-    def __getitem__(self, idx: int) -> Tuple[np.ndarray, np.ndarray, dict]:
-        """Load a frame pair.
-
-        Args:
-            idx: Index into the dataset
-
-        Returns:
-            Tuple of (img1, img2, metadata) where:
-                - img1: (H, W, 3) float32 array in [0, 1]
-                - img2: (H, W, 3) float32 array in [0, 1]
-                - metadata: dict with video_name, frame indices, distance
-        """
-        pair = self.frame_pairs[idx]
-
-        # Load and preprocess images
-        img1 = self.load_image(pair.img1_path)
-        img2 = self.load_image(pair.img2_path)
-
-        metadata = {
-            "video_name": pair.video_name,
-            "frame_t": pair.frame_t_idx,
-            "frame_tk": pair.frame_tk_idx,
-            "distance": pair.distance,
-        }
-
-        return img1, img2, metadata
+    # def __(self, idx: int) -> Tuple[np.ndarray, np.ndarray, dict]:
+    #     """Load a frame pair.
+    #
+    #     Args:
+    #         idx: Index into the dataset
+    #
+    #     Returns:
+    #         Tuple of (img1, img2, metadata) where:
+    #             - img1: (H, W, 3) float32 array in [0, 1]
+    #             - img2: (H, W, 3) float32 array in [0, 1]
+    #             - metadata: dict with video_name, frame indices, distance
+    #     """
+    #     pair = self.frame_pairs[idx]
+    #
+    #     # Load and preprocess images
+    #     img1 = self.load_image(pair.img1_path)
+    #     img2 = self.load_image(pair.img2_path)
+    #
+    #     metadata = {
+    #         "video_name": pair.video_name,
+    #         "frame_t": pair.frame_t_idx,
+    #         "frame_tk": pair.frame_tk_idx,
+    #         "distance": pair.distance,
+    #     }
+    #
+    #     return img1, img2, metadata
 
     def load_image(self, path: str) -> np.ndarray:
         """Load and preprocess a single image.
