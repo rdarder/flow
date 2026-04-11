@@ -3,7 +3,7 @@
 Replaces softmax-based spatial variance loss with linear attention mechanism.
 
 Core idea:
-    Instead of softmax attention (O(N2)), use linear attention (O(D)):
+    Instead of softmax attention (O(N²)), use linear attention (O(D)):
     - Pre-compute: K_coords = K.T @ coords  # (D, 2) per window
     - Per-query: COM = Q @ K_coords  # (2,) center of mass
     - Flow: cross_com - self_com
@@ -11,8 +11,7 @@ Core idea:
 Loss components:
     1. Warped reconstruction: frame1 ≈ warp(frame2, flow)
     2. Embedding diversity: prevent constant embedding collapse
-
-Note: Flow concordance loss deferred to future session.
+    3. Flow concordance: regularizer encouraging coherent spatial encoding
 """
 
 import jax
@@ -36,6 +35,7 @@ class LinearAttentionFlowLossConfig(BaseModel):
         level_weight_decay: Weight decay for coarser levels (default 1.0)
         lambda_reconstruction: Weight for warped reconstruction loss (default 1.0)
         lambda_diversity: Weight for embedding diversity loss (default 0.1)
+        lambda_concordance: Weight for flow concordance loss (default 0.1). Acts as regularizer.
         diversity_scope: 'per_window' or 'global'. Per-window is simpler and matches attention structure.
             Note: Global scope is an alternative to explore in future ablations.
     """
@@ -46,13 +46,17 @@ class LinearAttentionFlowLossConfig(BaseModel):
     level_weight_decay: float = 1.0
     lambda_reconstruction: float = 1.0
     lambda_diversity: float = 0.1
+    lambda_concordance: float = 0.1
     diversity_scope: str = "per_window"  # 'per_window' or 'global'
 
 
 def _compute_linear_attention_flow(
     windows_q: jnp.ndarray, windows_k: jnp.ndarray, coords: jnp.ndarray, window_size: int
-) -> Tuple[jnp.ndarray, jnp.ndarray]:
+) -> Tuple[jnp.ndarray, jnp.ndarray, dict, jnp.ndarray]:
     """Compute flow using linear attention mechanism.
+
+    Computes per-dimension flow contributions first, then aggregates.
+    This avoids redundant computation and provides flow_per_dim for concordance loss.
 
     Args:
         windows_q: Query embeddings (B*num_windows, H_w, W_w, D)
@@ -62,8 +66,10 @@ def _compute_linear_attention_flow(
 
     Returns:
         Tuple of:
-            - flow: (B*num_windows, H_w, W_w, 2) flow vectors
+            - flow: (B*num_windows, H_w, W_w, 2) aggregated flow vectors
             - confidence: (B*num_windows, H_w, W_w) confidence scores (negative variance)
+            - flow_stats: dict with diagnostic statistics
+            - flow_per_dim: (B*num_windows, H_w, W_w, D, 2) per-dimension flow contributions
     """
     Bnw, H_w, W_w, D = windows_q.shape
     N = H_w * W_w
@@ -77,9 +83,14 @@ def _compute_linear_attention_flow(
     k_coords_self = jnp.einsum("bnd,nk->bdk", q_flat, coords)
     k_coords_cross = jnp.einsum("bnd,nk->bdk", k_flat, coords)
 
-    # Per-query center of mass (unnormalized): (Bnw, N, 2)
-    self_com_unnorm = jnp.einsum("bnd,bdk->bnk", q_flat, k_coords_self)
-    cross_com_unnorm = jnp.einsum("bnd,bdk->bnk", q_flat, k_coords_cross)
+    # Per-dimension positions: (Bnw, N, D, 2)
+    # This is the detailed computation - aggregated COM is derived from this
+    self_pos_per_dim = jnp.einsum("bnd,bdk->bndk", q_flat, k_coords_self)
+    cross_pos_per_dim = jnp.einsum("bnd,bdk->bndk", q_flat, k_coords_cross)
+
+    # Aggregate to center of mass by summing over dimensions: (Bnw, N, 2)
+    self_com_unnorm = self_pos_per_dim.sum(axis=-2)
+    cross_com_unnorm = cross_pos_per_dim.sum(axis=-2)
 
     # Normalize by sum of weights to get true weighted average
     # Weight sum per position: (Bnw, N)
@@ -94,6 +105,9 @@ def _compute_linear_attention_flow(
     # Now in normalized coordinates: 1.0 ≈ full window span
     flow = cross_com - self_com
 
+    # Per-dimension flow: (Bnw, N, D, 2)
+    flow_per_dim = cross_pos_per_dim - self_pos_per_dim
+
     # Diagnostics for monitoring
     flow_stats = {
         "self_com_min": self_com.min(),
@@ -107,11 +121,6 @@ def _compute_linear_attention_flow(
     }
 
     # Confidence: negative variance of per-dimension flow contributions
-    # Per-dimension flow: (Bnw, N, D, 2)
-    self_pos_per_dim = jnp.einsum("bnd,bdk->bndk", q_flat, k_coords_self)
-    cross_pos_per_dim = jnp.einsum("bnd,bdk->bndk", q_flat, k_coords_cross)
-    flow_per_dim = cross_pos_per_dim - self_pos_per_dim
-
     # Variance across dimensions: (Bnw, N)
     flow_variance = jnp.var(flow_per_dim, axis=2).mean(axis=2)
     confidence = -flow_variance
@@ -119,8 +128,9 @@ def _compute_linear_attention_flow(
     # Reshape to spatial dimensions
     flow = flow.reshape(Bnw, H_w, W_w, 2)
     confidence = confidence.reshape(Bnw, H_w, W_w)
+    flow_per_dim = flow_per_dim.reshape(Bnw, H_w, W_w, D, 2)
 
-    return flow, confidence, flow_stats
+    return flow, confidence, flow_stats, flow_per_dim
 
 
 def _warp_embeddings(
@@ -165,7 +175,7 @@ def _warp_embeddings(
     return jax.vmap(warp_one)(embeddings, flow)
 
 
-def _compute_warped_reconstruction_loss(
+def _warped_reconstruction_loss(
     windows1: jnp.ndarray,
     windows2: jnp.ndarray,
     flow: jnp.ndarray,
@@ -192,7 +202,7 @@ def _compute_warped_reconstruction_loss(
     return mse
 
 
-def _compute_embedding_variance(
+def _embedding_variance(
     windows: jnp.ndarray, scope: str = "per_window"
 ) -> jnp.ndarray:
     """Compute embedding variance across spatial positions.
@@ -219,6 +229,35 @@ def _compute_embedding_variance(
         variance = variance.mean()
 
     return variance
+
+
+def _flow_concordance_loss(
+    flow_per_dim: jnp.ndarray,
+) -> jnp.ndarray:
+    """Compute flow concordance loss.
+
+    Measures variance of per-dimension flow predictions.
+    Low variance = dimensions agree = good concordance.
+
+    For L2-normalized embeddings with D=16, random initialization produces
+    variance ~0.65. Max variance of 1.0 covers typical random case with
+    headroom for outliers.
+
+    Args:
+        flow_per_dim: Per-dimension flow (B*num_windows, H_w, W_w, D, 2)
+
+    Returns:
+        Scalar loss (0 = perfect agreement, 1 = max disagreement)
+    """
+    # Variance across dimensions: (B*num_windows, H_w, W_w)
+    flow_variance = jnp.var(flow_per_dim, axis=-2).mean(axis=-1)
+    
+    # Normalize: 0 = perfect, 1 = max
+    # max_variance=1.0 derived empirically for D=16, window=16
+    max_variance = 1.0
+    loss = flow_variance / max_variance
+    
+    return loss.mean()
 
 
 def _compute_linear_attention_flow_loss(
@@ -252,17 +291,17 @@ def _compute_linear_attention_flow_loss(
     coords = generate_normalized_coordinates(window_size)
 
     # Compute flow
-    flow, confidence, flow_stats = _compute_linear_attention_flow(fw1, fw2, coords, window_size)
+    flow, confidence, flow_stats, flow_per_dim = _compute_linear_attention_flow(fw1, fw2, coords, window_size)
 
     # Warped reconstruction loss
-    loss_reconstruction = _compute_warped_reconstruction_loss(
+    loss_reconstruction = _warped_reconstruction_loss(
         fw1, fw2, flow, window_size
     )
 
     # Embedding diversity loss (on both frames)
     # Variance is computed, then converted to normalized loss: 0 = perfect, 1 = collapse
-    variance_1 = _compute_embedding_variance(fw1, config.diversity_scope)
-    variance_2 = _compute_embedding_variance(fw2, config.diversity_scope)
+    variance_1 = _embedding_variance(fw1, config.diversity_scope)
+    variance_2 = _embedding_variance(fw2, config.diversity_scope)
     variance_avg = (variance_1 + variance_2) / 2
     
     # Normalized diversity loss: 1 - (variance / max_variance)
@@ -270,15 +309,20 @@ def _compute_linear_attention_flow_loss(
     max_variance = 0.25
     loss_diversity = 1.0 - (variance_avg / max_variance)
 
-    # Total loss (all components are now positive, 0 = perfect)
+    # Flow concordance loss
+    loss_concordance = _flow_concordance_loss(flow_per_dim)
+
+    # Total loss (all components are positive, 0 = perfect)
     total_loss = (
         config.lambda_reconstruction * loss_reconstruction
         + config.lambda_diversity * loss_diversity
+        + config.lambda_concordance * loss_concordance
     )
 
     aux = {
         "reconstruction_loss": loss_reconstruction,
         "diversity_loss": loss_diversity,
+        "concordance_loss": loss_concordance,
         "diversity_variance": variance_avg,
         "flow": flow,
         "confidence": confidence,
@@ -313,12 +357,14 @@ def compute_hierarchical_linear_attention_loss(
     total_weight = 0.0
     total_reconstruction = 0.0
     total_diversity = 0.0
+    total_concordance = 0.0
 
     aux = {
         "level_losses": [],
         "level_weights": [],
         "level_reconstruction_losses": [],
         "level_diversity_losses": [],
+        "level_concordance_losses": [],
     }
 
     for i, (e1, e2) in enumerate(zip(pyramid1, pyramid2)):
@@ -335,6 +381,7 @@ def compute_hierarchical_linear_attention_loss(
         total_loss += level_loss * weight
         total_reconstruction += level_aux["reconstruction_loss"] * weight
         total_diversity += level_aux["diversity_loss"] * weight
+        total_concordance += level_aux["concordance_loss"] * weight
         total_weight += weight
 
         aux["level_losses"].append(level_loss * weight)
@@ -343,6 +390,7 @@ def compute_hierarchical_linear_attention_loss(
             level_aux["reconstruction_loss"] * weight
         )
         aux["level_diversity_losses"].append(level_aux["diversity_loss"] * weight)
+        aux["level_concordance_losses"].append(level_aux["concordance_loss"] * weight)
 
         if need_aux:
             # Store flow and confidence for visualization
@@ -354,6 +402,7 @@ def compute_hierarchical_linear_attention_loss(
 
     aux["reconstruction_loss"] = total_reconstruction / total_weight
     aux["diversity_loss"] = total_diversity / total_weight
+    aux["concordance_loss"] = total_concordance / total_weight
 
     return total_loss / total_weight, aux
 

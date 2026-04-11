@@ -57,6 +57,7 @@ loss:
     level_weight_decay: 1.0
     lambda_reconstruction: 0.1
     lambda_diversity: 0.9
+    lambda_concordance: 0.1
     diversity_scope: per_window  # 'per_window' or 'global'
 
 training:

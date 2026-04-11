@@ -20,7 +20,7 @@ The model can learn a linear map from embedding space to spatial space without e
 | Linear attention mechanism | ✅ Adopted | 70× speedup, natural confidence metrics, aligns with low-rank embedding structure |
 | Warped reconstruction loss | ✅ Adopted | Core self-supervised signal: frame1 ≈ warp(frame2, flow) |
 | Embedding diversity loss | ✅ Adopted | Prevents constant embedding collapse |
-| Flow concordance loss | ✅ Adopted | Encourages dimensions to agree on flow; provides confidence metric |
+| Flow concordance loss | ✅ Adopted | Training regularizer: encourages dimensions to encode spatial information coherently. Not a standalone confidence metric (D=16 is too low for consistent agreement), but helps the flow estimator infer channel reliability. |
 | Self-attention position reconstruction | ❌ Rejected | Imposes structure we don't need; self-COM doesn't need to match actual position |
 | Sparse/localized attention | ❌ Rejected | Would miss large motions; want single-level solution first |
 | Argmax + logit statistics | ❌ Rejected | Argmax is brittle; self-attention peak is always at self position |
@@ -28,15 +28,16 @@ The model can learn a linear map from embedding space to spatial space without e
 ## Unknowns / Ablation Questions
 - **Feature map φ**: Start with identity (φ(Q) = Q). Alternatives (ReLU, exp()) for sharper responses — experiment later.
 - **MLP for flow refinement**: Start with raw flow (cross_com - self_com). Later: experiment with MLP taking per-dimension flow contributions as input for full estimation.
-- **Loss weights (λ₁, λ₂, λ₃)**: Experiment to find balance. Start with equal weights, adjust based on training stability and convergence.
+- **Loss weights**: λ_reconstruction=1.0, λ_diversity=0.1, λ_concordance=0.1. Concordance is a mild regularizer, not a dominant signal.
 - **Embedding dimension D=16**: To be revisited in a separate brainstorm — increasing D affects the inverted bottleneck architecture and has broader implications beyond linear attention.
 - **Diversity scope**: Current implementation uses per-window diversity. Alternative: global diversity across entire feature map. Per-window matches attention structure better; global may provide stronger collapse prevention. Topic for future ablation.
+- **Concordance max variance**: Set to 0.5 as initial guess. May need tuning based on observed variance during training.
 
 ## Key Insights
 - **Low-rank structure**: The logit matrix L = Q @ K.T is (256, 256) but has rank at most D=16. We're materializing 65K values that live in a 16-dimensional subspace.
 - **Geometric intuition**: Softmax asks "which K vectors match me?" (instance-based). Linear attention asks "where do K vectors like me tend to be?" (dimension-based decoding).
 - **Collapse prevention**: Warped reconstruction alone doesn't prevent constant embedding collapse. Need explicit diversity pressure.
-- **Confidence from variance**: Flow concordance (variance across dimensions) provides natural confidence metric — low variance = dimensions agree = confident match.
+- **Concordance as regularizer**: Flow concordance encourages coherent spatial encoding across dimensions. Not a standalone confidence metric (D=16 too low), but the flow estimator can use per-channel statistics (e.g., activation magnitude) to infer whether disagreement is expected or problematic.
 
 ## Numbers to Preserve
 - Target: ~2M FLOPs per lookup window

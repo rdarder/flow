@@ -14,8 +14,9 @@ import pytest
 
 from barevision.embeddings.linear_attention_loss import (
     _compute_linear_attention_flow,
-    _compute_warped_reconstruction_loss,
-    _compute_embedding_diversity_loss,
+    _warped_reconstruction_loss,
+    _embedding_variance,
+    _flow_concordance_loss,
     _compute_linear_attention_flow_loss,
     compute_hierarchical_linear_attention_loss,
     HierarchicalLinearAttentionFlowLoss,
@@ -54,10 +55,11 @@ class TestLinearAttentionFlow:
         k = jax.random.normal(jax.random.PRNGKey(1), (Bnw, H_w, W_w, D))
         coords = generate_normalized_coordinates(H_w)
 
-        flow, confidence = _compute_linear_attention_flow(q, k, coords, H_w)
+        flow, confidence, flow_stats, flow_per_dim = _compute_linear_attention_flow(q, k, coords, H_w)
 
         assert flow.shape == (Bnw, H_w, W_w, 2)
         assert confidence.shape == (Bnw, H_w, W_w)
+        assert flow_per_dim.shape == (Bnw, H_w, W_w, D, 2)
 
     def test_flow_with_identical_embeddings(self):
         """Identical embeddings should produce near-zero flow."""
@@ -65,7 +67,7 @@ class TestLinearAttentionFlow:
         embeddings = jax.random.normal(jax.random.PRNGKey(0), (Bnw, H_w, W_w, D))
         coords = generate_normalized_coordinates(H_w)
 
-        flow, _ = _compute_linear_attention_flow(embeddings, embeddings, coords, H_w)
+        flow, _, _, _ = _compute_linear_attention_flow(embeddings, embeddings, coords, H_w)
 
         # Flow should be close to zero (self-matching)
         assert jnp.all(jnp.abs(flow) < 1.0)
@@ -77,7 +79,7 @@ class TestLinearAttentionFlow:
         k = jax.random.normal(jax.random.PRNGKey(1), (Bnw, H_w, W_w, D))
         coords = generate_normalized_coordinates(H_w)
 
-        _, confidence = _compute_linear_attention_flow(q, k, coords, H_w)
+        _, confidence, _, _ = _compute_linear_attention_flow(q, k, coords, H_w)
 
         # Confidence is negative variance
         assert jnp.all(confidence <= 0.0)
@@ -121,7 +123,7 @@ class TestWarpedReconstruction:
         flow = jnp.zeros((Bnw, H_w, W_w, 2))
         window_size = 8
 
-        loss = _compute_warped_reconstruction_loss(
+        loss = _warped_reconstruction_loss(
             embeddings, embeddings, flow, window_size
         )
 
@@ -132,38 +134,38 @@ class TestWarpedReconstruction:
 class TestEmbeddingDiversity:
     """Test embedding diversity loss."""
 
-    def test_diversity_loss_with_constant_embeddings(self):
-        """Constant embeddings should have high diversity loss (low variance)."""
+    def test_embedding_variance_with_constant_embeddings(self):
+        """Constant embeddings should have zero variance."""
         Bnw, H_w, W_w, D = 1, 8, 8, 16
         constant = jnp.ones((Bnw, H_w, W_w, D))
 
-        loss = _compute_embedding_diversity_loss(constant, scope="per_window")
+        variance = _embedding_variance(constant, scope="per_window")
 
-        # Variance of constant is zero, so loss is -0 = 0
-        assert jnp.isclose(loss, 0.0, atol=1e-6)
+        # Variance of constant is zero
+        assert jnp.isclose(variance, 0.0, atol=1e-6)
 
-    def test_diversity_loss_with_varied_embeddings(self):
-        """Varied embeddings should have low diversity loss (high variance)."""
+    def test_embedding_variance_with_varied_embeddings(self):
+        """Varied embeddings should have positive variance."""
         Bnw, H_w, W_w, D = 1, 8, 8, 16
         varied = jax.random.normal(jax.random.PRNGKey(0), (Bnw, H_w, W_w, D))
 
-        loss = _compute_embedding_diversity_loss(varied, scope="per_window")
+        variance = _embedding_variance(varied, scope="per_window")
 
-        # Variance should be positive, so loss is negative
-        assert loss < 0.0
+        # Variance should be positive
+        assert variance > 0.0
 
-    def test_diversity_scope_per_window_vs_global(self):
+    def test_embedding_variance_scope_per_window_vs_global(self):
         """Per-window and global scope should give different results."""
         Bnw, H_w, W_w, D = 4, 8, 8, 16
         embeddings = jax.random.normal(jax.random.PRNGKey(0), (Bnw, H_w, W_w, D))
 
-        loss_per_window = _compute_embedding_diversity_loss(
+        variance_per_window = _embedding_variance(
             embeddings, scope="per_window"
         )
-        loss_global = _compute_embedding_diversity_loss(embeddings, scope="global")
+        variance_global = _embedding_variance(embeddings, scope="global")
 
         # They should be different (unless all windows have identical statistics)
-        assert not jnp.isclose(loss_per_window, loss_global, rtol=1e-5)
+        assert not jnp.isclose(variance_per_window, variance_global, rtol=1e-5)
 
 
 class TestSingleLevelLoss:
@@ -196,6 +198,47 @@ class TestSingleLevelLoss:
 
         # Reconstruction should be low (matching self)
         assert aux["reconstruction_loss"] < 1.0
+
+
+class TestFlowConcordanceLoss:
+    """Test flow concordance loss."""
+
+    def test_concordance_loss_with_perfect_agreement(self):
+        """Identical per-dimension flows should give zero concordance loss."""
+        Bnw, H_w, W_w, D = 2, 8, 8, 16
+        # All dimensions have the same flow
+        flow_per_dim = jnp.ones((Bnw, H_w, W_w, D, 2)) * 0.5
+        
+        loss = _flow_concordance_loss(flow_per_dim)
+        
+        # Perfect agreement = zero variance = zero loss
+        assert jnp.isclose(loss, 0.0, atol=1e-6)
+
+    def test_concordance_loss_with_disagreement(self):
+        """Varied per-dimension flows should give positive concordance loss."""
+        Bnw, H_w, W_w, D = 2, 8, 8, 16
+        # Different dimensions have different flows
+        key = jax.random.PRNGKey(0)
+        flow_per_dim = jax.random.normal(key, (Bnw, H_w, W_w, D, 2))
+        
+        loss = _flow_concordance_loss(flow_per_dim)
+        
+        # Disagreement = positive variance = positive loss
+        assert loss > 0.0
+
+    def test_concordance_loss_gradients(self):
+        """Gradients should flow through concordance loss."""
+        Bnw, H_w, W_w, D = 2, 4, 4, 16
+        flow_per_dim = jax.random.normal(jax.random.PRNGKey(0), (Bnw, H_w, W_w, D, 2))
+        
+        def loss_fn(fpd):
+            return _flow_concordance_loss(fpd)
+        
+        grad = jax.grad(loss_fn)(flow_per_dim)
+        
+        assert grad.shape == flow_per_dim.shape
+        assert not jnp.any(jnp.isnan(grad))
+        assert not jnp.any(jnp.isinf(grad))
 
 
 class TestHierarchicalLoss:
@@ -286,7 +329,7 @@ class TestGradientFlow:
         coords = generate_normalized_coordinates(H_w)
 
         def loss_fn(q_in, k_in):
-            flow, _ = _compute_linear_attention_flow(q_in, k_in, coords, H_w)
+            flow, _, _, _ = _compute_linear_attention_flow(q_in, k_in, coords, H_w)
             return jnp.mean(flow**2)
 
         grad_q, grad_k = jax.grad(loss_fn, argnums=(0, 1))(q, k)
@@ -305,7 +348,7 @@ class TestGradientFlow:
         window_size = 8
 
         def loss_fn(e1, e2, f):
-            return _compute_warped_reconstruction_loss(e1, e2, f, window_size)
+            return _warped_reconstruction_loss(e1, e2, f, window_size)
 
         grad1, grad2, grad_flow = jax.grad(loss_fn, argnums=(0, 1, 2))(
             emb1, emb2, flow
@@ -357,11 +400,12 @@ class TestLossWeighting:
         config_no_div = LinearAttentionFlowLossConfig(
             lambda_reconstruction=1.0,
             lambda_diversity=0.0,
+            lambda_concordance=0.0,
         )
 
         loss, aux = _compute_linear_attention_flow_loss(emb1, emb2, config_no_div)
 
-        # With lambda_diversity=0, total should equal reconstruction
+        # With lambda_diversity=0 and lambda_concordance=0, total should equal reconstruction
         assert jnp.isclose(loss, aux["reconstruction_loss"], rtol=1e-5)
 
     def test_lambda_diversity_weighting(self):
@@ -373,9 +417,28 @@ class TestLossWeighting:
         config_no_rec = LinearAttentionFlowLossConfig(
             lambda_reconstruction=0.0,
             lambda_diversity=1.0,
+            lambda_concordance=0.0,
         )
 
         loss, aux = _compute_linear_attention_flow_loss(emb1, emb2, config_no_rec)
 
-        # With lambda_reconstruction=0, total should equal diversity
+        # With lambda_reconstruction=0 and lambda_concordance=0, total should equal diversity
         assert jnp.isclose(loss, aux["diversity_loss"], rtol=1e-5)
+
+    def test_lambda_concordance_weighting(self):
+        """Lambda_concordance should scale concordance loss contribution."""
+        B, H, W, D = 2, 16, 16, 16
+        emb1 = jax.random.normal(jax.random.PRNGKey(0), (B, H, W, D))
+        emb2 = jax.random.normal(jax.random.PRNGKey(1), (B, H, W, D))
+
+        config_only_concordance = LinearAttentionFlowLossConfig(
+            lambda_reconstruction=0.0,
+            lambda_diversity=0.0,
+            lambda_concordance=1.0,
+        )
+
+        loss, aux = _compute_linear_attention_flow_loss(emb1, emb2, config_only_concordance)
+
+        # With other lambdas=0, total should equal concordance
+        assert jnp.isclose(loss, aux["concordance_loss"], rtol=1e-5)
+        assert "concordance_loss" in aux

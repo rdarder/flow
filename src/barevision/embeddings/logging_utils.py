@@ -167,7 +167,7 @@ def log_metrics(logger: TensorboardLogger, loss, aux, step: int):
 
     For linear attention flow loss, logs:
     - Total loss
-    - Reconstruction and diversity loss components
+    - Reconstruction, diversity, and concordance loss components
     - Per-level breakdown (if available in aux)
     """
     logger.log_scalar("Loss/total", float(loss), step)
@@ -182,6 +182,11 @@ def log_metrics(logger: TensorboardLogger, loss, aux, step: int):
         logger.log_scalar("Loss/diversity", div_loss, step)
         logger.log_scalar("Loss/diversity_variance", div_variance, step)
 
+        if "concordance_loss" in aux:
+            logger.log_scalar(
+                "Loss/concordance", float(aux["concordance_loss"]), step
+            )
+
         # Log per-level breakdown if available
         if "level_losses" in aux and "level_weights" in aux:
             for i, (level_loss, level_weight) in enumerate(
@@ -191,6 +196,23 @@ def log_metrics(logger: TensorboardLogger, loss, aux, step: int):
                     f"Loss/level_{i}/weighted_loss", float(level_loss), step
                 )
                 logger.log_scalar(f"Loss/level_{i}/weight", float(level_weight), step)
+
+            # Log per-level loss components
+            if "level_reconstruction_losses" in aux:
+                for i, level_recon in enumerate(aux["level_reconstruction_losses"]):
+                    logger.log_scalar(
+                        f"Loss/level_{i}/reconstruction", float(level_recon), step
+                    )
+            if "level_diversity_losses" in aux:
+                for i, level_div in enumerate(aux["level_diversity_losses"]):
+                    logger.log_scalar(
+                        f"Loss/level_{i}/diversity", float(level_div), step
+                    )
+            if "level_concordance_losses" in aux:
+                for i, level_conc in enumerate(aux["level_concordance_losses"]):
+                    logger.log_scalar(
+                        f"Loss/level_{i}/concordance", float(level_conc), step
+                    )
 
 
 def log_diagnostics(
@@ -263,8 +285,13 @@ def format_progress_line(
         recon = float(aux["reconstruction_loss"])
         div = float(aux["diversity_loss"])  # Normalized: 0=perfect, 1=collapse
         div_var = float(aux.get("diversity_variance", 0.0))  # Raw variance
-        weighted = recon + div  # Unweighted sum for reference
-        parts.append(f"Recon: {recon:.4f} | Div: {div:.4f} | Var: {div_var:.4f}")
+        parts.append(f"Recon: {recon:.4f} | Div: {div:.4f}")
+        
+        if "concordance_loss" in aux:
+            conc = float(aux["concordance_loss"])
+            parts.append(f"Conc: {conc:.4f}")
+        
+        parts.append(f"Var: {div_var:.4f}")
 
     parts.append(f"{steps_per_sec:.1f} steps/sec")
 

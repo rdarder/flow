@@ -2,32 +2,7 @@
 
 ## Current State
 
-The embeddings training system now uses **linear attention** for self-supervised optical flow learning, replacing the previous softmax-based spatial variance loss.
-
-### Session: 2026-04-10 — Normalized Linear Attention and Bounded Losses
-
-Transitioned from raw linear attention to **normalized weight averaging** with interpretable, bounded loss values. All loss components are now positive numbers where 0 represents the theoretical optimum.
-
-#### Behavior Changes
-
-- **COM is now a true weighted average** — Attention weights are normalized by their sum, ensuring center-of-mass stays within coordinate bounds [0, 1] instead of potentially exceeding them
-- **Flow has interpretable scale** — `flow = 1.0` now means "full window span" (16 pixels for 16×16 window), making flow magnitudes interpretable during training
-- **Diversity loss is bounded** — Changed from unbounded negative variance to normalized loss: `1 - (variance / 0.25)`, where 0 = maximum diversity, 1 = complete collapse
-- **All losses positive, 0 = perfect** — Total loss is now a meaningful sum where lower is always better (previously could go negative)
-- **Embeddings use ReLU activation** — Embedding generator outputs are now ReLU'd before L2 normalization, restricting to positive orthant (required for weight normalization to be meaningful)
-
-#### Diagnostic Additions
-
-- **Flow range monitoring** — Logs self_com min/max, cross_com min/max, flow min/max to verify COM stays in expected [0, 1] range
-- **Weight sum monitoring** — Logs average activation sum per position to detect embedding collapse (near-zero weights)
-- **Diversity score** — Reports variance as percentage of theoretical maximum (0.25) for quick assessment
-
-#### Implementation Details
-
-- Weight normalization: `COM = (Q @ K_coords) / Q.sum(axis=-1)`
-- Flow rescaling: `flow_pixels = flow_normalized * window_size` before warping
-- Max theoretical variance: 0.25 for L2-normalized embeddings in positive orthant
-- New aux field `diversity_variance` preserves raw variance for reference
+The embeddings training system uses **linear attention** for self-supervised optical flow learning. Flow is estimated via center-of-mass decoding, with three loss components: warped reconstruction, embedding diversity, and flow concordance.
 
 ### Linear Attention Mechanism
 
@@ -40,14 +15,16 @@ This reduces attention computation from ~3.9M FLOPs per window (softmax) to ~57K
 
 ### Training Signal
 
-**Warped reconstruction loss** is the core self-supervised signal:
+**Warped reconstruction loss** (λ=1.0) is the core self-supervised signal:
 1. Predict flow from linear attention
 2. Warp frame2 embeddings by predicted flow using bilinear interpolation
 3. Compare warped frame2 to frame1 (MSE)
 
 The model learns embeddings that are temporally stable — the same spatial position in frame1 and frame2 should have similar embeddings after warping.
 
-**Embedding diversity loss** prevents collapse by encouraging embeddings to vary across spatial positions (maximizes spatial variance).
+**Embedding diversity loss** (λ=0.1) prevents collapse by encouraging embeddings to vary across spatial positions. Normalized: 0 = maximum diversity, 1 = complete collapse.
+
+**Flow concordance loss** (λ=0.1) acts as a regularizer, penalizing variance in per-dimension flow predictions. Encourages dimensions to encode spatial information coherently. Normalized: 0 = perfect agreement, 1 = max disagreement (max_variance=1.0 derived empirically for D=16).
 
 ### Architecture
 
@@ -58,20 +35,34 @@ The model learns embeddings that are temporally stable — the same spatial posi
 
 ### Training Configuration
 
-- **Loss weights:** λ_reconstruction=1.0, λ_diversity=0.1
+- **Loss weights:** λ_reconstruction=1.0, λ_diversity=0.1, λ_concordance=0.1
 - **Level weighting:** Uniform (decay=1.0) across pyramid levels
 - **Diversity scope:** Per-window (matches attention structure)
+
+### Implementation Details
+
+- **COM normalization:** Attention weights normalized by sum, ensuring center-of-mass stays within [0, 1]
+- **Flow scale:** `flow = 1.0` means "full window span" (16 pixels for 16×16 window)
+- **Efficient computation:** Per-dimension positions computed first, then aggregated to COM (avoids redundant einsum)
+- **All losses positive, 0 = perfect:** Total loss is a meaningful sum where lower is always better
+
+### Diagnostic Additions
+
+- **Flow range monitoring:** Logs self_com min/max, cross_com min/max, flow min/max to verify COM stays in expected [0, 1] range
+- **Weight sum monitoring:** Logs average activation sum per position to detect embedding collapse (near-zero weights)
+- **Loss breakdown:** TensorBoard logs reconstruction, diversity, and concordance separately, plus per-level breakdown
 
 ### Known Behaviors
 
 - Flow is clipped implicitly by the linear attention mechanism (dimensions encode spatial information, not arbitrary offsets)
 - Coarsest level (16×16) produces exactly one window — minimal but functional
 - Early training produces high-variance flow; reconstruction loss drives convergence
+- Concordance loss starts low (~0.01) even with untrained embeddings due to L2 normalization structure
 
 ### Deviations from Original Plan
 
-- **Flow concordance loss deferred:** The original intent included a third loss term encouraging dimensions to agree on flow direction. Removed to keep scope minimal — can be added once base training is stable.
 - **No MLP refinement:** Raw flow (cross_com - self_com) is used directly. MLP refinement deferred.
+- **Flow concordance as regularizer:** Original intent suggested concordance as confidence metric, but D=16 is too low for consistent agreement. Now used purely as training regularizer.
 
 ---
 

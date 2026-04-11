@@ -227,10 +227,22 @@ class EmbeddingsTrainer:
         )
 
         steps_per_sec = step_in_epoch / (time.time() - epoch_start)
-        self.logger.log(
-            f"Epoch {epoch} | Step {global_step} | Loss: {float(loss):.4f} | "
-            f"{steps_per_sec:.1f} steps/sec"
-        )
+        
+        # Build progress line with loss components
+        parts = [f"Epoch {epoch} | Step {global_step} | Loss: {float(loss):.4f}"]
+        
+        if "reconstruction_loss" in aux:
+            recon = float(aux["reconstruction_loss"])
+            div = float(aux["diversity_loss"])
+            parts.append(f"Recon: {recon:.4f} | Div: {div:.4f}")
+            
+            if "concordance_loss" in aux:
+                conc = float(aux["concordance_loss"])
+                parts.append(f"Conc: {conc:.4f}")
+        
+        parts.append(f"{steps_per_sec:.1f} steps/sec")
+        
+        self.logger.log(" | ".join(parts))
 
     def _log_visualizations(
         self,
