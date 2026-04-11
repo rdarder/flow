@@ -51,6 +51,7 @@ The model learns embeddings that are temporally stable — the same spatial posi
 - **Flow range monitoring:** Logs self_com min/max, cross_com min/max, flow min/max to verify COM stays in expected [0, 1] range
 - **Weight sum monitoring:** Logs average activation sum per position to detect embedding collapse (near-zero weights)
 - **Loss breakdown:** TensorBoard logs reconstruction, diversity, and concordance separately, plus per-level breakdown
+- **Per-channel activation heatmaps:** For each pyramid level, shows the window crop image alongside D spatial heatmaps (one per embedding dimension) for a selected lookup window. Visualizes "where in space does each channel fire" using sequential colormap (viridis, 0=low to 1=high). Embeddings are strictly positive to avoid negative weights in center-of-mass computation. Logged for both frames in the pair.
 
 ### Known Behaviors
 

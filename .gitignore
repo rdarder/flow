@@ -20,3 +20,4 @@ experiments/
 .qwen/
 ./intent.md
 ./progress.md
+datasets/frames.small/

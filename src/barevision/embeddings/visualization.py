@@ -26,6 +26,7 @@ matplotlib.use("Agg")
 FIGURE_DPI = 100
 FRAME_WITH_GRID_SIZE = (16, 10)
 ATTENTION_MAPS_SIZE = (20, 10)
+PER_CHANNEL_HEATMAPS_SIZE = (12, 8)
 
 
 def _figure_to_array(fig: Figure) -> np.ndarray:
@@ -244,6 +245,113 @@ def create_dimension_activations_figure(
     return _figure_to_array(fig)
 
 
+def create_per_channel_heatmaps_figure(
+    embeddings: np.ndarray,
+    window_crop: np.ndarray,
+    window_size: int = 16,
+    window_indices: tuple[int, int] | None = None,
+    frame_label: str = "Frame",
+) -> np.ndarray:
+    """Create figure showing per-channel activation heatmaps.
+
+    For each embedding dimension, show a heatmap of spatial activations
+    within the window. This visualizes "where in space does each channel fire".
+
+    Layout:
+    - Left: Original window crop (spatial reference)
+    - Right: Grid of D small heatmaps (one per dimension)
+
+    Args:
+        embeddings: (window_size, window_size, D) embeddings for one window
+        window_crop: (window_size, window_size, 3) RGB image crop
+        window_size: Window dimension (default 16)
+        window_indices: (row, col) of window in grid (for title)
+        frame_label: Label for the frame (e.g., "Frame 1", "Frame 42")
+
+    Returns:
+        RGB image array (H_fig, W_fig, 3) as uint8
+    """
+    D = embeddings.shape[-1]
+
+    # Build title suffix with window coordinates
+    if window_indices is not None:
+        row, col = window_indices
+        title_suffix = f" | Window ({row}, {col})"
+    else:
+        title_suffix = ""
+
+    # Determine grid layout for D channels
+    # Aim for roughly square-ish grid
+    heatmap_cols = int(np.ceil(np.sqrt(D)))
+    heatmap_rows = int(np.ceil(D / heatmap_cols))
+
+    # Create figure using GridSpec for flexible layout
+    # Column 0: image (wider), Columns 1+: heatmaps
+    from matplotlib.gridspec import GridSpec
+    fig = plt.figure(figsize=(PER_CHANNEL_HEATMAPS_SIZE[0] + 3, PER_CHANNEL_HEATMAPS_SIZE[1]), dpi=FIGURE_DPI)
+    gs = GridSpec(
+        heatmap_rows, heatmap_cols + 1,
+        figure=fig,
+        width_ratios=[1.2] + [1.0] * heatmap_cols,
+        wspace=0.3,
+        hspace=0.3
+    )
+
+    # First column: show the window crop (span all rows)
+    ax_image = fig.add_subplot(gs[:, 0])
+    ax_image.imshow(window_crop)
+    ax_image.set_title(f"{frame_label}{title_suffix}", fontsize=10, fontweight="bold")
+    ax_image.axis("off")
+
+    # Remaining columns: heatmaps for each dimension
+    axes_flat = []
+    for row in range(heatmap_rows):
+        for col in range(1, heatmap_cols + 1):
+            axes_flat.append(fig.add_subplot(gs[row, col]))
+
+    # Plot each dimension
+    for d in range(D):
+        ax = axes_flat[d]
+        channel_data = embeddings[:, :, d]
+        
+        # Show heatmap with sequential colormap (embeddings are in [0, 1])
+        im = ax.imshow(
+            channel_data,
+            cmap="viridis",
+            vmin=0.0,
+            vmax=1.0,
+            interpolation="nearest"
+        )
+        ax.set_title(f"Dim {d}", fontsize=8)
+        ax.axis("off")
+
+    # Hide unused subplots if D doesn't fill the grid
+    for d in range(D, len(axes_flat)):
+        axes_flat[d].axis("off")
+
+    # Add colorbar on the right
+    cbar_ax = fig.add_axes([0.92, 0.15, 0.02, 0.7])
+    cbar = fig.colorbar(
+        plt.cm.ScalarMappable(
+            cmap="viridis",
+            norm=plt.Normalize(vmin=0.0, vmax=1.0)
+        ),
+        cax=cbar_ax,
+        label="Activation"
+    )
+    cbar.ax.tick_params(labelsize=8)
+
+    fig.suptitle(
+        f"{frame_label}{title_suffix} - Per-Channel Activations",
+        fontsize=12,
+        fontweight="bold",
+        y=0.98
+    )
+
+    plt.tight_layout()
+    return _figure_to_array(fig)
+
+
 def log_visualizations(
     logger,
     img1: jnp.ndarray,
@@ -344,7 +452,7 @@ def log_visualizations(
         )
         logger.log_figure(f"Level{level_idx}/Frame_Grid", fig_frame, step)
 
-        # 2. Per-dimension activation patterns
+        # 2. Per-dimension activation patterns (bar charts)
         fig_dim = create_dimension_activations_figure(
             window_crop1=window_crop1,
             window_crop2=window_crop2,
@@ -357,6 +465,28 @@ def log_visualizations(
             distance=metadata.get("distance", 0),
         )
         logger.log_figure(f"Level{level_idx}/Dimension_Activations", fig_dim, step)
+
+        # 3. Per-channel spatial heatmaps with reference image
+        frame_t_label = f"Frame {metadata.get('frame_t', 0)}"
+        frame_tk_label = f"Frame {metadata.get('frame_tk', 0)} (t+{metadata.get('distance', 0)})"
+        
+        fig_heatmap1 = create_per_channel_heatmaps_figure(
+            embeddings=window_emb1,
+            window_crop=window_crop1,
+            window_size=window_size,
+            window_indices=window_indices,
+            frame_label=frame_t_label,
+        )
+        logger.log_figure(f"Level{level_idx}/Per_Channel_Heatmaps_F1", fig_heatmap1, step)
+
+        fig_heatmap2 = create_per_channel_heatmaps_figure(
+            embeddings=window_emb2,
+            window_crop=window_crop2,
+            window_size=window_size,
+            window_indices=window_indices,
+            frame_label=frame_tk_label,
+        )
+        logger.log_figure(f"Level{level_idx}/Per_Channel_Heatmaps_F2", fig_heatmap2, step)
 
     # Clean up
     gc.collect()
