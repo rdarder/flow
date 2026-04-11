@@ -15,7 +15,6 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Iterator, List, NamedTuple, Optional
 from typing import Tuple
 
-import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
@@ -297,7 +296,7 @@ class PreloadedFrameDataset:
         with self.logger.task(msg):
             self.frames = self._preload_frames()
 
-    def _preload_frames(self) -> jax.Array:
+    def _preload_frames(self) -> np.ndarray:
         # Cache video file lists to avoid O(N^2) directory scans
         video_files_cache = {}
         for video_name in set(v for v, _ in self.unique_frames):
@@ -316,8 +315,9 @@ class PreloadedFrameDataset:
         with ThreadPoolExecutor() as executor:
             frames_list = list(executor.map(self.video_dataset.load_image, task_paths))
 
-        frames_np = np.stack(frames_list)
-        return jax.device_put(frames_np, jax.devices("cpu")[0])
+        # Store as NumPy array (not JAX). Conversion to JAX happens at batch
+        # creation time, which avoids JAX tracing issues during iteration.
+        return np.stack(frames_list)
 
     def __len__(self) -> int:
         return len(self.frame_pairs)
